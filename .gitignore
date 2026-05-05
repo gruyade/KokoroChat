@@ -1,0 +1,56 @@
+# Environment & Secrets
+.env
+.env.local
+.env.*.local
+
+# Database
+*.sqlite
+*.sqlite3
+*.db
+
+# Rust
+target/
+**/*.rs.bk
+Cargo.lock
+!src-tauri/Cargo.lock
+
+# Node.js
+node_modules/
+dist/
+.output/
+
+# Build artifacts
+*.exe
+*.dmg
+*.AppImage
+*.deb
+*.msi
+
+# IDE
+.idea/
+*.swp
+*.swo
+*~
+.vscode/settings.json
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Coverage
+coverage/
+*.lcov
+
+# Tauri
+src-tauri/target/
+src-tauri/WixTools/
+src-tauri/gen/
+
+# Secrets baseline
+.secrets.baseline

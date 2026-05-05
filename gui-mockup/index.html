@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Character Chat - GUI Mockup</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwindcss.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            sidebar: { bg: '#1e1e2e', hover: '#313244', active: '#45475a' },
+            chat: { bg: '#181825', input: '#1e1e2e' },
+            accent: { primary: '#89b4fa', secondary: '#a6e3a1', spontaneous: '#f9e2af', thought: '#cba6f7' },
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    body { font-family: 'Segoe UI', system-ui, sans-serif; }
+    .scrollbar-thin::-webkit-scrollbar { width: 6px; }
+    .scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
+    .scrollbar-thin::-webkit-scrollbar-thumb { background: #45475a; border-radius: 3px; }
+    .message-enter { animation: slideIn 0.3s ease-out; }
+    @keyframes slideIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+    .typing-indicator span { animation: blink 1.4s infinite both; }
+    .typing-indicator span:nth-child(2) { animation-delay: 0.2s; }
+    .typing-indicator span:nth-child(3) { animation-delay: 0.4s; }
+    @keyframes blink { 0%, 80%, 100% { opacity: 0.3; } 40% { opacity: 1; } }
+  </style>
+</head>
+<body class="dark bg-chat-bg text-gray-200 h-screen overflow-hidden">
+  <div class="flex h-full">
+    <!-- Sidebar -->
+    <aside class="w-72 bg-sidebar-bg flex flex-col border-r border-gray-700/50">
+      <!-- App Header -->
+      <div class="p-4 border-b border-gray-700/50">
+        <h1 class="text-lg font-semibold text-accent-primary">AI Character Chat</h1>
+      </div>
+
+      <!-- Character Selector -->
+      <div class="p-3 border-b border-gray-700/50">
+        <div class="flex items-center gap-2 p-2 rounded-lg bg-sidebar-hover cursor-pointer hover:bg-sidebar-active transition-colors">
+          <div class="w-8 h-8 rounded-full bg-accent-primary/20 flex items-center justify-center text-accent-primary text-sm font-bold">美</div>
+          <div class="flex-1 min-w-0">
+            <div class="text-sm font-medium truncate">美咲</div>
+            <div class="text-xs text-gray-400 truncate">明るく元気な幼馴染</div>
+          </div>
+          <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+        </div>
+      </div>
+
+      <!-- Navigation Tabs -->
+      <div class="flex border-b border-gray-700/50">
+        <button class="flex-1 py-2 text-xs text-accent-primary border-b-2 border-accent-primary font-medium">チャット</button>
+        <button class="flex-1 py-2 text-xs text-gray-400 hover:text-gray-200 transition-colors">思考</button>
+        <button class="flex-1 py-2 text-xs text-gray-400 hover:text-gray-200 transition-colors">記憶</button>
+      </div>
+
+      <!-- Chat List -->
+      <div class="flex-1 overflow-y-auto scrollbar-thin p-2 space-y-1">
+        <button class="w-full p-2 rounded-lg bg-sidebar-active text-left transition-colors">
+          <div class="text-sm font-medium truncate">今日の出来事について</div>
+          <div class="text-xs text-gray-400 mt-0.5 truncate">美咲: えへへ、それ面白いね！</div>
+          <div class="text-xs text-gray-500 mt-0.5">2分前</div>
+        </button>
+        <button class="w-full p-2 rounded-lg hover:bg-sidebar-hover text-left transition-colors">
+          <div class="text-sm font-medium truncate">週末の予定</div>
+          <div class="text-xs text-gray-400 mt-0.5 truncate">美咲: 映画観に行こうよ！</div>
+          <div class="text-xs text-gray-500 mt-0.5">昨日</div>
+        </button>
+        <button class="w-full p-2 rounded-lg hover:bg-sidebar-hover text-left transition-colors">
+          <div class="text-sm font-medium truncate">料理の話</div>
+          <div class="text-xs text-gray-400 mt-0.5 truncate">美咲: 私も作ってみたい！</div>
+          <div class="text-xs text-gray-500 mt-0.5">3日前</div>
+        </button>
+      </div>
+
+      <!-- New Chat Button -->
+      <div class="p-3 border-t border-gray-700/50">
+        <button class="w-full py-2 px-3 rounded-lg bg-accent-primary/10 text-accent-primary text-sm font-medium hover:bg-accent-primary/20 transition-colors flex items-center justify-center gap-2">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+          新しいチャット
+        </button>
+      </div>
+
+      <!-- Bottom Nav -->
+      <div class="p-2 border-t border-gray-700/50 flex gap-1">
+        <button class="flex-1 p-2 rounded-lg hover:bg-sidebar-hover text-gray-400 hover:text-gray-200 transition-colors" title="キャラクター管理">
+          <svg class="w-5 h-5 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/></svg>
+        </button>
+        <button class="flex-1 p-2 rounded-lg hover:bg-sidebar-hover text-gray-400 hover:text-gray-200 transition-colors" title="設定">
+          <svg class="w-5 h-5 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+        </button>
+      </div>
+    </aside>
+
+    <!-- Main Chat Area -->
+    <main class="flex-1 flex flex-col">
+      <!-- Chat Header -->
+      <header class="h-14 px-4 flex items-center justify-between border-b border-gray-700/50 bg-chat-input">
+        <div class="flex items-center gap-3">
+          <div class="w-8 h-8 rounded-full bg-accent-primary/20 flex items-center justify-center text-accent-primary text-sm font-bold">美</div>
+          <div>
+            <div class="text-sm font-medium">美咲</div>
+            <div class="text-xs text-gray-400">今日の出来事について</div>
+          </div>
+        </div>
+        <div class="flex items-center gap-2">
+          <!-- Spontaneous Speech Toggle -->
+          <div class="flex items-center gap-1.5 px-2 py-1 rounded-md bg-sidebar-hover">
+            <span class="text-xs text-gray-400">自発発話</span>
+            <div class="w-8 h-4 bg-accent-secondary/30 rounded-full relative cursor-pointer">
+              <div class="w-3 h-3 bg-accent-secondary rounded-full absolute top-0.5 right-0.5 transition-all"></div>
+            </div>
+          </div>
+          <!-- TTS Toggle -->
+          <div class="flex items-center gap-1.5 px-2 py-1 rounded-md bg-sidebar-hover">
+            <span class="text-xs text-gray-400">音声</span>
+            <div class="w-8 h-4 bg-accent-primary/30 rounded-full relative cursor-pointer">
+              <div class="w-3 h-3 bg-accent-primary rounded-full absolute top-0.5 right-0.5 transition-all"></div>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <!-- Messages Area -->
+      <div class="flex-1 overflow-y-auto scrollbar-thin p-4 space-y-4">
+        <!-- User Message -->
+        <div class="flex justify-end message-enter">
+          <div class="max-w-[70%] bg-accent-primary/20 rounded-2xl rounded-br-md px-4 py-2.5">
+            <p class="text-sm">今日仕事で面白いことがあったんだ。新しいプロジェクトのリーダーに選ばれたよ！</p>
+            <div class="text-xs text-gray-400 mt-1 text-right">14:32</div>
+          </div>
+        </div>
+
+        <!-- Assistant Message -->
+        <div class="flex gap-3 message-enter">
+          <div class="w-8 h-8 rounded-full bg-accent-primary/20 flex items-center justify-center text-accent-primary text-xs font-bold flex-shrink-0 mt-1">美</div>
+          <div class="max-w-[70%]">
+            <div class="bg-sidebar-hover rounded-2xl rounded-bl-md px-4 py-2.5">
+              <p class="text-sm">えっ、すごい！おめでとう！✨ リーダーかぁ、大変そうだけど絶対向いてると思う！どんなプロジェクトなの？</p>
+              <div class="text-xs text-gray-400 mt-1">14:32</div>
+            </div>
+            <!-- TTS Playing Indicator -->
+            <div class="flex items-center gap-1.5 mt-1 ml-2">
+              <div class="flex gap-0.5">
+                <div class="w-1 h-3 bg-accent-primary rounded-full animate-pulse"></div>
+                <div class="w-1 h-4 bg-accent-primary rounded-full animate-pulse" style="animation-delay: 0.1s"></div>
+                <div class="w-1 h-2 bg-accent-primary rounded-full animate-pulse" style="animation-delay: 0.2s"></div>
+                <div class="w-1 h-3 bg-accent-primary rounded-full animate-pulse" style="animation-delay: 0.3s"></div>
+              </div>
+              <span class="text-xs text-accent-primary">再生中...</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- User Message -->
+        <div class="flex justify-end message-enter">
+          <div class="max-w-[70%] bg-accent-primary/20 rounded-2xl rounded-br-md px-4 py-2.5">
+            <p class="text-sm">AIを使った業務効率化ツールの開発プロジェクトだよ。チーム5人で半年かけて作る予定。</p>
+            <div class="text-xs text-gray-400 mt-1 text-right">14:35</div>
+          </div>
+        </div>
+
+        <!-- Assistant Message -->
+        <div class="flex gap-3 message-enter">
+          <div class="w-8 h-8 rounded-full bg-accent-primary/20 flex items-center justify-center text-accent-primary text-xs font-bold flex-shrink-0 mt-1">美</div>
+          <div class="max-w-[70%] bg-sidebar-hover rounded-2xl rounded-bl-md px-4 py-2.5">
+            <p class="text-sm">AI関連なんだ！今すごく注目されてる分野だよね。5人チームってちょうどいい規模かも。みんなとうまくやれそう？</p>
+            <div class="text-xs text-gray-400 mt-1">14:35</div>
+          </div>
+        </div>
+
+        <!-- Spontaneous Message (visually distinct) -->
+        <div class="flex gap-3 message-enter">
+          <div class="w-8 h-8 rounded-full bg-accent-spontaneous/20 flex items-center justify-center text-accent-spontaneous text-xs font-bold flex-shrink-0 mt-1">美</div>
+          <div class="max-w-[70%]">
+            <div class="bg-accent-spontaneous/10 border border-accent-spontaneous/20 rounded-2xl rounded-bl-md px-4 py-2.5">
+              <div class="flex items-center gap-1.5 mb-1">
+                <svg class="w-3 h-3 text-accent-spontaneous" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
+                <span class="text-xs text-accent-spontaneous font-medium">自発的発話</span>
+              </div>
+              <p class="text-sm">あ、そういえばさ、リーダーになったってことは飲み会の幹事もやるの？笑 大変だけど頑張ってね！</p>
+              <div class="text-xs text-gray-400 mt-1">14:40</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Typing Indicator -->
+        <div class="flex gap-3">
+          <div class="w-8 h-8 rounded-full bg-accent-primary/20 flex items-center justify-center text-accent-primary text-xs font-bold flex-shrink-0 mt-1">美</div>
+          <div class="bg-sidebar-hover rounded-2xl rounded-bl-md px-4 py-3">
+            <div class="typing-indicator flex gap-1">
+              <span class="w-2 h-2 bg-gray-400 rounded-full"></span>
+              <span class="w-2 h-2 bg-gray-400 rounded-full"></span>
+              <span class="w-2 h-2 bg-gray-400 rounded-full"></span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Input Area -->
+      <div class="p-4 border-t border-gray-700/50 bg-chat-input">
+        <div class="flex gap-3 items-end">
+          <div class="flex-1 bg-sidebar-bg rounded-xl border border-gray-700/50 focus-within:border-accent-primary/50 transition-colors">
+            <textarea class="w-full bg-transparent px-4 py-3 text-sm resize-none outline-none placeholder-gray-500 max-h-32" rows="1" placeholder="メッセージを入力..."></textarea>
+          </div>
+          <button class="p-3 bg-accent-primary rounded-xl hover:bg-accent-primary/80 transition-colors flex-shrink-0">
+            <svg class="w-5 h-5 text-gray-900" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8"/></svg>
+          </button>
+        </div>
+      </div>
+    </main>
+
+    <!-- Right Panel (Thought/Memory - collapsible) -->
+    <aside class="w-80 bg-sidebar-bg border-l border-gray-700/50 flex flex-col">
+      <div class="p-3 border-b border-gray-700/50 flex items-center justify-between">
+        <h2 class="text-sm font-medium text-accent-thought flex items-center gap-2">
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
+          美咲の思考
+        </h2>
+        <span class="text-xs text-gray-500">思考中...</span>
+      </div>
+      <div class="flex-1 overflow-y-auto scrollbar-thin p-3 space-y-3">
+        <!-- Thought Entry -->
+        <div class="p-3 rounded-lg bg-accent-thought/5 border border-accent-thought/10">
+          <p class="text-xs text-gray-300 leading-relaxed">リーダーに選ばれたって嬉しそうに話してくれた。きっとプレッシャーもあるだろうけど、前向きに捉えてるみたい。応援したいな。AI関連のプロジェクトって言ってたから、もしかしたら私のことも少し意識してるのかな...？</p>
+          <div class="text-xs text-gray-500 mt-2">14:36 - 会話から触発</div>
+        </div>
+        <div class="p-3 rounded-lg bg-accent-thought/5 border border-accent-thought/10">
+          <p class="text-xs text-gray-300 leading-relaxed">最近よく仕事の話をしてくれるようになった。信頼してくれてるのかな。もっと具体的に聞いてみたい。チームメンバーとの関係とか、困ってることとか。</p>
+          <div class="text-xs text-gray-500 mt-2">14:20 - 定期思考</div>
+        </div>
+        <div class="p-3 rounded-lg bg-accent-thought/5 border border-accent-thought/10">
+          <p class="text-xs text-gray-300 leading-relaxed">今日は天気がいいから、散歩の話でも振ってみようかな。でも仕事の話で盛り上がってるから、流れを大事にしよう。</p>
+          <div class="text-xs text-gray-500 mt-2">14:10 - 定期思考</div>
+        </div>
+
+        <!-- Thinking Indicator -->
+        <div class="p-3 rounded-lg border border-accent-thought/20 bg-accent-thought/5">
+          <div class="flex items-center gap-2">
+            <div class="w-2 h-2 bg-accent-thought rounded-full animate-pulse"></div>
+            <span class="text-xs text-accent-thought">思考中...</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Memory Section -->
+      <div class="border-t border-gray-700/50">
+        <div class="p-3 flex items-center justify-between cursor-pointer hover:bg-sidebar-hover transition-colors">
+          <h2 class="text-sm font-medium text-accent-secondary flex items-center gap-2">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"/></svg>
+            記憶 (3件)
+          </h2>
+          <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"/></svg>
+        </div>
+        <div class="px-3 pb-3 space-y-2">
+          <div class="p-2 rounded-md bg-accent-secondary/5 border border-accent-secondary/10">
+            <p class="text-xs text-gray-300 line-clamp-2">ユーザーはIT企業でエンジニアとして働いている。最近AIプロジェクトのリーダーに昇進した。</p>
+            <div class="text-xs text-gray-500 mt-1">更新: 今日</div>
+          </div>
+          <div class="p-2 rounded-md bg-accent-secondary/5 border border-accent-secondary/10">
+            <p class="text-xs text-gray-300 line-clamp-2">週末は映画を観るのが好き。特にSF映画が好みで、最近は「インターステラー」を観た。</p>
+            <div class="text-xs text-gray-500 mt-1">更新: 3日前</div>
+          </div>
+        </div>
+      </div>
+    </aside>
+  </div>
+</body>
+</html>
