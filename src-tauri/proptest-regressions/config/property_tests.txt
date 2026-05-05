@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 5ed77b7d60e85d1ecb189297dcdc63957911580c0eb2124cd699dd3c779bc3a7 # shrinks to config = AppConfig { models: {Thought: ModelSettings { base_url: "http://mwvagrjy:9488/v1", model: "nhbrcxz-0", api_key: None, temperature: 0.77068347 }, Chat: ModelSettings { base_url: "http://ckrzvpkj:9361/v8", model: "bfqysa-70", api_key: None, temperature: 1.9751104 }, CharacterGeneration: ModelSettings { base_url: "http://xaotprol:4626/v2", model: "zihyjgay-735", api_key: Some("sk-B80EBAtw36g6yG"), temperature: 0.07667215 }, Memory: ModelSettings { base_url: "http://xkydqg:4106/v3", model: "itcnfr-03", api_key: Some("sk-A39sAc56hS3Vrm8W2YNmL5"), temperature: 0.82454115 }}, spontaneous: SpontaneousConfig { enabled: false, min_interval_seconds: 2395 }, thought: ThoughtConfig { enabled: true, interval_minutes: 6 }, memory: MemoryConfig { compression_threshold: 160 }, tts: TTSGlobalConfig { enabled: true }, ui: UIConfig { theme: Light, language: "ja" }, plugins: PluginsConfig { enabled_plugins: [], plugin_settings: {} }, attachment: AttachmentConfig { max_file_size_bytes: 17888385, allowed_extensions: ["png", "md"] } }
