@@ -2,6 +2,11 @@ import { useEffect } from 'react';
 import { useUIStore } from './stores';
 import { Sidebar } from './components/sidebar/Sidebar';
 import { ChatView } from './components/chat/ChatView';
+import { CharacterView } from './components/character/CharacterView';
+import { SettingsView } from './components/settings/SettingsView';
+import { PluginListView } from './components/plugin/PluginListView';
+import { MemoryView } from './components/memory/MemoryView';
+import { ThoughtView } from './components/thought/ThoughtView';
 
 function MainContent() {
   const { activeView } = useUIStore();
@@ -9,31 +14,11 @@ function MainContent() {
   return (
     <main className="flex-1 flex flex-col overflow-hidden">
       {activeView === 'chat' && <ChatView />}
-      {activeView === 'characters' && (
-        <div className="flex-1 flex items-center justify-center text-muted-foreground">
-          <p>キャラクター管理画面（未実装）</p>
-        </div>
-      )}
-      {activeView === 'settings' && (
-        <div className="flex-1 flex items-center justify-center text-muted-foreground">
-          <p>設定画面（未実装）</p>
-        </div>
-      )}
-      {activeView === 'plugins' && (
-        <div className="flex-1 flex items-center justify-center text-muted-foreground">
-          <p>プラグイン管理画面（未実装）</p>
-        </div>
-      )}
-      {activeView === 'memory' && (
-        <div className="flex-1 flex items-center justify-center text-muted-foreground">
-          <p>記憶閲覧画面（未実装）</p>
-        </div>
-      )}
-      {activeView === 'thought' && (
-        <div className="flex-1 flex items-center justify-center text-muted-foreground">
-          <p>思考閲覧画面（未実装）</p>
-        </div>
-      )}
+      {activeView === 'characters' && <CharacterView />}
+      {activeView === 'settings' && <SettingsView />}
+      {activeView === 'plugins' && <PluginListView />}
+      {activeView === 'memory' && <MemoryView />}
+      {activeView === 'thought' && <ThoughtView />}
     </main>
   );
 }
