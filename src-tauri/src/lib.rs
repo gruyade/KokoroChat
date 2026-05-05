@@ -40,7 +40,9 @@ pub fn run() {
             use tauri::Manager;
 
             // .envファイルから環境変数をロード（存在しなくてもエラーにしない）
+            // cargo tauri dev時はsrc-tauri/から実行されるため、親ディレクトリも探索
             dotenvy::dotenv().ok();
+            dotenvy::from_filename("../.env").ok();
 
             // アプリデータディレクトリ取得
             let app_data_dir = app

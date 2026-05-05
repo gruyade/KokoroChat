@@ -189,7 +189,7 @@ impl ModelConfigManager {
     }
 
     /// 特定用途の環境変数フォールバックを適用。
-    /// 設定ファイルの値が空の場合のみ環境変数で上書き。
+    /// 環境変数が設定されている場合は常に優先する。
     fn apply_env_for_purpose(config: &mut AppConfig, purpose: ModelPurpose, prefix: &str) {
         let settings = config
             .models
@@ -201,23 +201,21 @@ impl ModelConfigManager {
                 temperature: 0.7,
             });
 
-        // base_urlが空の場合のみ環境変数を適用
-        if settings.base_url.is_empty() {
-            if let Ok(val) = std::env::var(format!("{}_BASE_URL", prefix)) {
+        // 環境変数が設定されていれば常に上書き
+        if let Ok(val) = std::env::var(format!("{}_BASE_URL", prefix)) {
+            if !val.is_empty() {
                 settings.base_url = val;
             }
         }
 
-        // api_keyがNoneの場合のみ環境変数を適用
-        if settings.api_key.is_none() {
-            if let Ok(val) = std::env::var(format!("{}_API_KEY", prefix)) {
+        if let Ok(val) = std::env::var(format!("{}_API_KEY", prefix)) {
+            if !val.is_empty() {
                 settings.api_key = Some(val);
             }
         }
 
-        // modelが空の場合のみ環境変数を適用
-        if settings.model.is_empty() {
-            if let Ok(val) = std::env::var(format!("{}_MODEL", prefix)) {
+        if let Ok(val) = std::env::var(format!("{}_MODEL", prefix)) {
+            if !val.is_empty() {
                 settings.model = val;
             }
         }
