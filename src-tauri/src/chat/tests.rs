@@ -8,7 +8,7 @@ mod tests {
 
     use crate::chat::engine::{ChatEngine, DefaultChatEngine};
     use crate::db::database::Database;
-    use crate::db::repositories::{character as char_repo, chat as chat_repo, memory as mem_repo};
+    use crate::db::repositories::{character as char_repo, chat as chat_repo};
     use crate::error::AppError;
     use crate::llm::client::{ChatMessage, LLMClient, LLMClientConfig, LLMResponse, MessageRole};
     use crate::models::{

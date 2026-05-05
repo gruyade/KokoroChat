@@ -4,7 +4,6 @@
 #[cfg(test)]
 mod tests {
     use proptest::prelude::*;
-    use serde_json::Value;
 
     use crate::llm::client::{ChatMessage, LLMClientConfig, MessageRole, OpenAICompatibleClient};
     use crate::models::ToolDefinition;

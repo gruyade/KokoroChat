@@ -2,7 +2,6 @@
 
 use tauri::{AppHandle, State};
 
-use crate::chat::engine::ChatEngine;
 use crate::error::AppError;
 use crate::models::{ChatMessageRecord, ChatSession};
 use crate::state::AppState;

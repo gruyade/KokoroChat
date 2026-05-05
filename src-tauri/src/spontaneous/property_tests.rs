@@ -201,8 +201,8 @@ mod tests {
                 "First message must be System role"
             );
             prop_assert_eq!(
-                result[0].content,
-                system_prompt,
+                &result[0].content,
+                &system_prompt,
                 "First message content must be the system prompt"
             );
         }
@@ -233,8 +233,8 @@ mod tests {
             for (i, msg) in messages.iter().enumerate() {
                 let prompt_idx = 1 + i;
                 prop_assert_eq!(
-                    result[prompt_idx].content,
-                    msg.content,
+                    &result[prompt_idx].content,
+                    &msg.content,
                     "Message at index {} content mismatch",
                     i
                 );
@@ -420,13 +420,13 @@ mod tests {
 
             // 各ロールのシリアライズ結果が異なる
             prop_assert_ne!(
-                spontaneous_json,
-                assistant_json,
+                &spontaneous_json,
+                &assistant_json,
                 "Spontaneous and Assistant serialization must differ"
             );
             prop_assert_ne!(
-                spontaneous_json,
-                user_json,
+                &spontaneous_json,
+                &user_json,
                 "Spontaneous and User serialization must differ"
             );
         }

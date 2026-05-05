@@ -189,8 +189,8 @@ mod tests {
                 "First message should be System role"
             );
             prop_assert_eq!(
-                result[0].content,
-                system_prompt,
+                &result[0].content,
+                &system_prompt,
                 "First message content should be the system prompt"
             );
 
@@ -221,8 +221,8 @@ mod tests {
             for i in 0..num_history {
                 let msg_idx = 1 + num_memories + i;
                 prop_assert_eq!(
-                    result[msg_idx].content,
-                    history[i].content,
+                    &result[msg_idx].content,
+                    &history[i].content,
                     "History message at index {} content mismatch",
                     msg_idx
                 );
@@ -236,8 +236,8 @@ mod tests {
                 "Last message should be User role"
             );
             prop_assert_eq!(
-                result[last_idx].content,
-                user_message,
+                &result[last_idx].content,
+                &user_message,
                 "Last message content should be the user's new message"
             );
         }

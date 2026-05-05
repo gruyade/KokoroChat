@@ -30,7 +30,7 @@ pub struct ChatMessageRecord {
 }
 
 /// チャットメッセージのロール
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum ChatRole {
     User,

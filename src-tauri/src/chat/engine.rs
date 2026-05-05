@@ -74,7 +74,7 @@ impl DefaultChatEngine {
 
     /// コンテキストメッセージ配列を組み立て
     /// [system_prompt, ...memory_context, ...chat_history, user_message]
-    fn build_context(
+    pub(crate) fn build_context(
         &self,
         system_prompt: &str,
         memories: &[crate::models::Memory],
@@ -130,7 +130,7 @@ impl DefaultChatEngine {
     }
 
     /// 添付ファイルから抽出テキストを結合
-    fn extract_attachment_text(attachments: &[Attachment]) -> Option<String> {
+    pub(crate) fn extract_attachment_text(attachments: &[Attachment]) -> Option<String> {
         let texts: Vec<String> = attachments
             .iter()
             .filter_map(|a| {
@@ -148,7 +148,7 @@ impl DefaultChatEngine {
     }
 
     /// 添付ファイル情報をMessageAttachment形式に変換
-    fn to_message_attachments(attachments: &[Attachment]) -> Vec<MessageAttachment> {
+    pub(crate) fn to_message_attachments(attachments: &[Attachment]) -> Vec<MessageAttachment> {
         attachments
             .iter()
             .map(|a| {

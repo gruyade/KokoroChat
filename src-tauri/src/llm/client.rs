@@ -18,7 +18,7 @@ pub struct LLMClientConfig {
 }
 
 /// メッセージロール
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum MessageRole {
     System,
@@ -79,7 +79,7 @@ impl OpenAICompatibleClient {
     }
 
     /// リクエストボディを構築
-    fn build_request_body(
+    pub(crate) fn build_request_body(
         &self,
         messages: &[ChatMessage],
         config: &LLMClientConfig,
@@ -290,7 +290,7 @@ impl LLMClient for OpenAICompatibleClient {
     }
 
     async fn test_connection(&self, config: &LLMClientConfig) -> Result<(), AppError> {
-        let messages = vec![ChatMessage {
+        let _messages = vec![ChatMessage {
             role: MessageRole::User,
             content: "Hi".to_string(),
             tool_call_id: None,
@@ -363,7 +363,8 @@ mod tests {
         let body = client.build_request_body(&messages, &config, None, false);
 
         assert_eq!(body["model"], "gpt-4");
-        assert_eq!(body["temperature"], 0.7);
+        let temp = body["temperature"].as_f64().unwrap();
+        assert!((temp - 0.7f64).abs() < 1e-5, "temperature mismatch: {}", temp);
         assert_eq!(body["stream"], false);
 
         let msgs = body["messages"].as_array().unwrap();
@@ -634,7 +635,8 @@ mod tests {
         assert_eq!(json["base_url"], "http://localhost:8080/v1");
         assert_eq!(json["model"], "gpt-4");
         assert_eq!(json["api_key"], "sk-test");
-        assert_eq!(json["temperature"], 0.7);
+        let temp = json["temperature"].as_f64().unwrap();
+        assert!((temp - 0.7f64).abs() < 1e-5, "temperature mismatch: {}", temp);
     }
 
     #[test]
