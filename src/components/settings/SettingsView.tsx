@@ -239,6 +239,64 @@ export function SettingsView() {
                 className="w-full px-3 py-1.5 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary"
               />
             </div>
+            <div>
+              <label
+                htmlFor="thought-auto-delete"
+                className="block text-xs text-muted-foreground mb-1"
+              >
+                自動削除閾値（分）: {draft.thought.auto_delete_threshold_minutes === 0 ? '無効（全保持）' : draft.thought.auto_delete_threshold_minutes}
+              </label>
+              <div className="flex gap-2 mb-2">
+                {[
+                  { label: '無効', value: 0 },
+                  { label: '1時間', value: 60 },
+                  { label: '6時間', value: 360 },
+                  { label: '24時間', value: 1440 },
+                  { label: '7日', value: 10080 },
+                ].map((preset) => (
+                  <button
+                    key={preset.value}
+                    type="button"
+                    onClick={() =>
+                      setDraft({
+                        ...draft,
+                        thought: {
+                          ...draft.thought,
+                          auto_delete_threshold_minutes: preset.value,
+                        },
+                      })
+                    }
+                    className={`px-2 py-1 text-xs rounded-md border transition-colors ${
+                      draft.thought.auto_delete_threshold_minutes === preset.value
+                        ? 'border-primary bg-primary/10 text-primary'
+                        : 'border-border text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    {preset.label}
+                  </button>
+                ))}
+              </div>
+              <input
+                id="thought-auto-delete"
+                type="number"
+                min={0}
+                max={43200}
+                value={draft.thought.auto_delete_threshold_minutes}
+                onChange={(e) =>
+                  setDraft({
+                    ...draft,
+                    thought: {
+                      ...draft.thought,
+                      auto_delete_threshold_minutes: parseInt(e.target.value) || 0,
+                    },
+                  })
+                }
+                className="w-full px-3 py-1.5 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+              />
+              <p className="mt-1 text-xs text-muted-foreground">
+                0 を設定すると自動削除を無効化（全思考を保持）
+              </p>
+            </div>
           </div>
         )}
 

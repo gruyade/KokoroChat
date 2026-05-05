@@ -89,6 +89,7 @@ mod bug_condition_tests {
             thought: ThoughtConfig {
                 enabled: false,
                 interval_minutes: 5,
+                auto_delete_threshold_minutes: 1440,
             },
             memory: MemoryConfig {
                 compression_threshold: 50,
@@ -243,6 +244,7 @@ mod preservation_tests {
             thought: ThoughtConfig {
                 enabled: false,
                 interval_minutes: 5,
+                auto_delete_threshold_minutes: 1440,
             },
             memory: MemoryConfig {
                 compression_threshold: 50,
@@ -563,6 +565,7 @@ mod tests {
                     thought: ThoughtConfig {
                         enabled: thought_enabled,
                         interval_minutes: thought_interval,
+                        auto_delete_threshold_minutes: 1440,
                     },
                     memory: MemoryConfig {
                         compression_threshold,

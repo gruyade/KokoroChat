@@ -188,6 +188,7 @@ pub fn run() {
             commands::thought::get_thoughts,
             commands::thought::start_thought_engine,
             commands::thought::stop_thought_engine,
+            commands::thought::delete_thought,
             commands::debug::debug_compress_memory,
             commands::debug::debug_generate_thought,
             commands::debug::debug_trigger_spontaneous,

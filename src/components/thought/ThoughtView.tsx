@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Lightbulb, Loader2 } from 'lucide-react';
+import { Lightbulb, Loader2, Trash2 } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { useCharacterStore } from '../../stores';
 import type { Thought } from '../../types';
@@ -30,6 +30,15 @@ export function ThoughtView() {
       setError(String(e));
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    try {
+      await invoke('delete_thought', { id });
+      setThoughts((prev) => prev.filter((t) => t.id !== id));
+    } catch (e) {
+      setError(String(e));
     }
   };
 
@@ -77,8 +86,15 @@ export function ThoughtView() {
             {thoughts.map((thought) => (
               <div
                 key={thought.id}
-                className="p-4 rounded-lg border border-border bg-card"
+                className="p-4 rounded-lg border border-border bg-card group relative"
               >
+                <button
+                  onClick={() => handleDelete(thought.id)}
+                  className="absolute top-2 right-2 p-1.5 rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10 opacity-0 group-hover:opacity-100 transition-opacity"
+                  aria-label="思考を削除"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
                 <p className="text-sm whitespace-pre-wrap">{thought.content}</p>
                 {thought.context && (
                   <p className="mt-2 text-xs text-muted-foreground italic">

@@ -54,6 +54,13 @@ fn default_spontaneous_probability() -> f32 {
 pub struct ThoughtConfig {
     pub enabled: bool,
     pub interval_minutes: u64,
+    /// 自動削除閾値（分）。0 = 無効（全保持）
+    #[serde(default = "default_thought_auto_delete_threshold")]
+    pub auto_delete_threshold_minutes: u64,
+}
+
+fn default_thought_auto_delete_threshold() -> u64 {
+    1440 // 24時間
 }
 
 /// 記憶管理設定

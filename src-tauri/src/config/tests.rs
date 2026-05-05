@@ -181,6 +181,7 @@ mod tests {
             thought: ThoughtConfig {
                 enabled: true,
                 interval_minutes: 10,
+                auto_delete_threshold_minutes: 1440,
             },
             memory: MemoryConfig {
                 compression_threshold: 100,

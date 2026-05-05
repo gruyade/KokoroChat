@@ -1,7 +1,8 @@
-// Thought Tauri Commands — 思考閲覧・エンジン制御
+// Thought Tauri Commands — 思考閲覧・エンジン制御・削除
 
 use tauri::{AppHandle, State};
 
+use crate::db::repositories::thought as thought_repo;
 use crate::error::AppError;
 use crate::models::Thought;
 use crate::state::AppState;
@@ -14,6 +15,23 @@ pub async fn get_thoughts(
     state: State<'_, AppState>,
 ) -> Result<Vec<Thought>, AppError> {
     state.thought_engine.get_thoughts(&character_id, limit).await
+}
+
+/// 思考を1件削除
+#[tauri::command]
+pub async fn delete_thought(
+    id: String,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    let db_guard = state.db.lock().map_err(|e| {
+        AppError::Database(format!("DB lock failed: {}", e))
+    })?;
+    let conn = db_guard.connection();
+    let deleted = thought_repo::delete_thought(conn, &id)?;
+    if !deleted {
+        return Err(AppError::NotFound(format!("thought {}", id)));
+    }
+    Ok(())
 }
 
 /// 思考エンジン起動（キャラクター選択時にフロントエンドから呼ぶ）

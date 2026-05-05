@@ -221,7 +221,7 @@ mod tests {
         let config = AppConfig {
             models,
             spontaneous: SpontaneousConfig { enabled: false, min_interval_seconds: 60, probability: 0.3 },
-            thought: ThoughtConfig { enabled: false, interval_minutes: 5 },
+            thought: ThoughtConfig { enabled: false, interval_minutes: 5, auto_delete_threshold_minutes: 1440 },
             memory: MemoryConfig { compression_threshold: 50 },
             tts: TTSGlobalConfig { enabled: false },
             ui: UIConfig { theme: Theme::Dark, language: "ja".to_string() },

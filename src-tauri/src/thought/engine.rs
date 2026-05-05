@@ -26,6 +26,7 @@ pub struct ThoughtEvent {
 pub trait ThoughtEngine: Send + Sync {
     async fn generate_thought(&self, character_id: &str) -> Result<Thought, AppError>;
     async fn get_thoughts(&self, character_id: &str, limit: Option<u32>) -> Result<Vec<Thought>, AppError>;
+    async fn cleanup_old_thoughts(&self, character_id: &str, threshold_minutes: u64) -> Result<u32, AppError>;
     fn set_frequency(&self, character_id: &str, interval_minutes: u64);
     fn start(&self, character_id: &str, app_handle: AppHandle);
     fn stop(&self);
@@ -233,6 +234,12 @@ impl ThoughtEngine for DefaultThoughtEngine {
             thought_repo::insert_thought(conn, &thought)?;
         }
 
+        // 自動クリーンアップ（閾値超過の古い思考を削除）
+        let threshold = self.config_manager.get_config().thought.auto_delete_threshold_minutes;
+        if let Err(e) = self.cleanup_old_thoughts(character_id, threshold).await {
+            println!("[thought] cleanup error (non-fatal): {}", e);
+        }
+
         Ok(thought)
     }
 
@@ -240,6 +247,20 @@ impl ThoughtEngine for DefaultThoughtEngine {
         let db_guard = self.db.lock().unwrap();
         let conn = db_guard.connection();
         thought_repo::get_thoughts(conn, character_id, limit)
+    }
+
+    async fn cleanup_old_thoughts(&self, character_id: &str, threshold_minutes: u64) -> Result<u32, AppError> {
+        // threshold=0 は全保持（クリーンアップスキップ）
+        if threshold_minutes == 0 {
+            return Ok(0);
+        }
+
+        let cutoff = chrono::Utc::now() - chrono::Duration::minutes(threshold_minutes as i64);
+        let cutoff_str = cutoff.to_rfc3339();
+
+        let db_guard = self.db.lock().unwrap();
+        let conn = db_guard.connection();
+        thought_repo::delete_thoughts_older_than(conn, character_id, &cutoff_str)
     }
 
     fn set_frequency(&self, character_id: &str, interval_minutes: u64) {
@@ -383,6 +404,18 @@ impl ThoughtEngine for DefaultThoughtEngine {
                         let conn = db_guard.connection();
                         if thought_repo::insert_thought(conn, &thought).is_err() {
                             continue;
+                        }
+                    }
+
+                    // 自動クリーンアップ（閾値超過の古い思考を削除）
+                    let threshold = config_manager.get_config().thought.auto_delete_threshold_minutes;
+                    if threshold > 0 {
+                        let cutoff = chrono::Utc::now() - chrono::Duration::minutes(threshold as i64);
+                        let cutoff_str = cutoff.to_rfc3339();
+                        let db_guard = db.lock().unwrap();
+                        let conn = db_guard.connection();
+                        if let Err(e) = thought_repo::delete_thoughts_older_than(conn, &character_id, &cutoff_str) {
+                            println!("[thought] cleanup error (non-fatal): {}", e);
                         }
                     }
 

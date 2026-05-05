@@ -23,6 +23,7 @@ export interface SpontaneousConfig {
 export interface ThoughtConfig {
   enabled: boolean;
   interval_minutes: number;
+  auto_delete_threshold_minutes: number;
 }
 
 /** 記憶管理設定 */
