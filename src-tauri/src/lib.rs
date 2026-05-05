@@ -39,6 +39,9 @@ pub fn run() {
         .setup(|app| {
             use tauri::Manager;
 
+            // .envファイルから環境変数をロード（存在しなくてもエラーにしない）
+            dotenvy::dotenv().ok();
+
             // アプリデータディレクトリ取得
             let app_data_dir = app
                 .path()

@@ -3,6 +3,7 @@
 use tauri::State;
 
 use crate::error::AppError;
+#[allow(unused_imports)]
 use crate::memory::manager::MemoryManager;
 use crate::models::Memory;
 use crate::state::AppState;

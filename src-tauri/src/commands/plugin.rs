@@ -4,6 +4,7 @@ use tauri::State;
 
 use crate::error::AppError;
 use crate::models::plugin::PluginInfo;
+#[allow(unused_imports)]
 use crate::plugin::registry::PluginRegistry;
 use crate::state::AppState;
 
