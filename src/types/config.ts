@@ -1,0 +1,68 @@
+/** モデルの用途 */
+export type ModelPurpose = 'chat' | 'memory' | 'thought' | 'character_generation';
+
+/** テーマ */
+export type Theme = 'light' | 'dark';
+
+/** LLMモデル接続設定 */
+export interface ModelSettings {
+  base_url: string;
+  model: string;
+  api_key?: string;
+  temperature: number;
+}
+
+/** 自発的発話設定 */
+export interface SpontaneousConfig {
+  enabled: boolean;
+  min_interval_seconds: number;
+}
+
+/** 独自思考設定 */
+export interface ThoughtConfig {
+  enabled: boolean;
+  interval_minutes: number;
+}
+
+/** 記憶管理設定 */
+export interface MemoryConfig {
+  /** 圧縮トリガーとなるメッセージ数閾値 */
+  compression_threshold: number;
+}
+
+/** TTS全体設定 */
+export interface TTSGlobalConfig {
+  enabled: boolean;
+}
+
+/** UI設定 */
+export interface UIConfig {
+  theme: Theme;
+  language: string;
+}
+
+/** プラグイン設定 */
+export interface PluginsConfig {
+  enabled_plugins: string[];
+  /** プラグイン名 → 固有設定 */
+  plugin_settings: Record<string, unknown>;
+}
+
+/** 添付ファイル設定 */
+export interface AttachmentConfig {
+  /** デフォルト10MB */
+  max_file_size_bytes: number;
+  allowed_extensions: string[];
+}
+
+/** アプリケーション全体設定 */
+export interface AppConfig {
+  models: Record<ModelPurpose, ModelSettings>;
+  spontaneous: SpontaneousConfig;
+  thought: ThoughtConfig;
+  memory: MemoryConfig;
+  tts: TTSGlobalConfig;
+  ui: UIConfig;
+  plugins: PluginsConfig;
+  attachment: AttachmentConfig;
+}
