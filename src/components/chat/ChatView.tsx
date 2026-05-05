@@ -8,48 +8,33 @@ import { StreamingIndicator } from './StreamingIndicator';
 export function ChatView() {
   const { currentSessionId, messages, isStreaming, streamingContent, error, sendMessage, createSession } =
     useChatStore();
-  const { characters, selectedCharacterId, selectCharacter, fetchCharacters } = useCharacterStore();
+  const { selectedCharacterId, characters } = useCharacterStore();
   const messagesEndRef = useRef<HTMLDivElement>(null);
-
-  // 初回マウント時にキャラクター一覧を取得
-  useEffect(() => {
-    fetchCharacters();
-  }, [fetchCharacters]);
 
   // Auto-scroll on new messages or streaming content
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, streamingContent]);
 
-  // No session selected — show character selection + new session UI
+  // セッション未選択 — 新規チャット開始UI
   if (!currentSessionId) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground gap-4 p-6">
         <MessageSquare className="h-12 w-12" />
-        <p className="text-sm">新しいチャットを開始</p>
-
-        {characters.length === 0 ? (
-          <p className="text-xs">先にキャラクターを作成してください</p>
+        {!selectedCharacterId ? (
+          <p className="text-sm">サイドバーからキャラクターを選択してください</p>
         ) : (
-          <div className="flex flex-col items-center gap-3 w-full max-w-xs">
-            <select
-              value={selectedCharacterId ?? ''}
-              onChange={(e) => selectCharacter(e.target.value || null)}
-              className="w-full px-3 py-2 rounded-md border border-border bg-background text-foreground text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-            >
-              <option value="">キャラクターを選択...</option>
-              {characters.map((c) => (
-                <option key={c.id} value={c.id}>{c.name}</option>
-              ))}
-            </select>
+          <>
+            <p className="text-sm">
+              {characters.find((c) => c.id === selectedCharacterId)?.name ?? 'キャラクター'}とチャットを開始
+            </p>
             <button
-              onClick={() => selectedCharacterId && createSession(selectedCharacterId)}
-              disabled={!selectedCharacterId}
-              className="px-4 py-2 text-sm rounded-md bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              onClick={() => createSession(selectedCharacterId)}
+              className="px-4 py-2 text-sm rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
             >
-              チャット開始
+              新しいチャットを開始
             </button>
-          </div>
+          </>
         )}
       </div>
     );

@@ -1,96 +1,97 @@
-import {
-  MessageSquare,
-  Users,
-  Settings,
-  Puzzle,
-  Brain,
-  Lightbulb,
-  Moon,
-  Sun,
-  PanelLeftClose,
-  PanelLeft,
-} from 'lucide-react';
+import { MessageSquare, Users, Settings } from 'lucide-react';
 import { useUIStore } from '../../stores';
+import { CharacterSelector } from './CharacterSelector';
 import { ChatList } from './ChatList';
-import { CharacterList } from './CharacterList';
+import { SidebarThoughtList } from './SidebarThoughtList';
+import { SidebarMemoryList } from './SidebarMemoryList';
 
-const navItems = [
-  { view: 'chat' as const, icon: MessageSquare, label: 'チャット' },
-  { view: 'characters' as const, icon: Users, label: 'キャラクター' },
-  { view: 'plugins' as const, icon: Puzzle, label: 'プラグイン' },
-  { view: 'memory' as const, icon: Brain, label: '記憶' },
-  { view: 'thought' as const, icon: Lightbulb, label: '思考' },
-  { view: 'settings' as const, icon: Settings, label: '設定' },
+const sidebarTabs = [
+  { tab: 'chat' as const, label: 'チャット' },
+  { tab: 'thought' as const, label: '思考' },
+  { tab: 'memory' as const, label: '記憶' },
 ];
 
 export function Sidebar() {
-  const { theme, sidebarOpen, activeView, toggleTheme, toggleSidebar, setActiveView } =
-    useUIStore();
+  const { sidebarTab, activeView, setSidebarTab, setActiveView } = useUIStore();
+
+  const handleBackToChat = () => {
+    setActiveView('chat');
+  };
 
   return (
-    <aside
-      className={`flex flex-col border-r border-border bg-card transition-all duration-200 ${
-        sidebarOpen ? 'w-64' : 'w-14'
-      }`}
-    >
-      {/* Header */}
-      <div className="flex items-center justify-between px-3 py-3 border-b border-border">
-        {sidebarOpen && (
-          <h1 className="text-sm font-semibold text-foreground truncate">AI Character Chat</h1>
-        )}
-        <button
-          onClick={toggleSidebar}
-          className="p-1.5 rounded-md text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-          aria-label={sidebarOpen ? 'サイドバーを閉じる' : 'サイドバーを開く'}
-        >
-          {sidebarOpen ? (
-            <PanelLeftClose className="h-4 w-4" />
-          ) : (
-            <PanelLeft className="h-4 w-4" />
-          )}
-        </button>
+    <aside className="w-72 flex flex-col border-r border-border bg-card">
+      {/* App Header — クリックでチャット画面に戻る */}
+      <div
+        className="p-4 border-b border-border cursor-pointer hover:bg-muted/50 transition-colors"
+        onClick={handleBackToChat}
+      >
+        <h1 className="text-lg font-semibold text-primary">AI Character Chat</h1>
       </div>
 
-      {/* Navigation */}
-      <nav className="flex flex-col gap-0.5 px-2 py-2">
-        {navItems.map(({ view, icon: Icon, label }) => (
+      {/* Character Selector */}
+      <CharacterSelector />
+
+      {/* Content Tabs: チャット / 思考 / 記憶 */}
+      <div className="flex border-b border-border">
+        {sidebarTabs.map(({ tab, label }) => (
           <button
-            key={view}
-            onClick={() => setActiveView(view)}
-            className={`flex items-center gap-2 rounded-md px-3 py-2 text-sm transition-colors ${
-              activeView === view
-                ? 'bg-accent text-accent-foreground font-medium'
-                : 'text-muted-foreground hover:bg-accent/50 hover:text-accent-foreground'
+            key={tab}
+            onClick={() => {
+              setSidebarTab(tab);
+              setActiveView('chat'); // タブクリックでメインをチャットに戻す
+            }}
+            className={`flex-1 py-2 text-xs transition-colors ${
+              sidebarTab === tab
+                ? 'text-primary border-b-2 border-primary font-medium'
+                : 'text-muted-foreground hover:text-foreground'
             }`}
-            title={label}
           >
-            <Icon className="h-4 w-4 shrink-0" />
-            {sidebarOpen && <span>{label}</span>}
+            {label}
           </button>
         ))}
-      </nav>
+      </div>
 
-      {/* Content area — shows list based on active view */}
-      {sidebarOpen && (
-        <div className="flex-1 overflow-y-auto border-t border-border pt-2">
-          {activeView === 'chat' && <ChatList />}
-          {activeView === 'characters' && <CharacterList />}
-        </div>
-      )}
+      {/* Tab Content */}
+      <div className="flex-1 overflow-y-auto">
+        {sidebarTab === 'chat' && <ChatList />}
+        {sidebarTab === 'thought' && <SidebarThoughtList />}
+        {sidebarTab === 'memory' && <SidebarMemoryList />}
+      </div>
 
-      {/* Footer — theme toggle */}
-      <div className="mt-auto border-t border-border px-2 py-2">
+      {/* Bottom Nav Icons */}
+      <div className="p-2 border-t border-border flex gap-1">
         <button
-          onClick={toggleTheme}
-          className="flex items-center gap-2 rounded-md px-3 py-2 text-sm text-muted-foreground hover:bg-accent hover:text-accent-foreground w-full"
-          title={theme === 'dark' ? 'ライトモード' : 'ダークモード'}
+          onClick={handleBackToChat}
+          className={`flex-1 p-2 rounded-lg transition-colors ${
+            activeView === 'chat'
+              ? 'bg-accent text-accent-foreground'
+              : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+          }`}
+          title="チャット"
         >
-          {theme === 'dark' ? (
-            <Sun className="h-4 w-4 shrink-0" />
-          ) : (
-            <Moon className="h-4 w-4 shrink-0" />
-          )}
-          {sidebarOpen && <span>{theme === 'dark' ? 'ライトモード' : 'ダークモード'}</span>}
+          <MessageSquare className="w-5 h-5 mx-auto" />
+        </button>
+        <button
+          onClick={() => setActiveView('characters')}
+          className={`flex-1 p-2 rounded-lg transition-colors ${
+            activeView === 'characters'
+              ? 'bg-accent text-accent-foreground'
+              : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+          }`}
+          title="キャラクター管理"
+        >
+          <Users className="w-5 h-5 mx-auto" />
+        </button>
+        <button
+          onClick={() => setActiveView('settings')}
+          className={`flex-1 p-2 rounded-lg transition-colors ${
+            activeView === 'settings'
+              ? 'bg-accent text-accent-foreground'
+              : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+          }`}
+          title="設定"
+        >
+          <Settings className="w-5 h-5 mx-auto" />
         </button>
       </div>
     </aside>

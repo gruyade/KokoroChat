@@ -321,11 +321,7 @@ impl ChatEngine for DefaultChatEngine {
             chat_repo::insert_message(conn, &assistant_message)?;
 
             // セッションメタデータ更新
-            let preview = if full_response.len() > 50 {
-                format!("{}...", &full_response[..50])
-            } else {
-                full_response.clone()
-            };
+            let preview = truncate_str(&full_response, 50);
             chat_repo::update_session_metadata(conn, session_id, &assistant_now, &preview)?;
         }
 
@@ -467,11 +463,7 @@ impl DefaultChatEngine {
 
                 chat_repo::insert_message(conn, &assistant_message)?;
 
-                let preview = if text.len() > 50 {
-                    format!("{}...", &text[..50])
-                } else {
-                    text
-                };
+                let preview = truncate_str(&text, 50);
                 chat_repo::update_session_metadata(conn, session_id, &assistant_now, &preview)?;
             }
             LLMResponse::ToolCalls(tool_calls) => {
@@ -513,5 +505,15 @@ impl DefaultChatEngine {
         }
 
         Ok(())
+    }
+}
+
+/// UTF-8安全な文字列切り詰め（文字境界を考慮）
+fn truncate_str(s: &str, max_chars: usize) -> String {
+    let truncated: String = s.chars().take(max_chars).collect();
+    if truncated.len() < s.len() {
+        format!("{}...", truncated)
+    } else {
+        truncated
     }
 }

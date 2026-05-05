@@ -29,6 +29,7 @@ use models::config::ModelPurpose;
 use plugin::builtin::{CalculatorPlugin, FileOpsPlugin, WebSearchPlugin};
 use plugin::registry::{DefaultPluginRegistry, PluginRegistry};
 use state::AppState;
+use thought::engine::DefaultThoughtEngine;
 use tts::connector::DefaultTTSConnector;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -127,7 +128,7 @@ pub fn run() {
                 Arc::new(DefaultMemoryManager::new(
                     db_for_memory,
                     llm_client.clone(),
-                    chat_llm_config,
+                    chat_llm_config.clone(),
                     config_manager
                         .get_config()
                         .memory
@@ -155,6 +156,16 @@ pub fn run() {
                 .ok();
 
             // AppState構築
+            let db_for_thought = Arc::new(std::sync::Mutex::new(
+                Database::open(&db_path).expect("Failed to open database for thought"),
+            ));
+            let thought_engine: Arc<dyn thought::engine::ThoughtEngine> =
+                Arc::new(DefaultThoughtEngine::new(
+                    db_for_thought,
+                    llm_client.clone(),
+                    chat_llm_config.clone(),
+                ));
+
             let app_state = AppState {
                 character_creator,
                 chat_engine,
@@ -164,6 +175,7 @@ pub fn run() {
                 llm_client,
                 attachment_processor,
                 plugin_registry,
+                thought_engine,
             };
 
             app.manage(app_state);
@@ -195,6 +207,7 @@ pub fn run() {
             commands::plugin::disable_plugin,
             commands::plugin::get_plugin_config,
             commands::plugin::set_plugin_config,
+            commands::thought::get_thoughts,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
