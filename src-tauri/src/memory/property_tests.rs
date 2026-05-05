@@ -357,4 +357,70 @@ mod tests {
             })?;
         }
     }
+
+    // ========================================
+    // Property 14: No re-compression after previous compression without new messages
+    // ========================================
+    //
+    // **Validates: Requirements 5.1**
+    //
+    // After a successful compression, calling check_and_compress again
+    // without adding new messages SHALL NOT create additional Memory records.
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(32))]
+
+        #[test]
+        fn prop_no_recompression_without_new_messages(
+            threshold in arb_threshold(),
+            extra in 0u32..10,
+        ) {
+            let msg_count = threshold + extra;
+
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(async {
+                let db = setup_db();
+                let session_id = "sess-001";
+                create_session(&db, session_id);
+                insert_messages(&db, session_id, msg_count);
+
+                let db_arc = Arc::new(Mutex::new(db));
+                let mock_llm = Arc::new(MockLLMClient::new("要約テスト結果"));
+
+                let manager = DefaultMemoryManager::new(
+                    db_arc.clone(),
+                    mock_llm,
+                    default_llm_config(),
+                    threshold,
+                    Arc::new(tokio::sync::Mutex::new(())),
+                );
+
+                // 1回目の圧縮
+                manager.check_and_compress(session_id).await.unwrap();
+
+                {
+                    let db_lock = db_arc.lock().unwrap();
+                    let memories = memory_repo::list_memories(db_lock.connection(), "char-001").unwrap();
+                    prop_assert_eq!(memories.len(), 1, "First compression should create one memory");
+                }
+
+                // 2回目: 新規メッセージなし → 再圧縮されない
+                manager.check_and_compress(session_id).await.unwrap();
+
+                {
+                    let db_lock = db_arc.lock().unwrap();
+                    let memories = memory_repo::list_memories(db_lock.connection(), "char-001").unwrap();
+                    prop_assert_eq!(
+                        memories.len(),
+                        1,
+                        "No additional memory should be created without new messages (msg_count={}, threshold={})",
+                        msg_count,
+                        threshold
+                    );
+                }
+
+                Ok(())
+            })?;
+        }
+    }
 }

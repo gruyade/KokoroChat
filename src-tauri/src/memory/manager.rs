@@ -113,29 +113,49 @@ impl DefaultMemoryManager {
 #[async_trait]
 impl MemoryManager for DefaultMemoryManager {
     async fn check_and_compress(&self, session_id: &str) -> Result<(), AppError> {
-        // 1. セッションのメッセージを取得
-        let (messages, character_id) = {
+        // 1. セッションのメッセージを取得し、前回圧縮時点以降のみ抽出
+        let (messages_to_compress, character_id) = {
             let db = self.db.lock().map_err(|e| {
                 AppError::Database(format!("Failed to lock database: {}", e))
             })?;
             let conn = db.connection();
 
-            let messages = chat_repo::get_messages(conn, session_id)?;
+            let all_messages = chat_repo::get_messages(conn, session_id)?;
 
             // セッション情報からcharacter_idを取得
             let session = chat_repo::get_session(conn, session_id)?
                 .ok_or_else(|| AppError::NotFound(format!("Session not found: {}", session_id)))?;
 
-            (messages, session.character_id)
+            // 前回圧縮の最終メッセージIDを取得
+            let memories = memory_repo::list_memories(conn, &session.character_id)?;
+            let last_compressed_message_id = memories.iter()
+                .filter(|m| m.source_session_id.as_deref() == Some(session_id))
+                .filter_map(|m| m.source_message_to.as_deref())
+                .next(); // list_memories は DESC 順なので最初のマッチが最新
+
+            // 前回圧縮時点以降のメッセージのみ抽出
+            let messages_to_compress = if let Some(last_id) = last_compressed_message_id {
+                if let Some(pos) = all_messages.iter().position(|m| m.id == last_id) {
+                    all_messages[pos + 1..].to_vec()
+                } else {
+                    // 前回圧縮メッセージが見つからない（削除済み等）場合は全件対象
+                    all_messages
+                }
+            } else {
+                // 初回圧縮: 全メッセージ対象
+                all_messages
+            };
+
+            (messages_to_compress, session.character_id)
         };
 
-        // 2. メッセージ数が閾値未満なら何もしない
-        if (messages.len() as u32) < self.compression_threshold {
+        // 2. 新規メッセージ数が閾値未満なら何もしない
+        if (messages_to_compress.len() as u32) < self.compression_threshold {
             return Ok(());
         }
 
         // 3. メッセージを圧縮用テキストに変換
-        let conversation_text = Self::format_messages_for_compression(&messages);
+        let conversation_text = Self::format_messages_for_compression(&messages_to_compress);
 
         // 4. LLMに要約を依頼
         let llm_messages = vec![
@@ -177,8 +197,8 @@ impl MemoryManager for DefaultMemoryManager {
             character_id,
             content: summary,
             source_session_id: Some(session_id.to_string()),
-            source_message_from: messages.first().map(|m| m.id.clone()),
-            source_message_to: messages.last().map(|m| m.id.clone()),
+            source_message_from: messages_to_compress.first().map(|m| m.id.clone()),
+            source_message_to: messages_to_compress.last().map(|m| m.id.clone()),
             created_at: now.clone(),
             updated_at: now,
         };
@@ -408,6 +428,85 @@ mod tests {
             memories[0].source_message_to,
             Some("msg-049".to_string())
         );
+    }
+
+    #[tokio::test]
+    async fn test_check_and_compress_no_retrigger_after_compression() {
+        // 一度圧縮した後、新規メッセージがなければ再圧縮されない
+        let db = setup_db();
+        create_session(&db, "sess-001");
+        insert_messages(&db, "sess-001", 50);
+
+        let db_arc = Arc::new(Mutex::new(db));
+        let mock_llm = Arc::new(MockLLMClient::new(
+            "- ユーザーは猫が好き\n- プログラミングの話題が多い",
+        ));
+        let llm_lock = Arc::new(tokio::sync::Mutex::new(()));
+
+        let manager = DefaultMemoryManager::new(db_arc.clone(), mock_llm, default_config(), 50, llm_lock);
+
+        // 1回目の圧縮
+        manager.check_and_compress("sess-001").await.unwrap();
+
+        {
+            let db_lock = db_arc.lock().unwrap();
+            let memories = memory_repo::list_memories(db_lock.connection(), "char-001").unwrap();
+            assert_eq!(memories.len(), 1);
+        }
+
+        // 2回目: 新規メッセージなし → 圧縮されない
+        manager.check_and_compress("sess-001").await.unwrap();
+
+        {
+            let db_lock = db_arc.lock().unwrap();
+            let memories = memory_repo::list_memories(db_lock.connection(), "char-001").unwrap();
+            assert_eq!(memories.len(), 1, "No new memory should be created without new messages");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_check_and_compress_only_new_messages_after_previous_compression() {
+        // 前回圧縮後に追加されたメッセージのみが閾値判定対象
+        let db = setup_db();
+        create_session(&db, "sess-001");
+        insert_messages(&db, "sess-001", 50);
+
+        let db_arc = Arc::new(Mutex::new(db));
+        let mock_llm = Arc::new(MockLLMClient::new("要約"));
+        let llm_lock = Arc::new(tokio::sync::Mutex::new(()));
+
+        let manager = DefaultMemoryManager::new(db_arc.clone(), mock_llm, default_config(), 50, llm_lock);
+
+        // 1回目の圧縮
+        manager.check_and_compress("sess-001").await.unwrap();
+
+        // 閾値未満の新規メッセージを追加（10件）
+        {
+            let db_lock = db_arc.lock().unwrap();
+            let conn = db_lock.connection();
+            for i in 50..60 {
+                let msg = ChatMessageRecord {
+                    id: format!("msg-{:03}", i),
+                    session_id: "sess-001".to_string(),
+                    role: if i % 2 == 0 { ChatRole::User } else { ChatRole::Assistant },
+                    content: format!("Message {}", i),
+                    attachments: None,
+                    tool_calls: None,
+                    tool_call_id: None,
+                    created_at: format!("2024-01-01T{:02}:{:02}:00Z", i / 60, i % 60),
+                };
+                chat_repo::insert_message(conn, &msg).unwrap();
+            }
+        }
+
+        // 新規10件 < 閾値50 → 圧縮されない
+        manager.check_and_compress("sess-001").await.unwrap();
+
+        {
+            let db_lock = db_arc.lock().unwrap();
+            let memories = memory_repo::list_memories(db_lock.connection(), "char-001").unwrap();
+            assert_eq!(memories.len(), 1, "Should not compress when new messages < threshold");
+        }
     }
 
     #[tokio::test]
