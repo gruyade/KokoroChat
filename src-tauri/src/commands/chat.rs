@@ -3,7 +3,7 @@
 use tauri::{AppHandle, State};
 
 use crate::error::AppError;
-use crate::models::{ChatMessageRecord, ChatSession};
+use crate::models::{ChatMessageRecord, ChatRole, ChatSession};
 use crate::state::AppState;
 
 /// 新規チャットセッション作成
@@ -30,22 +30,57 @@ pub async fn send_message(
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
     let _ = attachments;
-    state
-        .chat_engine
-        .send_message(&session_id, &content, None, &app_handle)
-        .await?;
+
+    // AbortHandle 統合: LLM呼び出しを tokio::spawn でラップ
+    let chat_engine = state.chat_engine.clone();
+    let stream_abort_manager = state.stream_abort_manager.clone();
+    let session_id_clone = session_id.clone();
+    let content_clone = content.clone();
+    let app_handle_clone = app_handle.clone();
+
+    // 部分コンテンツ蓄積用
+    let partial_content = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+    let partial_content_for_register = partial_content.clone();
+
+    let join_handle = tokio::spawn(async move {
+        chat_engine
+            .send_message(&session_id_clone, &content_clone, None, &app_handle_clone)
+            .await
+    });
+
+    // AbortHandle を StreamAbortManager に登録
+    stream_abort_manager.register(
+        &session_id,
+        join_handle.abort_handle(),
+        partial_content_for_register,
+    );
+
+    // タスク完了を待機
+    let result = match join_handle.await {
+        Ok(inner_result) => {
+            // 正常完了: StreamAbortManager からクリーンアップ
+            stream_abort_manager.remove(&session_id);
+            inner_result
+        }
+        Err(join_err) => {
+            if join_err.is_cancelled() {
+                // 中断された場合: 部分コンテンツは stop_generation コマンド側で処理済み
+                return Ok(());
+            }
+            // パニック等の予期しないエラー
+            stream_abort_manager.remove(&session_id);
+            return Err(AppError::Io(format!("Task panicked: {}", join_err)));
+        }
+    };
+
+    result?;
 
     // バックグラウンドで記憶圧縮チェック
-    // 直列化保証: chat_engine.send_message()内でllm_lockを取得→ストリーミング完了→解放済み。
-    // memory_manager.check_and_compress()内部でllm_lockを再取得するため、
-    // 他のLLMリクエストと競合しない（task 3.3, 3.4で導入済み）。
     let memory_manager = state.memory_manager.clone();
     let session_id_for_memory = session_id.clone();
     tokio::spawn(async move {
         let _ = memory_manager.check_and_compress(&session_id_for_memory).await;
     });
-
-    // 自発的発話はフロントエンドのタイマーから trigger_spontaneous_check コマンドで呼ばれる
 
     Ok(())
 }
@@ -221,6 +256,54 @@ pub async fn regenerate_message(
         .chat_engine
         .regenerate(&session_id, &message_id, &app_handle)
         .await
+}
+
+/// 生成停止
+///
+/// アクティブなストリーミングを中断し、部分コンテンツをassistantメッセージとして保存する。
+/// アクティブなストリームがない場合は何もせず Ok(()) を返す。
+#[tauri::command]
+pub async fn stop_generation(
+    session_id: String,
+    app_handle: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    use crate::db::repositories::chat as chat_repo;
+    use tauri::Emitter;
+
+    let partial_content = state.stream_abort_manager.abort(&session_id);
+
+    if let Some(content) = partial_content {
+        // 部分コンテンツが空でなければ assistant メッセージとして DB 保存
+        if !content.is_empty() {
+            let now = chrono::Utc::now().to_rfc3339();
+            let msg = ChatMessageRecord {
+                id: uuid::Uuid::new_v4().to_string(),
+                session_id: session_id.clone(),
+                role: ChatRole::Assistant,
+                content: content.clone(),
+                attachments: None,
+                tool_calls: None,
+                tool_call_id: None,
+                created_at: now,
+            };
+
+            let db = state.db.lock().map_err(|e| AppError::Database(format!("{}", e)))?;
+            chat_repo::insert_message(db.connection(), &msg)?;
+        }
+
+        // done イベントを発火してフロントエンドに完了を通知
+        let _ = app_handle.emit(
+            "chat:stream",
+            crate::chat::engine::ChatStreamEvent {
+                session_id: session_id.clone(),
+                chunk: String::new(),
+                done: true,
+            },
+        );
+    }
+
+    Ok(())
 }
 
 /// メッセージ削除

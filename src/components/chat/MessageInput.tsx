@@ -1,12 +1,14 @@
 import { useState, useRef, useCallback, type KeyboardEvent } from 'react';
-import { Send, Paperclip, Info } from 'lucide-react';
+import { Send, Paperclip, Info, Square } from 'lucide-react';
 
 interface MessageInputProps {
   onSend: (content: string, isSystem?: boolean) => void;
   disabled?: boolean;
+  isAbortable?: boolean;
+  onStop?: () => void;
 }
 
-export function MessageInput({ onSend, disabled = false }: MessageInputProps) {
+export function MessageInput({ onSend, disabled = false, isAbortable = false, onStop }: MessageInputProps) {
   const [value, setValue] = useState('');
   const [systemMode, setSystemMode] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -91,20 +93,31 @@ export function MessageInput({ onSend, disabled = false }: MessageInputProps) {
           }`}
         />
 
-        {/* Send button */}
-        <button
-          onClick={handleSend}
-          disabled={disabled || !value.trim()}
-          className={`shrink-0 p-2 rounded-md disabled:opacity-50 disabled:cursor-not-allowed transition-colors ${
-            systemMode
-              ? 'bg-muted text-foreground hover:bg-muted/80'
-              : 'bg-primary text-primary-foreground hover:bg-primary/90'
-          }`}
-          aria-label="送信"
-          title="送信"
-        >
-          <Send className="h-5 w-5" />
-        </button>
+        {/* Send / Stop button */}
+        {isAbortable ? (
+          <button
+            onClick={onStop}
+            className="shrink-0 p-2 rounded-md bg-destructive text-destructive-foreground hover:bg-destructive/90 transition-colors"
+            aria-label="生成を停止"
+            title="生成を停止"
+          >
+            <Square className="h-5 w-5" />
+          </button>
+        ) : (
+          <button
+            onClick={handleSend}
+            disabled={disabled || !value.trim()}
+            className={`shrink-0 p-2 rounded-md disabled:opacity-50 disabled:cursor-not-allowed transition-colors ${
+              systemMode
+                ? 'bg-muted text-foreground hover:bg-muted/80'
+                : 'bg-primary text-primary-foreground hover:bg-primary/90'
+            }`}
+            aria-label="送信"
+            title="送信"
+          >
+            <Send className="h-5 w-5" />
+          </button>
+        )}
       </div>
     </div>
   );

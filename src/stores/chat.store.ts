@@ -7,6 +7,7 @@ interface ChatState {
   currentSessionId: string | null;
   messages: ChatMessageRecord[];
   isStreaming: boolean;
+  isAbortable: boolean;
   streamingContent: string;
   error: string | null;
   fetchSessions: (characterId: string) => Promise<void>;
@@ -18,6 +19,7 @@ interface ChatState {
   appendStreamChunk: (chunk: string) => void;
   finishStreaming: (fullContent: string) => void;
   regenerateMessage: (messageId: string) => Promise<void>;
+  stopGeneration: () => Promise<void>;
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -25,6 +27,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   currentSessionId: null,
   messages: [],
   isStreaming: false,
+  isAbortable: false,
   streamingContent: '',
   error: null,
 
@@ -76,7 +79,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       content,
       created_at: new Date().toISOString(),
     };
-    set({ messages: [...messages, userMessage], isStreaming: true, streamingContent: '', error: null });
+    set({ messages: [...messages, userMessage], isStreaming: true, isAbortable: true, streamingContent: '', error: null });
 
     try {
       await invoke('send_message', {
@@ -85,7 +88,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
         attachments: attachments ?? null,
       });
     } catch (e) {
-      set({ error: String(e), isStreaming: false });
+      set({ error: String(e), isStreaming: false, isAbortable: false });
       throw e;
     }
   },
@@ -135,6 +138,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set({
       messages: [...messages, assistantMessage],
       isStreaming: false,
+      isAbortable: false,
       streamingContent: '',
     });
   },
@@ -147,6 +151,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set({
       messages: messages.filter((m) => m.id !== messageId),
       isStreaming: true,
+      isAbortable: true,
       streamingContent: '',
       error: null,
     });
@@ -157,7 +162,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
         messageId,
       });
     } catch (e) {
-      set({ error: String(e), isStreaming: false });
+      set({ error: String(e), isStreaming: false, isAbortable: false });
     }
+  },
+
+  stopGeneration: async () => {
+    const { currentSessionId } = get();
+    if (!currentSessionId) return;
+
+    try {
+      await invoke('stop_generation', { sessionId: currentSessionId });
+    } catch {
+      // 停止コマンド失敗時は無視（ストリーミングは自然完了を待つ）
+    }
+    set({ isAbortable: false });
   },
 }));

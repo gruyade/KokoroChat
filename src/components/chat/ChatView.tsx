@@ -7,7 +7,7 @@ import { MessageInput } from './MessageInput';
 import { StreamingIndicator } from './StreamingIndicator';
 
 export function ChatView() {
-  const { currentSessionId, messages, isStreaming, streamingContent, error, sendMessage, createSession, fetchHistory } =
+  const { currentSessionId, messages, isStreaming, isAbortable, streamingContent, error, sendMessage, createSession, fetchHistory, stopGeneration } =
     useChatStore();
   const { selectedCharacterId, characters } = useCharacterStore();
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -129,7 +129,7 @@ export function ChatView() {
       )}
 
       {/* Input area */}
-      <MessageInput onSend={handleSend} disabled={isStreaming} />
+      <MessageInput onSend={handleSend} disabled={isStreaming} isAbortable={isAbortable} onStop={stopGeneration} />
     </div>
   );
 }

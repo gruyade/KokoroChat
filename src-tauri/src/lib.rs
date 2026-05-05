@@ -20,6 +20,7 @@ use std::sync::Arc;
 
 use attachment::processor::DefaultAttachmentProcessor;
 use character::creator::DefaultCharacterCreator;
+use chat::abort::StreamAbortManager;
 use chat::engine::DefaultChatEngine;
 use config::model_config::ModelConfigManager;
 use db::database::Database;
@@ -150,6 +151,7 @@ pub fn run() {
                 thought_engine,
                 llm_lock,
                 db: db_for_chat.clone(),
+                stream_abort_manager: Arc::new(StreamAbortManager::new()),
             };
 
             app.manage(app_state);
@@ -170,6 +172,7 @@ pub fn run() {
             commands::chat::delete_session,
             commands::chat::delete_message,
             commands::chat::regenerate_message,
+            commands::chat::stop_generation,
             commands::chat::trigger_spontaneous_check,
             commands::config::get_config,
             commands::config::set_config,

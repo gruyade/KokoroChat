@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::attachment::processor::AttachmentProcessor;
 use crate::character::creator::CharacterCreator;
+use crate::chat::abort::StreamAbortManager;
 use crate::chat::engine::ChatEngine;
 use crate::config::model_config::ModelConfigManager;
 use crate::db::database::Database;
@@ -28,6 +29,8 @@ pub struct AppState {
     pub llm_lock: Arc<tokio::sync::Mutex<()>>,
     /// デバッグ用DB参照
     pub db: Arc<Mutex<Database>>,
+    /// ストリーミング中断管理
+    pub stream_abort_manager: Arc<StreamAbortManager>,
 }
 
 impl AppState {
