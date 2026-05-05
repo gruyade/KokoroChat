@@ -26,6 +26,14 @@ impl ModelConfigManager {
         })
     }
 
+    /// テスト用: 指定した設定で作成（ファイルI/Oなし）
+    pub fn new_with_config(config: AppConfig) -> Self {
+        Self {
+            config_path: PathBuf::from("/dev/null"),
+            config: Mutex::new(config),
+        }
+    }
+
     /// 設定ファイルからロード。存在しなければデフォルト設定を返す。
     /// 環境変数によるフォールバックも適用。
     pub fn load_or_default(config_path: &Path) -> Result<AppConfig, AppError> {
@@ -144,6 +152,7 @@ impl ModelConfigManager {
             spontaneous: SpontaneousConfig {
                 enabled: false,
                 min_interval_seconds: 60,
+                probability: 0.3,
             },
             thought: ThoughtConfig {
                 enabled: false,
@@ -189,7 +198,7 @@ impl ModelConfigManager {
     }
 
     /// 特定用途の環境変数フォールバックを適用。
-    /// 環境変数が設定されている場合は常に優先する。
+    /// 設定値が空の場合のみ環境変数を適用する（非空値は保持）。
     fn apply_env_for_purpose(config: &mut AppConfig, purpose: ModelPurpose, prefix: &str) {
         let settings = config
             .models
@@ -201,22 +210,31 @@ impl ModelConfigManager {
                 temperature: 0.7,
             });
 
-        // 環境変数が設定されていれば常に上書き
-        if let Ok(val) = std::env::var(format!("{}_BASE_URL", prefix)) {
-            if !val.is_empty() {
-                settings.base_url = val;
+        // 環境変数はフォールバックとしてのみ適用（既存の非空値は保持）
+        if settings.base_url.is_empty() {
+            if let Ok(val) = std::env::var(format!("{}_BASE_URL", prefix)) {
+                if !val.is_empty() {
+                    println!("[config] env fallback: {}_BASE_URL = {}", prefix, val);
+                    settings.base_url = val;
+                }
             }
         }
 
-        if let Ok(val) = std::env::var(format!("{}_API_KEY", prefix)) {
-            if !val.is_empty() {
-                settings.api_key = Some(val);
+        if settings.api_key.is_none() {
+            if let Ok(val) = std::env::var(format!("{}_API_KEY", prefix)) {
+                if !val.is_empty() {
+                    println!("[config] env fallback: {}_API_KEY = (set)", prefix);
+                    settings.api_key = Some(val);
+                }
             }
         }
 
-        if let Ok(val) = std::env::var(format!("{}_MODEL", prefix)) {
-            if !val.is_empty() {
-                settings.model = val;
+        if settings.model.is_empty() {
+            if let Ok(val) = std::env::var(format!("{}_MODEL", prefix)) {
+                if !val.is_empty() {
+                    println!("[config] env fallback: {}_MODEL = {}", prefix, val);
+                    settings.model = val;
+                }
             }
         }
     }

@@ -56,20 +56,42 @@ pub trait ChatEngine: Send + Sync {
 pub struct DefaultChatEngine {
     db: Arc<Mutex<Database>>,
     llm_client: Arc<dyn LLMClient>,
-    llm_config: LLMClientConfig,
+    config_manager: Arc<crate::config::model_config::ModelConfigManager>,
+    /// LLMリクエスト直列化用ロック
+    llm_lock: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl DefaultChatEngine {
     pub fn new(
         db: Arc<Mutex<Database>>,
         llm_client: Arc<dyn LLMClient>,
-        llm_config: LLMClientConfig,
+        config_manager: Arc<crate::config::model_config::ModelConfigManager>,
+        llm_lock: Arc<tokio::sync::Mutex<()>>,
     ) -> Self {
         Self {
             db,
             llm_client,
-            llm_config,
+            config_manager,
+            llm_lock,
         }
+    }
+
+    /// 現在のChat用LLM設定を取得
+    fn current_llm_config(&self) -> LLMClientConfig {
+        self.config_manager
+            .get_model_settings(&crate::models::config::ModelPurpose::Chat)
+            .map(|s| LLMClientConfig {
+                base_url: s.base_url,
+                model: s.model,
+                api_key: s.api_key,
+                temperature: s.temperature,
+            })
+            .unwrap_or(LLMClientConfig {
+                base_url: String::new(),
+                model: String::new(),
+                api_key: None,
+                temperature: 0.7,
+            })
     }
 
     /// コンテキストメッセージ配列を組み立て
@@ -262,7 +284,7 @@ impl ChatEngine for DefaultChatEngine {
             attachment_text.as_deref(),
         );
 
-        // 3. LLMストリーミング呼び出し
+        // 3. LLMストリーミング呼び出し（ロック取得→完了まで保持）
         let session_id_owned = session_id.to_string();
         let app_handle_clone = app_handle.clone();
 
@@ -278,10 +300,12 @@ impl ChatEngine for DefaultChatEngine {
             );
         });
 
+        let _llm_guard = self.llm_lock.lock().await;
         let full_response = self
             .llm_client
-            .chat_stream(&llm_messages, &self.llm_config, callback)
+            .chat_stream(&llm_messages, &self.current_llm_config(), callback)
             .await?;
+        drop(_llm_guard);
 
         // 4. ストリーミング完了イベント
         app_handle.emit(
@@ -415,11 +439,13 @@ impl DefaultChatEngine {
             attachment_text.as_deref(),
         );
 
-        // 非ストリーミング呼び出し（tool_call検出可能）
+        // 非ストリーミング呼び出し（tool_call検出可能）— ロック取得
+        let _llm_guard = self.llm_lock.lock().await;
         let response = self
             .llm_client
-            .chat(&llm_messages, &self.llm_config, None)
+            .chat(&llm_messages, &self.current_llm_config(), None)
             .await?;
+        drop(_llm_guard);
 
         let assistant_msg_id = uuid::Uuid::new_v4().to_string();
         let assistant_now = chrono::Utc::now().to_rfc3339();

@@ -3,6 +3,7 @@
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
+use tokio::sync::Mutex as TokioMutex;
 
 use crate::db::database::Database;
 use crate::db::repositories::{chat as chat_repo, memory as memory_repo};
@@ -37,23 +38,44 @@ pub trait MemoryManager: Send + Sync {
 pub struct DefaultMemoryManager {
     db: Arc<Mutex<Database>>,
     llm_client: Arc<dyn LLMClient>,
-    llm_config: LLMClientConfig,
+    config_manager: Arc<crate::config::model_config::ModelConfigManager>,
     compression_threshold: u32,
+    llm_lock: Arc<TokioMutex<()>>,
 }
 
 impl DefaultMemoryManager {
     pub fn new(
         db: Arc<Mutex<Database>>,
         llm_client: Arc<dyn LLMClient>,
-        llm_config: LLMClientConfig,
+        config_manager: Arc<crate::config::model_config::ModelConfigManager>,
         compression_threshold: u32,
+        llm_lock: Arc<TokioMutex<()>>,
     ) -> Self {
         Self {
             db,
             llm_client,
-            llm_config,
+            config_manager,
             compression_threshold,
+            llm_lock,
         }
+    }
+
+    /// 現在のMemory用LLM設定を取得
+    fn current_llm_config(&self) -> LLMClientConfig {
+        self.config_manager
+            .get_model_settings(&crate::models::config::ModelPurpose::Memory)
+            .map(|s| LLMClientConfig {
+                base_url: s.base_url,
+                model: s.model,
+                api_key: s.api_key,
+                temperature: s.temperature,
+            })
+            .unwrap_or(LLMClientConfig {
+                base_url: String::new(),
+                model: String::new(),
+                api_key: None,
+                temperature: 0.7,
+            })
     }
 
     /// 圧縮用のシステムプロンプトを生成
@@ -129,10 +151,15 @@ impl MemoryManager for DefaultMemoryManager {
             },
         ];
 
+        // 4. LLMに要約を依頼（ロック取得で他のLLMリクエストと直列化）
+        let _llm_guard = self.llm_lock.lock().await;
+
         let response = self
             .llm_client
-            .chat(&llm_messages, &self.llm_config, None)
+            .chat(&llm_messages, &self.current_llm_config(), None)
             .await?;
+
+        drop(_llm_guard);
 
         let summary = match response {
             LLMResponse::Text(text) => text,
@@ -299,13 +326,34 @@ mod tests {
         }
     }
 
-    fn default_config() -> LLMClientConfig {
-        LLMClientConfig {
+    fn default_config() -> Arc<crate::config::model_config::ModelConfigManager> {
+        use std::collections::HashMap;
+        use crate::models::config::*;
+
+        let mut models = HashMap::new();
+        let settings = ModelSettings {
             base_url: "http://localhost:8080/v1".to_string(),
             model: "test-model".to_string(),
             api_key: None,
             temperature: 0.3,
-        }
+        };
+        models.insert(ModelPurpose::Chat, settings.clone());
+        models.insert(ModelPurpose::Memory, settings.clone());
+        models.insert(ModelPurpose::Thought, settings.clone());
+        models.insert(ModelPurpose::CharacterGeneration, settings);
+
+        let config = AppConfig {
+            models,
+            spontaneous: SpontaneousConfig { enabled: false, min_interval_seconds: 60, probability: 0.3 },
+            thought: ThoughtConfig { enabled: false, interval_minutes: 5 },
+            memory: MemoryConfig { compression_threshold: 50 },
+            tts: TTSGlobalConfig { enabled: false },
+            ui: UIConfig { theme: Theme::Dark, language: "ja".to_string() },
+            plugins: PluginsConfig { enabled_plugins: vec![], plugin_settings: HashMap::new() },
+            attachment: AttachmentConfig { max_file_size_bytes: 10 * 1024 * 1024, allowed_extensions: vec![] },
+        };
+
+        Arc::new(crate::config::model_config::ModelConfigManager::new_with_config(config))
     }
 
     #[tokio::test]
@@ -316,8 +364,9 @@ mod tests {
 
         let db_arc = Arc::new(Mutex::new(db));
         let mock_llm = Arc::new(MockLLMClient::new("Summary"));
+        let llm_lock = Arc::new(tokio::sync::Mutex::new(()));
 
-        let manager = DefaultMemoryManager::new(db_arc.clone(), mock_llm, default_config(), 50);
+        let manager = DefaultMemoryManager::new(db_arc.clone(), mock_llm, default_config(), 50, llm_lock);
 
         // 閾値未満なので圧縮されない
         manager.check_and_compress("sess-001").await.unwrap();
@@ -337,8 +386,9 @@ mod tests {
         let mock_llm = Arc::new(MockLLMClient::new(
             "- ユーザーは猫が好き\n- プログラミングの話題が多い",
         ));
+        let llm_lock = Arc::new(tokio::sync::Mutex::new(()));
 
-        let manager = DefaultMemoryManager::new(db_arc.clone(), mock_llm, default_config(), 50);
+        let manager = DefaultMemoryManager::new(db_arc.clone(), mock_llm, default_config(), 50, llm_lock);
 
         manager.check_and_compress("sess-001").await.unwrap();
 
@@ -365,8 +415,9 @@ mod tests {
         let db = setup_db();
         let db_arc = Arc::new(Mutex::new(db));
         let mock_llm = Arc::new(MockLLMClient::new("Summary"));
+        let llm_lock = Arc::new(tokio::sync::Mutex::new(()));
 
-        let manager = DefaultMemoryManager::new(db_arc, mock_llm, default_config(), 50);
+        let manager = DefaultMemoryManager::new(db_arc, mock_llm, default_config(), 50, llm_lock);
 
         let result = manager.check_and_compress("nonexistent").await;
         assert!(result.is_err());
@@ -390,8 +441,9 @@ mod tests {
 
         let db_arc = Arc::new(Mutex::new(db));
         let mock_llm = Arc::new(MockLLMClient::new(""));
+        let llm_lock = Arc::new(tokio::sync::Mutex::new(()));
 
-        let manager = DefaultMemoryManager::new(db_arc, mock_llm, default_config(), 50);
+        let manager = DefaultMemoryManager::new(db_arc, mock_llm, default_config(), 50, llm_lock);
 
         let memories = manager.list_memories("char-001").await.unwrap();
         assert_eq!(memories.len(), 1);
@@ -416,8 +468,9 @@ mod tests {
 
         let db_arc = Arc::new(Mutex::new(db));
         let mock_llm = Arc::new(MockLLMClient::new(""));
+        let llm_lock = Arc::new(tokio::sync::Mutex::new(()));
 
-        let manager = DefaultMemoryManager::new(db_arc, mock_llm, default_config(), 50);
+        let manager = DefaultMemoryManager::new(db_arc, mock_llm, default_config(), 50, llm_lock);
 
         let memories = manager
             .get_relevant_memories("char-001", "猫について話そう")
@@ -445,8 +498,9 @@ mod tests {
 
         let db_arc = Arc::new(Mutex::new(db));
         let mock_llm = Arc::new(MockLLMClient::new(""));
+        let llm_lock = Arc::new(tokio::sync::Mutex::new(()));
 
-        let manager = DefaultMemoryManager::new(db_arc.clone(), mock_llm, default_config(), 50);
+        let manager = DefaultMemoryManager::new(db_arc.clone(), mock_llm, default_config(), 50, llm_lock);
 
         manager.update_memory("mem-001", "更新後の内容").await.unwrap();
 
@@ -474,8 +528,9 @@ mod tests {
 
         let db_arc = Arc::new(Mutex::new(db));
         let mock_llm = Arc::new(MockLLMClient::new(""));
+        let llm_lock = Arc::new(tokio::sync::Mutex::new(()));
 
-        let manager = DefaultMemoryManager::new(db_arc.clone(), mock_llm, default_config(), 50);
+        let manager = DefaultMemoryManager::new(db_arc.clone(), mock_llm, default_config(), 50, llm_lock);
 
         manager.delete_memory("mem-001").await.unwrap();
 

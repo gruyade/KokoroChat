@@ -131,13 +131,39 @@ fn setup_db_with_memories(db: &Database) {
     .unwrap();
 }
 
-fn default_llm_config() -> LLMClientConfig {
-    LLMClientConfig {
+fn default_llm_config() -> Arc<crate::config::model_config::ModelConfigManager> {
+    use std::collections::HashMap;
+    use crate::models::config::*;
+
+    let mut models = HashMap::new();
+    let settings = ModelSettings {
         base_url: "http://localhost:8080/v1".to_string(),
         model: "test-model".to_string(),
         api_key: None,
         temperature: 0.7,
-    }
+    };
+    models.insert(ModelPurpose::Chat, settings.clone());
+    models.insert(ModelPurpose::Memory, settings.clone());
+    models.insert(ModelPurpose::Thought, settings.clone());
+    models.insert(ModelPurpose::CharacterGeneration, settings);
+
+    let config = AppConfig {
+        models,
+        spontaneous: SpontaneousConfig { enabled: false, min_interval_seconds: 60, probability: 0.3 },
+        thought: ThoughtConfig { enabled: false, interval_minutes: 5 },
+        memory: MemoryConfig { compression_threshold: 50 },
+        tts: TTSGlobalConfig { enabled: false },
+        ui: UIConfig { theme: Theme::Dark, language: "ja".to_string() },
+        plugins: PluginsConfig { enabled_plugins: vec![], plugin_settings: HashMap::new() },
+        attachment: AttachmentConfig { max_file_size_bytes: 10 * 1024 * 1024, allowed_extensions: vec![] },
+    };
+
+    Arc::new(crate::config::model_config::ModelConfigManager::new_with_config(config))
+}
+
+/// テスト用llm_lockを生成
+fn test_llm_lock() -> Arc<tokio::sync::Mutex<()>> {
+    Arc::new(tokio::sync::Mutex::new(()))
 }
 
 #[tokio::test]
@@ -147,7 +173,7 @@ async fn test_generate_thought_basic() {
     let mock_llm = Arc::new(MockLLMClient::new("今日は穏やかな一日だにゃ"));
     let config = default_llm_config();
 
-    let engine = DefaultThoughtEngine::new(db.clone(), mock_llm, config);
+    let engine = DefaultThoughtEngine::new(db.clone(), mock_llm, config, test_llm_lock());
 
     let thought = engine.generate_thought("char-001").await.unwrap();
 
@@ -166,7 +192,7 @@ async fn test_generate_thought_with_context() {
     let mock_llm = Arc::new(MockLLMClient::new("天気の話をしたな…外に出たいにゃ"));
     let config = default_llm_config();
 
-    let engine = DefaultThoughtEngine::new(db.clone(), mock_llm, config);
+    let engine = DefaultThoughtEngine::new(db.clone(), mock_llm, config, test_llm_lock());
 
     let thought = engine.generate_thought("char-001").await.unwrap();
 
@@ -184,7 +210,7 @@ async fn test_generate_thought_saved_to_db() {
     let mock_llm = Arc::new(MockLLMClient::new("保存テスト思考"));
     let config = default_llm_config();
 
-    let engine = DefaultThoughtEngine::new(db.clone(), mock_llm, config);
+    let engine = DefaultThoughtEngine::new(db.clone(), mock_llm, config, test_llm_lock());
 
     let thought = engine.generate_thought("char-001").await.unwrap();
 
@@ -202,7 +228,7 @@ async fn test_generate_thought_character_not_found() {
     let mock_llm = Arc::new(MockLLMClient::new("should not reach"));
     let config = default_llm_config();
 
-    let engine = DefaultThoughtEngine::new(db.clone(), mock_llm, config);
+    let engine = DefaultThoughtEngine::new(db.clone(), mock_llm, config, test_llm_lock());
 
     let result = engine.generate_thought("nonexistent").await;
     assert!(result.is_err());
@@ -215,7 +241,7 @@ async fn test_generate_thought_empty_response() {
     let mock_llm = Arc::new(MockLLMClient::new("   "));
     let config = default_llm_config();
 
-    let engine = DefaultThoughtEngine::new(db.clone(), mock_llm, config);
+    let engine = DefaultThoughtEngine::new(db.clone(), mock_llm, config, test_llm_lock());
 
     let result = engine.generate_thought("char-001").await;
     assert!(result.is_err());
@@ -244,7 +270,7 @@ async fn test_get_thoughts_with_limit() {
     let mock_llm = Arc::new(MockLLMClient::new("unused"));
     let config = default_llm_config();
 
-    let engine = DefaultThoughtEngine::new(db.clone(), mock_llm, config);
+    let engine = DefaultThoughtEngine::new(db.clone(), mock_llm, config, test_llm_lock());
 
     let thoughts = engine.get_thoughts("char-001", Some(3)).await.unwrap();
     assert_eq!(thoughts.len(), 3);
@@ -259,7 +285,7 @@ async fn test_get_thoughts_empty() {
     let mock_llm = Arc::new(MockLLMClient::new("unused"));
     let config = default_llm_config();
 
-    let engine = DefaultThoughtEngine::new(db.clone(), mock_llm, config);
+    let engine = DefaultThoughtEngine::new(db.clone(), mock_llm, config, test_llm_lock());
 
     let thoughts = engine.get_thoughts("char-001", None).await.unwrap();
     assert!(thoughts.is_empty());
@@ -272,7 +298,7 @@ fn test_set_frequency() {
     let mock_llm = Arc::new(MockLLMClient::new("unused"));
     let config = default_llm_config();
 
-    let engine = DefaultThoughtEngine::new(db.clone(), mock_llm, config);
+    let engine = DefaultThoughtEngine::new(db.clone(), mock_llm, config, test_llm_lock());
 
     engine.set_frequency("char-001", 10);
 
@@ -288,7 +314,7 @@ fn test_stop_sets_running_false() {
     let mock_llm = Arc::new(MockLLMClient::new("unused"));
     let config = default_llm_config();
 
-    let engine = DefaultThoughtEngine::new(db.clone(), mock_llm, config);
+    let engine = DefaultThoughtEngine::new(db.clone(), mock_llm, config, test_llm_lock());
 
     engine.running.store(true, std::sync::atomic::Ordering::SeqCst);
     engine.stop();

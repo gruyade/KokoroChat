@@ -42,7 +42,8 @@ pub(crate) struct EngineState {
 pub struct DefaultThoughtEngine {
     db: Arc<Mutex<Database>>,
     llm_client: Arc<dyn LLMClient>,
-    llm_config: LLMClientConfig,
+    config_manager: Arc<crate::config::model_config::ModelConfigManager>,
+    llm_lock: Arc<tokio::sync::Mutex<()>>,
     pub(crate) running: Arc<AtomicBool>,
     pub(crate) state: Arc<Mutex<EngineState>>,
 }
@@ -51,12 +52,14 @@ impl DefaultThoughtEngine {
     pub fn new(
         db: Arc<Mutex<Database>>,
         llm_client: Arc<dyn LLMClient>,
-        llm_config: LLMClientConfig,
+        config_manager: Arc<crate::config::model_config::ModelConfigManager>,
+        llm_lock: Arc<tokio::sync::Mutex<()>>,
     ) -> Self {
         Self {
             db,
             llm_client,
-            llm_config,
+            config_manager,
+            llm_lock,
             running: Arc::new(AtomicBool::new(false)),
             state: Arc::new(Mutex::new(EngineState {
                 character_id: None,
@@ -64,6 +67,24 @@ impl DefaultThoughtEngine {
                 abort_handle: None,
             })),
         }
+    }
+
+    /// 現在のThought用LLM設定を取得
+    fn current_llm_config(&self) -> LLMClientConfig {
+        self.config_manager
+            .get_model_settings(&crate::models::config::ModelPurpose::Thought)
+            .map(|s| LLMClientConfig {
+                base_url: s.base_url,
+                model: s.model,
+                api_key: s.api_key,
+                temperature: s.temperature,
+            })
+            .unwrap_or(LLMClientConfig {
+                base_url: String::new(),
+                model: String::new(),
+                api_key: None,
+                temperature: 0.7,
+            })
     }
 
     /// 思考生成用のメタプロンプトを構築
@@ -179,8 +200,10 @@ impl ThoughtEngine for DefaultThoughtEngine {
             None
         };
 
-        // LLM呼び出し
-        let response = self.llm_client.chat(&prompt_messages, &self.llm_config, None).await?;
+        // LLMロック取得後に呼び出し
+        let _llm_guard = self.llm_lock.lock().await;
+        let response = self.llm_client.chat(&prompt_messages, &self.current_llm_config(), None).await?;
+        drop(_llm_guard);
 
         let content = match response {
             LLMResponse::Text(text) => text.trim().to_string(),
@@ -240,7 +263,8 @@ impl ThoughtEngine for DefaultThoughtEngine {
         let state = Arc::clone(&self.state);
         let db = Arc::clone(&self.db);
         let llm_client = Arc::clone(&self.llm_client);
-        let llm_config = self.llm_config.clone();
+        let config_manager = Arc::clone(&self.config_manager);
+        let llm_lock = Arc::clone(&self.llm_lock);
         let character_id = character_id.to_string();
 
         let join_handle = tokio::spawn(async move {
@@ -307,11 +331,18 @@ impl ThoughtEngine for DefaultThoughtEngine {
                         &memories,
                     );
 
-                    // LLM呼び出し
+                    // LLMロック取得後に呼び出し
+                    let _llm_guard = llm_lock.lock().await;
+                    let llm_config = config_manager
+                        .get_model_settings(&crate::models::config::ModelPurpose::Thought)
+                        .map(|s| LLMClientConfig { base_url: s.base_url, model: s.model, api_key: s.api_key, temperature: s.temperature })
+                        .unwrap_or(LLMClientConfig { base_url: String::new(), model: String::new(), api_key: None, temperature: 0.7 });
+
                     let response = match llm_client.chat(&prompt_messages, &llm_config, None).await {
                         Ok(resp) => resp,
                         Err(_) => continue,
                     };
+                    drop(_llm_guard);
 
                     let content = match response {
                         LLMResponse::Text(text) => text.trim().to_string(),

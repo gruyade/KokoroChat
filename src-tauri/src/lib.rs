@@ -23,9 +23,8 @@ use character::creator::DefaultCharacterCreator;
 use chat::engine::DefaultChatEngine;
 use config::model_config::ModelConfigManager;
 use db::database::Database;
-use llm::client::{LLMClientConfig, OpenAICompatibleClient};
+use llm::client::OpenAICompatibleClient;
 use memory::manager::DefaultMemoryManager;
-use models::config::ModelPurpose;
 use plugin::builtin::{CalculatorPlugin, FileOpsPlugin, WebSearchPlugin};
 use plugin::registry::{DefaultPluginRegistry, PluginRegistry};
 use state::AppState;
@@ -77,62 +76,34 @@ pub fn run() {
                 ModelConfigManager::new(config_path).expect("Failed to load config"),
             );
 
-            // キャラクター生成用LLM設定
-            let chargen_llm_config = config_manager
-                .get_model_settings(&ModelPurpose::CharacterGeneration)
-                .map(|s| LLMClientConfig {
-                    base_url: s.base_url,
-                    model: s.model,
-                    api_key: s.api_key,
-                    temperature: s.temperature,
-                })
-                .unwrap_or_else(|| LLMClientConfig {
-                    base_url: String::new(),
-                    model: String::new(),
-                    api_key: None,
-                    temperature: 0.7,
-                });
-
-            // チャット/メモリ/思考用LLM設定
-            let chat_llm_config = config_manager
-                .get_model_settings(&ModelPurpose::Chat)
-                .map(|s| LLMClientConfig {
-                    base_url: s.base_url,
-                    model: s.model,
-                    api_key: s.api_key,
-                    temperature: s.temperature,
-                })
-                .unwrap_or_else(|| LLMClientConfig {
-                    base_url: String::new(),
-                    model: String::new(),
-                    api_key: None,
-                    temperature: 0.7,
-                });
-
             // コンポーネント初期化
+            let llm_lock = Arc::new(tokio::sync::Mutex::new(()));
+
             let character_creator: Arc<dyn character::creator::CharacterCreator> =
                 Arc::new(DefaultCharacterCreator::new(
                     db_for_character,
                     llm_client.clone(),
-                    chargen_llm_config,
+                    config_manager.clone(),
                 ));
 
             let chat_engine: Arc<dyn chat::engine::ChatEngine> =
                 Arc::new(DefaultChatEngine::new(
                     db_for_chat.clone(),
                     llm_client.clone(),
-                    chat_llm_config.clone(),
+                    config_manager.clone(),
+                    llm_lock.clone(),
                 ));
 
             let memory_manager: Arc<dyn memory::manager::MemoryManager> =
                 Arc::new(DefaultMemoryManager::new(
                     db_for_memory,
                     llm_client.clone(),
-                    chat_llm_config.clone(),
+                    config_manager.clone(),
                     config_manager
                         .get_config()
                         .memory
                         .compression_threshold,
+                    llm_lock.clone(),
                 ));
 
             let tts_connector: Arc<dyn tts::connector::TTSConnector> =
@@ -163,7 +134,8 @@ pub fn run() {
                 Arc::new(DefaultThoughtEngine::new(
                     db_for_thought,
                     llm_client.clone(),
-                    chat_llm_config.clone(),
+                    config_manager.clone(),
+                    llm_lock.clone(),
                 ));
 
             let app_state = AppState {
@@ -176,6 +148,8 @@ pub fn run() {
                 attachment_processor,
                 plugin_registry,
                 thought_engine,
+                llm_lock,
+                db: db_for_chat.clone(),
             };
 
             app.manage(app_state);
@@ -187,11 +161,15 @@ pub fn run() {
             commands::character::get_character,
             commands::character::update_character,
             commands::character::delete_character,
+            commands::character::generate_system_prompt,
+            commands::character::improve_system_prompt,
             commands::chat::create_session,
             commands::chat::send_message,
             commands::chat::get_history,
             commands::chat::list_sessions,
             commands::chat::delete_session,
+            commands::chat::delete_message,
+            commands::chat::trigger_spontaneous_check,
             commands::config::get_config,
             commands::config::set_config,
             commands::config::test_llm_connection,
@@ -208,6 +186,11 @@ pub fn run() {
             commands::plugin::get_plugin_config,
             commands::plugin::set_plugin_config,
             commands::thought::get_thoughts,
+            commands::thought::start_thought_engine,
+            commands::thought::stop_thought_engine,
+            commands::debug::debug_compress_memory,
+            commands::debug::debug_generate_thought,
+            commands::debug::debug_trigger_spontaneous,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

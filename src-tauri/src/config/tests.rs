@@ -176,6 +176,7 @@ mod tests {
             spontaneous: SpontaneousConfig {
                 enabled: true,
                 min_interval_seconds: 120,
+                probability: 0.5,
             },
             thought: ThoughtConfig {
                 enabled: true,
@@ -269,7 +270,7 @@ mod tests {
     }
 
     #[test]
-    fn test_env_overrides_existing_config() {
+    fn test_env_does_not_override_existing_config() {
         // 環境変数を設定
         std::env::set_var("AI_CHAT_MEMORY_LLM_BASE_URL", "http://env-memory:8080/v1");
 
@@ -286,12 +287,12 @@ mod tests {
             .base_url = "http://existing:9090/v1".to_string();
         manager.set_config(config).unwrap();
 
-        // 再ロード — 環境変数が常に優先される
+        // 再ロード — 非空のconfig値は環境変数で上書きされない
         let manager2 = ModelConfigManager::new(config_path).unwrap();
         let loaded = manager2.get_config();
         assert_eq!(
             loaded.models.get(&ModelPurpose::Memory).unwrap().base_url,
-            "http://env-memory:8080/v1"
+            "http://existing:9090/v1"
         );
 
         // クリーンアップ

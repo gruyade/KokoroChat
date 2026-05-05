@@ -73,13 +73,34 @@ mod tests {
     // ヘルパー
     // ========================================
 
-    fn default_llm_config() -> LLMClientConfig {
-        LLMClientConfig {
+    fn default_llm_config() -> Arc<crate::config::model_config::ModelConfigManager> {
+        use std::collections::HashMap;
+        use crate::models::config::*;
+
+        let mut models = HashMap::new();
+        let settings = ModelSettings {
             base_url: "http://localhost:8080/v1".to_string(),
             model: "test-model".to_string(),
             api_key: None,
             temperature: 0.3,
-        }
+        };
+        models.insert(ModelPurpose::Chat, settings.clone());
+        models.insert(ModelPurpose::Memory, settings.clone());
+        models.insert(ModelPurpose::Thought, settings.clone());
+        models.insert(ModelPurpose::CharacterGeneration, settings);
+
+        let config = AppConfig {
+            models,
+            spontaneous: SpontaneousConfig { enabled: false, min_interval_seconds: 60, probability: 0.3 },
+            thought: ThoughtConfig { enabled: false, interval_minutes: 5 },
+            memory: MemoryConfig { compression_threshold: 50 },
+            tts: TTSGlobalConfig { enabled: false },
+            ui: UIConfig { theme: Theme::Dark, language: "ja".to_string() },
+            plugins: PluginsConfig { enabled_plugins: vec![], plugin_settings: HashMap::new() },
+            attachment: AttachmentConfig { max_file_size_bytes: 10 * 1024 * 1024, allowed_extensions: vec![] },
+        };
+
+        Arc::new(crate::config::model_config::ModelConfigManager::new_with_config(config))
     }
 
     fn setup_db() -> Database {
@@ -176,6 +197,7 @@ mod tests {
                     mock_llm,
                     default_llm_config(),
                     threshold,
+                    Arc::new(tokio::sync::Mutex::new(())),
                 );
 
                 manager.check_and_compress(session_id).await.unwrap();
@@ -218,6 +240,7 @@ mod tests {
                     mock_llm,
                     default_llm_config(),
                     threshold,
+                    Arc::new(tokio::sync::Mutex::new(())),
                 );
 
                 manager.check_and_compress(session_id).await.unwrap();
@@ -276,6 +299,7 @@ mod tests {
                     mock_llm,
                     default_llm_config(),
                     threshold,
+                    Arc::new(tokio::sync::Mutex::new(())),
                 );
 
                 manager.check_and_compress(session_id).await.unwrap();

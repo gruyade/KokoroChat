@@ -124,16 +124,39 @@ mod tests {
 
     /// DefaultChatEngine インスタンスを作成（build_contextテスト用、DB不要だがコンストラクタに必要）
     fn create_engine() -> DefaultChatEngine {
+        use std::collections::HashMap;
+        use crate::models::config::*;
+
         let db = Database::open_in_memory().unwrap();
         let db = Arc::new(Mutex::new(db));
         let llm_client: Arc<dyn LLMClient> = Arc::new(MockLLMClient);
-        let config = LLMClientConfig {
+
+        let mut models = HashMap::new();
+        let settings = ModelSettings {
             base_url: "http://localhost:8080/v1".to_string(),
             model: "test-model".to_string(),
             api_key: None,
             temperature: 0.7,
         };
-        DefaultChatEngine::new(db, llm_client, config)
+        models.insert(ModelPurpose::Chat, settings.clone());
+        models.insert(ModelPurpose::Memory, settings.clone());
+        models.insert(ModelPurpose::Thought, settings.clone());
+        models.insert(ModelPurpose::CharacterGeneration, settings);
+
+        let config = AppConfig {
+            models,
+            spontaneous: SpontaneousConfig { enabled: false, min_interval_seconds: 60, probability: 0.3 },
+            thought: ThoughtConfig { enabled: false, interval_minutes: 5 },
+            memory: MemoryConfig { compression_threshold: 50 },
+            tts: TTSGlobalConfig { enabled: false },
+            ui: UIConfig { theme: Theme::Dark, language: "ja".to_string() },
+            plugins: PluginsConfig { enabled_plugins: vec![], plugin_settings: HashMap::new() },
+            attachment: AttachmentConfig { max_file_size_bytes: 10 * 1024 * 1024, allowed_extensions: vec![] },
+        };
+
+        let config_manager = Arc::new(crate::config::model_config::ModelConfigManager::new_with_config(config));
+        let llm_lock = Arc::new(tokio::sync::Mutex::new(()));
+        DefaultChatEngine::new(db, llm_client, config_manager, llm_lock)
     }
 
     // ========================================
