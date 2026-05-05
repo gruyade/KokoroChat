@@ -286,6 +286,7 @@ mod tests {
             "あなたはテストキャラです。",
             &[],
             &[],
+            &[],
             "こんにちは",
             None,
         );
@@ -329,6 +330,7 @@ mod tests {
         let messages = engine.build_context(
             "System prompt",
             &memories,
+            &[],
             &[],
             "Hello",
             None,
@@ -377,6 +379,7 @@ mod tests {
         let messages = engine.build_context(
             "System prompt",
             &[],
+            &[],
             &history,
             "新しいメッセージ",
             None,
@@ -400,6 +403,7 @@ mod tests {
 
         let messages = engine.build_context(
             "System prompt",
+            &[],
             &[],
             &[],
             "ファイルを見て",
@@ -525,6 +529,7 @@ mod tests {
         let messages = engine.build_context(
             "システムプロンプト",
             &memories,
+            &[],
             &history,
             "新規メッセージ",
             None,
@@ -559,7 +564,7 @@ mod tests {
             created_at: "2024-01-01T10:00:00Z".to_string(),
         }];
 
-        let messages = engine.build_context("Prompt", &[], &history, "Hi", None);
+        let messages = engine.build_context("Prompt", &[], &[], &history, "Hi", None);
 
         // Spontaneous → Assistant にマッピング
         assert_eq!(messages[1].role, MessageRole::Assistant);

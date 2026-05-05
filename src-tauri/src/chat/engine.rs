@@ -7,10 +7,10 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
 use crate::db::database::Database;
-use crate::db::repositories::{character as char_repo, chat as chat_repo, memory as mem_repo};
+use crate::db::repositories::{character as char_repo, chat as chat_repo, memory as mem_repo, thought as thought_repo};
 use crate::error::AppError;
 use crate::llm::client::{ChatMessage, LLMClient, LLMClientConfig, LLMResponse, MessageRole};
-use crate::models::{Attachment, ChatMessageRecord, ChatRole, ChatSession, MessageAttachment};
+use crate::models::{Attachment, ChatMessageRecord, ChatRole, ChatSession, MessageAttachment, Thought};
 
 /// ストリーミングチャットイベント
 #[derive(Clone, Serialize)]
@@ -95,21 +95,36 @@ impl DefaultChatEngine {
     }
 
     /// コンテキストメッセージ配列を組み立て
-    /// [system_prompt, ...memory_context, ...chat_history, user_message]
+    /// [system_prompt, ...thought_context, ...memory_context, ...chat_history, user_message]
     pub(crate) fn build_context(
         &self,
         system_prompt: &str,
         memories: &[crate::models::Memory],
+        thoughts: &[Thought],
         history: &[ChatMessageRecord],
         user_content: &str,
         attachment_text: Option<&str>,
     ) -> Vec<ChatMessage> {
         let mut messages = Vec::new();
 
-        // 1. System Prompt
+        // 1. System Prompt（思考コンテキストがあれば付加）
+        let system_content = if thoughts.is_empty() {
+            system_prompt.to_string()
+        } else {
+            let thought_lines: Vec<String> = thoughts
+                .iter()
+                .map(|t| format!("- {}", t.content))
+                .collect();
+            format!(
+                "{}\n\n## Recent Thoughts\n{}",
+                system_prompt,
+                thought_lines.join("\n")
+            )
+        };
+
         messages.push(ChatMessage {
             role: MessageRole::System,
-            content: system_prompt.to_string(),
+            content: system_content,
             tool_call_id: None,
         });
 
@@ -244,7 +259,7 @@ impl ChatEngine for DefaultChatEngine {
         };
 
         // DB操作（ロック範囲を最小化）
-        let (system_prompt, memories, history) = {
+        let (system_prompt, memories, thoughts, history) = {
             let db = self.db.lock().map_err(|e| {
                 AppError::Database(format!("Failed to acquire DB lock: {}", e))
             })?;
@@ -269,16 +284,28 @@ impl ChatEngine for DefaultChatEngine {
             // メモリ取得（現時点では全メモリ取得）
             let memories = mem_repo::list_memories(conn, &session.character_id)?;
 
+            // 閾値内の最近の思考を取得
+            let threshold_minutes = self.config_manager.get_config().thought.auto_delete_threshold_minutes;
+            let thoughts = if threshold_minutes > 0 {
+                let since = chrono::Utc::now() - chrono::Duration::minutes(threshold_minutes as i64);
+                let since_str = since.to_rfc3339();
+                thought_repo::get_recent_thoughts(conn, &session.character_id, &since_str)?
+            } else {
+                // threshold=0: 全思考を取得（自動削除無効 = 全保持）
+                thought_repo::get_thoughts(conn, &session.character_id, None)?
+            };
+
             // チャット履歴取得
             let history = chat_repo::get_messages(conn, session_id)?;
 
-            (character.system_prompt, memories, history)
+            (character.system_prompt, memories, thoughts, history)
         };
 
         // 2. コンテキスト組み立て
         let llm_messages = self.build_context(
             &system_prompt,
             &memories,
+            &thoughts,
             &history,
             content,
             attachment_text.as_deref(),
@@ -406,7 +433,7 @@ impl DefaultChatEngine {
             created_at: now.clone(),
         };
 
-        let (system_prompt, memories, history) = {
+        let (system_prompt, memories, thoughts, history) = {
             let db = self.db.lock().map_err(|e| {
                 AppError::Database(format!("Failed to acquire DB lock: {}", e))
             })?;
@@ -426,14 +453,26 @@ impl DefaultChatEngine {
                 })?;
 
             let memories = mem_repo::list_memories(conn, &session.character_id)?;
+
+            // 閾値内の最近の思考を取得
+            let threshold_minutes = self.config_manager.get_config().thought.auto_delete_threshold_minutes;
+            let thoughts = if threshold_minutes > 0 {
+                let since = chrono::Utc::now() - chrono::Duration::minutes(threshold_minutes as i64);
+                let since_str = since.to_rfc3339();
+                thought_repo::get_recent_thoughts(conn, &session.character_id, &since_str)?
+            } else {
+                thought_repo::get_thoughts(conn, &session.character_id, None)?
+            };
+
             let history = chat_repo::get_messages(conn, session_id)?;
 
-            (character.system_prompt, memories, history)
+            (character.system_prompt, memories, thoughts, history)
         };
 
         let llm_messages = self.build_context(
             &system_prompt,
             &memories,
+            &thoughts,
             &history,
             content,
             attachment_text.as_deref(),

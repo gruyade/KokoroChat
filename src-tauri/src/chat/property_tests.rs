@@ -187,6 +187,7 @@ mod tests {
             let result = engine.build_context(
                 &system_prompt,
                 &memories,
+                &[],
                 &history,
                 &user_message,
                 None,
@@ -278,6 +279,7 @@ mod tests {
             let result = engine.build_context(
                 &system_prompt,
                 &memories,
+                &[],
                 &history,
                 &user_message,
                 Some(&attachment_text),
@@ -321,6 +323,7 @@ mod tests {
 
             let result = engine.build_context(
                 &system_prompt,
+                &[],
                 &[],
                 &history,
                 &user_message,
