@@ -1,13 +1,14 @@
 import { useState, useRef, useCallback, type KeyboardEvent } from 'react';
-import { Send, Paperclip } from 'lucide-react';
+import { Send, Paperclip, Info } from 'lucide-react';
 
 interface MessageInputProps {
-  onSend: (content: string) => void;
+  onSend: (content: string, isSystem?: boolean) => void;
   disabled?: boolean;
 }
 
 export function MessageInput({ onSend, disabled = false }: MessageInputProps) {
   const [value, setValue] = useState('');
+  const [systemMode, setSystemMode] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const adjustHeight = useCallback(() => {
@@ -21,12 +22,12 @@ export function MessageInput({ onSend, disabled = false }: MessageInputProps) {
   const handleSend = useCallback(() => {
     const trimmed = value.trim();
     if (!trimmed || disabled) return;
-    onSend(trimmed);
+    onSend(trimmed, systemMode);
     setValue('');
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
     }
-  }, [value, disabled, onSend]);
+  }, [value, disabled, onSend, systemMode]);
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent<HTMLTextAreaElement>) => {
@@ -40,8 +41,15 @@ export function MessageInput({ onSend, disabled = false }: MessageInputProps) {
 
   return (
     <div className="border-t border-border bg-background px-4 py-3">
+      {/* System mode indicator */}
+      {systemMode && (
+        <div className="flex items-center gap-2 mb-2 px-1 text-xs text-muted-foreground">
+          <Info className="h-3.5 w-3.5" />
+          <span>システムモード: 状況説明やルールとして送信（会話には含まれない）</span>
+        </div>
+      )}
       <div className="flex items-end gap-2">
-        {/* Attachment button (placeholder) */}
+        {/* Attachment button */}
         <button
           className="shrink-0 p-2 rounded-md text-muted-foreground hover:bg-accent hover:text-accent-foreground disabled:opacity-50"
           disabled={disabled}
@@ -49,6 +57,21 @@ export function MessageInput({ onSend, disabled = false }: MessageInputProps) {
           title="ファイルを添付"
         >
           <Paperclip className="h-5 w-5" />
+        </button>
+
+        {/* System mode toggle */}
+        <button
+          onClick={() => setSystemMode(!systemMode)}
+          className={`shrink-0 p-2 rounded-md transition-colors ${
+            systemMode
+              ? 'bg-primary/20 text-primary'
+              : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+          }`}
+          disabled={disabled}
+          aria-label="システムモード切替"
+          title={systemMode ? 'システムモード ON（状況説明/ルール追加）' : 'システムモード OFF（通常会話）'}
+        >
+          <Info className="h-5 w-5" />
         </button>
 
         {/* Textarea */}
@@ -60,17 +83,23 @@ export function MessageInput({ onSend, disabled = false }: MessageInputProps) {
             adjustHeight();
           }}
           onKeyDown={handleKeyDown}
-          placeholder="メッセージを入力..."
+          placeholder={systemMode ? '状況説明やルールを入力...' : 'メッセージを入力...'}
           disabled={disabled}
           rows={1}
-          className="flex-1 resize-none rounded-md border border-input bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50"
+          className={`flex-1 resize-none rounded-md border px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring disabled:opacity-50 ${
+            systemMode ? 'border-primary/50 bg-primary/5' : 'border-input bg-background'
+          }`}
         />
 
         {/* Send button */}
         <button
           onClick={handleSend}
           disabled={disabled || !value.trim()}
-          className="shrink-0 p-2 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed"
+          className={`shrink-0 p-2 rounded-md disabled:opacity-50 disabled:cursor-not-allowed transition-colors ${
+            systemMode
+              ? 'bg-muted text-foreground hover:bg-muted/80'
+              : 'bg-primary text-primary-foreground hover:bg-primary/90'
+          }`}
           aria-label="送信"
           title="送信"
         >

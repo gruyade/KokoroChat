@@ -40,6 +40,13 @@ pub struct AppConfig {
 pub struct SpontaneousConfig {
     pub enabled: bool,
     pub min_interval_seconds: u64,
+    /// 自発的発話の発生確率（0.0〜1.0、デフォルト0.3）
+    #[serde(default = "default_spontaneous_probability")]
+    pub probability: f32,
+}
+
+fn default_spontaneous_probability() -> f32 {
+    0.3
 }
 
 /// 独自思考設定

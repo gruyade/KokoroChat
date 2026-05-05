@@ -29,6 +29,7 @@ async-trait = "0.1"
 pdf-extract = "0.7"
 base64 = "0.22"
 dotenvy = "0.15"
+rand = "0.8"
 
 [dev-dependencies]
 proptest = "1"

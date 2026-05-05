@@ -48,7 +48,7 @@ export function CharacterView() {
         system_prompt: data.system_prompt,
       });
     } else {
-      await createCharacter(data.name, data.description);
+      await createCharacter(data.name, data.description, data.system_prompt || undefined);
     }
     setShowForm(false);
     setEditingCharacter(null);

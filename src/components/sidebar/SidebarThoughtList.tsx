@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Lightbulb, Loader2 } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { useCharacterStore } from '../../stores';
 import type { Thought } from '../../types';
 
@@ -9,13 +10,36 @@ export function SidebarThoughtList() {
   const [thoughts, setThoughts] = useState<Thought[]>([]);
   const [loading, setLoading] = useState(false);
 
-  useEffect(() => {
-    if (!selectedCharacterId) return;
+  const loadThoughts = (characterId: string) => {
     setLoading(true);
-    invoke<Thought[]>('get_thoughts', { characterId: selectedCharacterId, limit: 20 })
+    invoke<Thought[]>('get_thoughts', { characterId, limit: 20 })
       .then(setThoughts)
       .catch(() => setThoughts([]))
       .finally(() => setLoading(false));
+  };
+
+  useEffect(() => {
+    if (!selectedCharacterId) return;
+    loadThoughts(selectedCharacterId);
+
+    // thought:generated イベントをリッスンして自動更新
+    let cancelled = false;
+    let unlisten: (() => void) | null = null;
+
+    listen<{ character_id: string; thought: Thought }>('thought:generated', (event) => {
+      if (cancelled) return;
+      if (event.payload.character_id === selectedCharacterId) {
+        setThoughts((prev) => [event.payload.thought, ...prev].slice(0, 20));
+      }
+    }).then((fn) => {
+      if (cancelled) { fn(); return; }
+      unlisten = fn;
+    });
+
+    return () => {
+      cancelled = true;
+      if (unlisten) unlisten();
+    };
   }, [selectedCharacterId]);
 
   if (!selectedCharacterId) {

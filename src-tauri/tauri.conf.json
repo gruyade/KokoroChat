@@ -4,7 +4,7 @@
   "identifier": "com.ai-character-chat.app",
   "build": {
     "frontendDist": "../dist",
-    "devUrl": "http://localhost:5173",
+    "devUrl": "http://localhost:5173?debug",
     "beforeDevCommand": "pnpm dev",
     "beforeBuildCommand": "pnpm build"
   },

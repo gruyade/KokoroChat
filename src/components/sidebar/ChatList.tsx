@@ -1,11 +1,12 @@
 import { useEffect } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
-import { useChatStore, useCharacterStore } from '../../stores';
+import { useChatStore, useCharacterStore, useUIStore } from '../../stores';
 
 export function ChatList() {
   const { sessions, currentSessionId, selectSession, createSession, deleteSession, fetchSessions, fetchHistory } =
     useChatStore();
   const { selectedCharacterId } = useCharacterStore();
+  const { setActiveView } = useUIStore();
 
   // キャラクター変更時にセッション一覧を自動取得
   useEffect(() => {
@@ -17,11 +18,13 @@ export function ChatList() {
   const handleSelectSession = (sessionId: string) => {
     selectSession(sessionId);
     fetchHistory(sessionId);
+    setActiveView('chat'); // チャット画面に遷移
   };
 
   const handleNewSession = async () => {
     if (!selectedCharacterId) return;
     await createSession(selectedCharacterId);
+    setActiveView('chat'); // チャット画面に遷移
   };
 
   const handleDeleteSession = async (e: React.MouseEvent, sessionId: string) => {

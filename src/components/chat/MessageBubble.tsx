@@ -1,9 +1,12 @@
-import { Bot, User, Sparkles, Wrench } from 'lucide-react';
+import { useState } from 'react';
+import { Bot, User, Sparkles, Wrench, Copy, RefreshCw, Trash2, Info } from 'lucide-react';
 import type { ChatMessageRecord } from '../../types';
 import { ToolCallIndicator } from './ToolCallIndicator';
 
 interface MessageBubbleProps {
   message: ChatMessageRecord;
+  onRegenerate?: (messageId: string) => void;
+  onDelete?: (messageId: string) => void;
 }
 
 function getRoleConfig(role: ChatMessageRecord['role']) {
@@ -14,6 +17,7 @@ function getRoleConfig(role: ChatMessageRecord['role']) {
         bubble: 'bg-primary text-primary-foreground',
         icon: User,
         showIcon: false,
+        label: '',
       };
     case 'assistant':
       return {
@@ -21,6 +25,7 @@ function getRoleConfig(role: ChatMessageRecord['role']) {
         bubble: 'bg-card text-card-foreground border border-border',
         icon: Bot,
         showIcon: true,
+        label: '',
       };
     case 'spontaneous':
       return {
@@ -28,6 +33,7 @@ function getRoleConfig(role: ChatMessageRecord['role']) {
         bubble: 'bg-accent text-accent-foreground border border-border',
         icon: Sparkles,
         showIcon: true,
+        label: '自発的発話',
       };
     case 'tool':
       return {
@@ -35,15 +41,54 @@ function getRoleConfig(role: ChatMessageRecord['role']) {
         bubble: 'bg-muted text-muted-foreground border border-border',
         icon: Wrench,
         showIcon: true,
+        label: '',
       };
   }
 }
 
-export function MessageBubble({ message }: MessageBubbleProps) {
+export function MessageBubble({ message, onRegenerate, onDelete }: MessageBubbleProps) {
   const config = getRoleConfig(message.role);
+  const [showMenu, setShowMenu] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  // [SYSTEM]プレフィックス付きメッセージはシステムメッセージとして表示
+  const isSystemMessage = message.role === 'user' && message.content.startsWith('[SYSTEM] ');
+  const displayContent = isSystemMessage ? message.content.slice(9) : message.content;
+
+  const handleCopy = async () => {
+    await navigator.clipboard.writeText(displayContent);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+
+  const handleRegenerate = () => {
+    onRegenerate?.(message.id);
+    setShowMenu(false);
+  };
+
+  const handleDelete = () => {
+    onDelete?.(message.id);
+    setShowMenu(false);
+  };
+
+  // システムメッセージの特別表示
+  if (isSystemMessage) {
+    return (
+      <div className="flex justify-center px-4 py-1">
+        <div className="flex items-center gap-2 max-w-[80%] rounded-md bg-muted/50 border border-border/50 px-3 py-1.5 text-xs text-muted-foreground">
+          <Info className="h-3 w-3 shrink-0" />
+          <span className="whitespace-pre-wrap">{displayContent}</span>
+        </div>
+      </div>
+    );
+  }
 
   return (
-    <div className={`flex ${config.align} px-4 py-1`}>
+    <div
+      className={`group relative flex ${config.align} px-4 py-1`}
+      onMouseEnter={() => setShowMenu(true)}
+      onMouseLeave={() => setShowMenu(false)}
+    >
       <div
         className={`flex items-start gap-2 max-w-[70%] ${message.role === 'user' ? 'flex-row-reverse' : ''}`}
       >
@@ -53,15 +98,47 @@ export function MessageBubble({ message }: MessageBubbleProps) {
           </div>
         )}
         <div className="flex flex-col gap-1">
-          {message.role === 'spontaneous' && (
+          {config.label && (
             <span className="text-xs text-muted-foreground flex items-center gap-1">
               <Sparkles className="h-3 w-3" />
-              自発的発話
+              {config.label}
             </span>
           )}
           <div className={`rounded-lg px-3 py-2 text-sm whitespace-pre-wrap ${config.bubble}`}>
-            {message.content}
+            {displayContent}
           </div>
+
+          {/* Action buttons — 常にスペース確保、ホバーで表示 */}
+          <div className={`flex items-center gap-0.5 h-6 ${message.role === 'user' ? 'justify-end' : ''}`}>
+            <div className={`flex items-center gap-0.5 transition-opacity ${showMenu ? 'opacity-100' : 'opacity-0'}`}>
+              <button
+                onClick={handleCopy}
+                className="p-1 rounded text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                title={copied ? 'コピー済み' : 'コピー'}
+              >
+                <Copy className="h-3.5 w-3.5" />
+              </button>
+              {message.role === 'assistant' && onRegenerate && (
+                <button
+                  onClick={handleRegenerate}
+                  className="p-1 rounded text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                  title="再生成"
+                >
+                  <RefreshCw className="h-3.5 w-3.5" />
+                </button>
+              )}
+              {onDelete && (
+                <button
+                  onClick={handleDelete}
+                  className="p-1 rounded text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
+                  title="削除"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+          </div>
+
           {/* Attachments */}
           {message.attachments && message.attachments.length > 0 && (
             <div className="flex flex-wrap gap-1 mt-1">

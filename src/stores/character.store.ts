@@ -8,7 +8,7 @@ interface CharacterState {
   loading: boolean;
   error: string | null;
   fetchCharacters: () => Promise<void>;
-  createCharacter: (name: string, description: string) => Promise<Character>;
+  createCharacter: (name: string, description: string, systemPrompt?: string) => Promise<Character>;
   updateCharacter: (id: string, updates: CharacterUpdate) => Promise<void>;
   deleteCharacter: (id: string) => Promise<void>;
   selectCharacter: (id: string | null) => void;
@@ -30,10 +30,14 @@ export const useCharacterStore = create<CharacterState>((set, get) => ({
     }
   },
 
-  createCharacter: async (name: string, description: string) => {
+  createCharacter: async (name: string, description: string, systemPrompt?: string) => {
     set({ loading: true, error: null });
     try {
-      const character = await invoke<Character>('create_character', { name, description });
+      const character = await invoke<Character>('create_character', {
+        name,
+        description,
+        systemPrompt: systemPrompt || null,
+      });
       set((state) => ({
         characters: [...state.characters, character],
         loading: false,

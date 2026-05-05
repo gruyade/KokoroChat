@@ -59,7 +59,11 @@ export function useChat() {
         'spontaneous:message',
         (event) => {
           if (cancelled) return;
-          useChatStore.getState().finishStreaming(event.payload.message);
+          // 自発的発話受信 → チャット履歴を再取得して反映
+          const { currentSessionId, fetchHistory } = useChatStore.getState();
+          if (currentSessionId && event.payload.session_id === currentSessionId) {
+            fetchHistory(currentSessionId);
+          }
         }
       );
       if (cancelled) { unlistenSpontaneous(); return; }

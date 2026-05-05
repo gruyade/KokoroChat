@@ -41,20 +41,38 @@ pub trait CharacterCreator: Send + Sync {
 pub struct DefaultCharacterCreator {
     db: Arc<Mutex<Database>>,
     llm_client: Arc<dyn LLMClient>,
-    llm_config: LLMClientConfig,
+    config_manager: Arc<crate::config::model_config::ModelConfigManager>,
 }
 
 impl DefaultCharacterCreator {
     pub fn new(
         db: Arc<Mutex<Database>>,
         llm_client: Arc<dyn LLMClient>,
-        llm_config: LLMClientConfig,
+        config_manager: Arc<crate::config::model_config::ModelConfigManager>,
     ) -> Self {
         Self {
             db,
             llm_client,
-            llm_config,
+            config_manager,
         }
+    }
+
+    /// 現在のCharacterGeneration用LLM設定を取得
+    fn current_llm_config(&self) -> LLMClientConfig {
+        self.config_manager
+            .get_model_settings(&crate::models::config::ModelPurpose::CharacterGeneration)
+            .map(|s| LLMClientConfig {
+                base_url: s.base_url,
+                model: s.model,
+                api_key: s.api_key,
+                temperature: s.temperature,
+            })
+            .unwrap_or(LLMClientConfig {
+                base_url: String::new(),
+                model: String::new(),
+                api_key: None,
+                temperature: 0.7,
+            })
     }
 
     /// キャラクター生成用のメタプロンプトを構築
@@ -94,7 +112,7 @@ impl CharacterCreator for DefaultCharacterCreator {
             tool_call_id: None,
         }];
 
-        let response = self.llm_client.chat(&messages, &self.llm_config, None).await?;
+        let response = self.llm_client.chat(&messages, &self.current_llm_config(), None).await?;
 
         match response {
             LLMResponse::Text(text) => Ok(text),
@@ -184,13 +202,34 @@ mod tests {
         }
     }
 
-    fn test_llm_config() -> LLMClientConfig {
-        LLMClientConfig {
+    fn test_config_manager() -> Arc<crate::config::model_config::ModelConfigManager> {
+        use std::collections::HashMap;
+        use crate::models::config::*;
+
+        let mut models = HashMap::new();
+        let settings = ModelSettings {
             base_url: "http://localhost:8080/v1".to_string(),
             model: "test-model".to_string(),
             api_key: None,
             temperature: 0.7,
-        }
+        };
+        models.insert(ModelPurpose::Chat, settings.clone());
+        models.insert(ModelPurpose::Memory, settings.clone());
+        models.insert(ModelPurpose::Thought, settings.clone());
+        models.insert(ModelPurpose::CharacterGeneration, settings);
+
+        let config = AppConfig {
+            models,
+            spontaneous: SpontaneousConfig { enabled: false, min_interval_seconds: 60, probability: 0.3 },
+            thought: ThoughtConfig { enabled: false, interval_minutes: 5 },
+            memory: MemoryConfig { compression_threshold: 50 },
+            tts: TTSGlobalConfig { enabled: false },
+            ui: UIConfig { theme: Theme::Dark, language: "ja".to_string() },
+            plugins: PluginsConfig { enabled_plugins: vec![], plugin_settings: HashMap::new() },
+            attachment: AttachmentConfig { max_file_size_bytes: 10 * 1024 * 1024, allowed_extensions: vec![] },
+        };
+
+        Arc::new(crate::config::model_config::ModelConfigManager::new_with_config(config))
     }
 
     fn sample_character() -> Character {
@@ -212,7 +251,7 @@ mod tests {
         let mock_response = "あなたは元気な猫のキャラクターです。語尾に「にゃ」をつけて話します。";
         let llm_client = Arc::new(MockLLMClient::new(mock_response));
         let db = Arc::new(Mutex::new(Database::open_in_memory().unwrap()));
-        let config = test_llm_config();
+        let config = test_config_manager();
 
         let creator = DefaultCharacterCreator::new(db, llm_client.clone(), config);
 
@@ -229,7 +268,7 @@ mod tests {
     async fn test_save_character() {
         let llm_client = Arc::new(MockLLMClient::new(""));
         let db = Arc::new(Mutex::new(Database::open_in_memory().unwrap()));
-        let config = test_llm_config();
+        let config = test_config_manager();
 
         let creator = DefaultCharacterCreator::new(db.clone(), llm_client, config);
         let character = sample_character();
@@ -250,7 +289,7 @@ mod tests {
     async fn test_list_characters() {
         let llm_client = Arc::new(MockLLMClient::new(""));
         let db = Arc::new(Mutex::new(Database::open_in_memory().unwrap()));
-        let config = test_llm_config();
+        let config = test_config_manager();
 
         let creator = DefaultCharacterCreator::new(db.clone(), llm_client, config);
 
@@ -269,7 +308,7 @@ mod tests {
     async fn test_get_character() {
         let llm_client = Arc::new(MockLLMClient::new(""));
         let db = Arc::new(Mutex::new(Database::open_in_memory().unwrap()));
-        let config = test_llm_config();
+        let config = test_config_manager();
 
         let creator = DefaultCharacterCreator::new(db, llm_client, config);
         let character = sample_character();
@@ -290,7 +329,7 @@ mod tests {
     async fn test_update_character() {
         let llm_client = Arc::new(MockLLMClient::new(""));
         let db = Arc::new(Mutex::new(Database::open_in_memory().unwrap()));
-        let config = test_llm_config();
+        let config = test_config_manager();
 
         let creator = DefaultCharacterCreator::new(db, llm_client, config);
         let character = sample_character();
@@ -319,7 +358,7 @@ mod tests {
     async fn test_delete_character() {
         let llm_client = Arc::new(MockLLMClient::new(""));
         let db = Arc::new(Mutex::new(Database::open_in_memory().unwrap()));
-        let config = test_llm_config();
+        let config = test_config_manager();
 
         let creator = DefaultCharacterCreator::new(db, llm_client, config);
         let character = sample_character();

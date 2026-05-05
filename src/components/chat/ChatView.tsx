@@ -1,22 +1,56 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useCallback } from 'react';
 import { MessageSquare } from 'lucide-react';
+import { invoke } from '@tauri-apps/api/core';
 import { useChatStore, useCharacterStore } from '../../stores';
 import { MessageBubble } from './MessageBubble';
 import { MessageInput } from './MessageInput';
 import { StreamingIndicator } from './StreamingIndicator';
 
 export function ChatView() {
-  const { currentSessionId, messages, isStreaming, streamingContent, error, sendMessage, createSession } =
+  const { currentSessionId, messages, isStreaming, streamingContent, error, sendMessage, createSession, fetchHistory } =
     useChatStore();
   const { selectedCharacterId, characters } = useCharacterStore();
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const prevMessageCountRef = useRef(0);
 
-  // Auto-scroll on new messages or streaming content
+  // スクロールを最下部に移動（即座に）
+  const scrollToBottom = useCallback((instant = true) => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    if (instant) {
+      container.scrollTop = container.scrollHeight;
+    } else {
+      // 差分が小さい場合のみスムーズ（ストリーミング中のチャンク追加）
+      const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+      if (distanceFromBottom < 200) {
+        container.scrollTop = container.scrollHeight;
+      }
+    }
+  }, []);
+
+  // メッセージ数が変わった時（新メッセージ追加）→ 即座に最下部へ
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, streamingContent]);
+    if (messages.length !== prevMessageCountRef.current) {
+      prevMessageCountRef.current = messages.length;
+      scrollToBottom(true);
+    }
+  }, [messages.length, scrollToBottom]);
 
-  // セッション未選択 — 新規チャット開始UI
+  // ストリーミング中 → 下部付近にいる場合のみ追従
+  useEffect(() => {
+    if (isStreaming && streamingContent) {
+      scrollToBottom(false);
+    }
+  }, [streamingContent, isStreaming, scrollToBottom]);
+
+  // セッション切り替え時 → 即座に最下部へ
+  useEffect(() => {
+    // 少し遅延させてDOMレンダリング後にスクロール
+    const timer = setTimeout(() => scrollToBottom(true), 50);
+    return () => clearTimeout(timer);
+  }, [currentSessionId, scrollToBottom]);
+
+  // セッション未選択
   if (!currentSessionId) {
     return (
       <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground gap-4 p-6">
@@ -40,24 +74,57 @@ export function ChatView() {
     );
   }
 
-  const handleSend = (content: string) => {
-    sendMessage(content);
+  const handleSend = (content: string, isSystem?: boolean) => {
+    if (isSystem) {
+      sendMessage(`[SYSTEM] ${content}`);
+    } else {
+      sendMessage(content);
+    }
+  };
+
+  const handleDeleteMessage = async (messageId: string) => {
+    // メッセージ削除後に履歴を再取得
+    try {
+      await invoke('delete_message', { id: messageId });
+      if (currentSessionId) {
+        fetchHistory(currentSessionId);
+      }
+    } catch {
+      // delete_messageコマンドが未実装の場合はローカルから削除
+      useChatStore.setState((state) => ({
+        messages: state.messages.filter((m) => m.id !== messageId),
+      }));
+    }
+  };
+
+  const handleRegenerateMessage = async (_messageId: string) => {
+    // 最後のアシスタントメッセージを削除して再送信
+    if (!currentSessionId || messages.length === 0) return;
+    // 最後のユーザーメッセージを見つけて再送信
+    const lastUserMsg = [...messages].reverse().find((m) => m.role === 'user');
+    if (lastUserMsg) {
+      sendMessage(lastUserMsg.content);
+    }
   };
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       {/* Messages area */}
-      <div className="flex-1 overflow-y-auto py-4">
+      <div ref={scrollContainerRef} className="flex-1 overflow-y-auto py-4">
         {messages.length === 0 && !isStreaming && (
           <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
             メッセージを送信して会話を始めましょう
           </div>
         )}
         {messages.map((msg) => (
-          <MessageBubble key={msg.id} message={msg} />
+          <MessageBubble
+            key={msg.id}
+            message={msg}
+            onRegenerate={handleRegenerateMessage}
+            onDelete={handleDeleteMessage}
+          />
         ))}
         {isStreaming && <StreamingIndicator content={streamingContent} />}
-        <div ref={messagesEndRef} />
       </div>
 
       {/* Error display */}

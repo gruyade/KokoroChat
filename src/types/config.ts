@@ -16,6 +16,7 @@ export interface ModelSettings {
 export interface SpontaneousConfig {
   enabled: boolean;
   min_interval_seconds: number;
+  probability: number;
 }
 
 /** 独自思考設定 */
