@@ -17,6 +17,7 @@ interface ChatState {
   fetchHistory: (sessionId: string) => Promise<void>;
   appendStreamChunk: (chunk: string) => void;
   finishStreaming: (fullContent: string) => void;
+  regenerateMessage: (messageId: string) => Promise<void>;
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -136,5 +137,27 @@ export const useChatStore = create<ChatState>((set, get) => ({
       isStreaming: false,
       streamingContent: '',
     });
+  },
+
+  regenerateMessage: async (messageId: string) => {
+    const { currentSessionId, messages } = get();
+    if (!currentSessionId) return;
+
+    // 対象メッセージをローカル状態から削除し、ストリーミング開始
+    set({
+      messages: messages.filter((m) => m.id !== messageId),
+      isStreaming: true,
+      streamingContent: '',
+      error: null,
+    });
+
+    try {
+      await invoke('regenerate_message', {
+        sessionId: currentSessionId,
+        messageId,
+      });
+    } catch (e) {
+      set({ error: String(e), isStreaming: false });
+    }
   },
 }));

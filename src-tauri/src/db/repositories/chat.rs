@@ -130,6 +130,15 @@ pub fn insert_message(conn: &Connection, message: &ChatMessageRecord) -> Result<
     Ok(())
 }
 
+/// 指定IDのメッセージを削除
+pub fn delete_message(conn: &Connection, id: &str) -> Result<bool, AppError> {
+    let rows_affected = conn.execute(
+        "DELETE FROM chat_messages WHERE id = ?1",
+        params![id],
+    )?;
+    Ok(rows_affected > 0)
+}
+
 /// セッションIDでメッセージ一覧取得（作成日時の昇順）
 pub fn get_messages(
     conn: &Connection,

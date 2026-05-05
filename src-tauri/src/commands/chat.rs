@@ -207,6 +207,22 @@ pub async fn delete_session(
     state.chat_engine.delete_session(&session_id).await
 }
 
+/// メッセージ再生成
+///
+/// 対象のassistantメッセージを削除し、直前のuserメッセージ内容で再送信する。
+#[tauri::command]
+pub async fn regenerate_message(
+    session_id: String,
+    message_id: String,
+    app_handle: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    state
+        .chat_engine
+        .regenerate(&session_id, &message_id, &app_handle)
+        .await
+}
+
 /// メッセージ削除
 #[tauri::command]
 pub async fn delete_message(

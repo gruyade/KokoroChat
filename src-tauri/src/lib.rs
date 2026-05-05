@@ -169,6 +169,7 @@ pub fn run() {
             commands::chat::list_sessions,
             commands::chat::delete_session,
             commands::chat::delete_message,
+            commands::chat::regenerate_message,
             commands::chat::trigger_spontaneous_check,
             commands::config::get_config,
             commands::config::set_config,

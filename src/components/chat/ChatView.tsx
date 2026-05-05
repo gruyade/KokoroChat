@@ -97,14 +97,8 @@ export function ChatView() {
     }
   };
 
-  const handleRegenerateMessage = async (_messageId: string) => {
-    // 最後のアシスタントメッセージを削除して再送信
-    if (!currentSessionId || messages.length === 0) return;
-    // 最後のユーザーメッセージを見つけて再送信
-    const lastUserMsg = [...messages].reverse().find((m) => m.role === 'user');
-    if (lastUserMsg) {
-      sendMessage(lastUserMsg.content);
-    }
+  const handleRegenerateMessage = async (messageId: string) => {
+    useChatStore.getState().regenerateMessage(messageId);
   };
 
   return (
