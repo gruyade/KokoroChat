@@ -24,6 +24,7 @@
 | Rust | 1.75+ |
 | Node.js | 20+ |
 | pnpm | 9+ |
+| tauri-cli | 2+ (`cargo install tauri-cli --version "^2"`) |
 
 ### Windows追加要件
 
