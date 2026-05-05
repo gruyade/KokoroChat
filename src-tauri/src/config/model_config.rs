@@ -179,12 +179,12 @@ impl ModelConfigManager {
     /// 環境変数からの設定フォールバック適用
     fn apply_env_fallback(config: &mut AppConfig) {
         Self::apply_env_for_purpose(config, ModelPurpose::Chat, "AI_CHAT_LLM");
-        Self::apply_env_for_purpose(config, ModelPurpose::Memory, "AI_CHAT_MEMORY");
-        Self::apply_env_for_purpose(config, ModelPurpose::Thought, "AI_CHAT_THOUGHT");
+        Self::apply_env_for_purpose(config, ModelPurpose::Memory, "AI_CHAT_MEMORY_LLM");
+        Self::apply_env_for_purpose(config, ModelPurpose::Thought, "AI_CHAT_THOUGHT_LLM");
         Self::apply_env_for_purpose(
             config,
             ModelPurpose::CharacterGeneration,
-            "AI_CHAT_CHARGEN",
+            "AI_CHAT_CHARGEN_LLM",
         );
     }
 

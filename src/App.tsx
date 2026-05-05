@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { useUIStore } from './stores';
+import { useChat } from './hooks/useChat';
 import { Sidebar } from './components/sidebar/Sidebar';
 import { ChatView } from './components/chat/ChatView';
 import { CharacterView } from './components/character/CharacterView';
@@ -25,6 +26,9 @@ function MainContent() {
 
 function App() {
   const { theme } = useUIStore();
+
+  // Tauriイベントリスナーを設定（chat:stream, spontaneous:message, tool:executing）
+  useChat();
 
   useEffect(() => {
     const root = document.documentElement;

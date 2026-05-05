@@ -64,10 +64,19 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   sendMessage: async (content: string, attachments?: string[]) => {
-    const { currentSessionId } = get();
+    const { currentSessionId, messages } = get();
     if (!currentSessionId) return;
 
-    set({ isStreaming: true, streamingContent: '', error: null });
+    // ユーザーメッセージをローカルに即座に追加
+    const userMessage: ChatMessageRecord = {
+      id: crypto.randomUUID(),
+      session_id: currentSessionId,
+      role: 'user',
+      content,
+      created_at: new Date().toISOString(),
+    };
+    set({ messages: [...messages, userMessage], isStreaming: true, streamingContent: '', error: null });
+
     try {
       await invoke('send_message', {
         sessionId: currentSessionId,

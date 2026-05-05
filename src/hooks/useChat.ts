@@ -30,54 +30,53 @@ interface ToolExecutingEvent {
 export function useChat() {
   const sendMessage = useChatStore((s) => s.sendMessage);
   const isStreaming = useChatStore((s) => s.isStreaming);
-  const appendStreamChunk = useChatStore((s) => s.appendStreamChunk);
-  const finishStreaming = useChatStore((s) => s.finishStreaming);
   const streamingContent = useChatStore((s) => s.streamingContent);
 
   useEffect(() => {
     let streamContent = '';
+    let cancelled = false;
+
+    const unlisteners: (() => void)[] = [];
 
     const setupListeners = async () => {
+      if (cancelled) return;
+
       const unlistenStream = await listen<ChatStreamEvent>('chat:stream', (event) => {
+        if (cancelled) return;
         const { chunk, done } = event.payload;
         if (done) {
-          finishStreaming(streamContent);
+          useChatStore.getState().finishStreaming(streamContent);
           streamContent = '';
         } else {
           streamContent += chunk;
-          appendStreamChunk(chunk);
+          useChatStore.getState().appendStreamChunk(chunk);
         }
       });
+      if (cancelled) { unlistenStream(); return; }
+      unlisteners.push(unlistenStream);
 
       const unlistenSpontaneous = await listen<SpontaneousEvent>(
         'spontaneous:message',
         (event) => {
-          // 自発的発話を完了メッセージとして処理
-          finishStreaming(event.payload.message);
+          if (cancelled) return;
+          useChatStore.getState().finishStreaming(event.payload.message);
         }
       );
+      if (cancelled) { unlistenSpontaneous(); return; }
+      unlisteners.push(unlistenSpontaneous);
 
-      const unlistenTool = await listen<ToolExecutingEvent>('tool:executing', () => {
-        // ツール実行中の状態はストリーミング中として扱う
-        // UI側でStreamingIndicatorやToolCallIndicatorが表示される
-      });
-
-      return () => {
-        unlistenStream();
-        unlistenSpontaneous();
-        unlistenTool();
-      };
+      const unlistenTool = await listen<ToolExecutingEvent>('tool:executing', () => {});
+      if (cancelled) { unlistenTool(); return; }
+      unlisteners.push(unlistenTool);
     };
 
-    let cleanup: (() => void) | undefined;
-    setupListeners().then((fn) => {
-      cleanup = fn;
-    });
+    setupListeners();
 
     return () => {
-      cleanup?.();
+      cancelled = true;
+      unlisteners.forEach((fn) => fn());
     };
-  }, [appendStreamChunk, finishStreaming]);
+  }, []);
 
   return { sendMessage, isStreaming, streamingContent };
 }

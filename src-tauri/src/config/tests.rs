@@ -271,7 +271,7 @@ mod tests {
     #[test]
     fn test_env_overrides_existing_config() {
         // 環境変数を設定
-        std::env::set_var("AI_CHAT_MEMORY_BASE_URL", "http://env-memory:8080/v1");
+        std::env::set_var("AI_CHAT_MEMORY_LLM_BASE_URL", "http://env-memory:8080/v1");
 
         let tmp_dir = tempfile::tempdir().unwrap();
         let config_path = tmp_dir.path().join("config.json");
@@ -295,7 +295,7 @@ mod tests {
         );
 
         // クリーンアップ
-        std::env::remove_var("AI_CHAT_MEMORY_BASE_URL");
+        std::env::remove_var("AI_CHAT_MEMORY_LLM_BASE_URL");
     }
 
     #[test]
