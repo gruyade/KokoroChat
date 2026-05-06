@@ -22,9 +22,11 @@ export function ChatView() {
   const prevMessageCountRef = useRef(0);
   const isNearBottomRef = useRef(true);
   const rafIdRef = useRef<number | null>(null);
+  const isProgrammaticScrollRef = useRef(false);
 
-  // スクロールイベントでオートスクロール状態を更新
+  // スクロールイベントでオートスクロール状態を更新（プログラムスクロール中は無視）
   const handleScroll = useCallback(() => {
+    if (isProgrammaticScrollRef.current) return;
     const container = scrollContainerRef.current;
     if (!container) return;
     isNearBottomRef.current = shouldAutoScroll(
@@ -44,9 +46,11 @@ export function ChatView() {
 
   // requestAnimationFrame ベースのスムーズスクロール
   const smoothScrollToBottom = useCallback(() => {
+    if (!isNearBottomRef.current) return;
     if (rafIdRef.current !== null) {
       cancelAnimationFrame(rafIdRef.current);
     }
+    isProgrammaticScrollRef.current = true;
     rafIdRef.current = requestAnimationFrame(() => {
       const container = scrollContainerRef.current;
       if (!container) return;
@@ -54,6 +58,10 @@ export function ChatView() {
         top: container.scrollHeight,
         behavior: 'smooth',
       });
+      // smooth scroll完了後にフラグ解除（300ms後）
+      setTimeout(() => {
+        isProgrammaticScrollRef.current = false;
+      }, 300);
       rafIdRef.current = null;
     });
   }, []);
@@ -62,8 +70,12 @@ export function ChatView() {
   const scrollToBottomInstant = useCallback(() => {
     const container = scrollContainerRef.current;
     if (!container) return;
+    isProgrammaticScrollRef.current = true;
     container.scrollTop = container.scrollHeight;
     isNearBottomRef.current = true;
+    setTimeout(() => {
+      isProgrammaticScrollRef.current = false;
+    }, 50);
   }, []);
 
   // メッセージ数が変わった時（新メッセージ追加）→ スムーズに最下部へ
