@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Lightbulb, Loader2, Trash2 } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { useCharacterStore } from '../../stores';
+import { useOperationQueue } from '../../hooks/useOperationQueue';
 import type { Thought } from '../../types';
 
 export function ThoughtView() {
@@ -9,6 +10,7 @@ export function ThoughtView() {
   const [thoughts, setThoughts] = useState<Thought[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { pendingIds, processing, enqueue } = useOperationQueue();
 
   const selectedCharacter = characters.find((c) => c.id === selectedCharacterId);
 
@@ -33,13 +35,16 @@ export function ThoughtView() {
     }
   };
 
-  const handleDelete = async (id: string) => {
-    try {
-      await invoke('delete_thought', { id });
-      setThoughts((prev) => prev.filter((t) => t.id !== id));
-    } catch (e) {
-      setError(String(e));
-    }
+  const handleDelete = (id: string) => {
+    if (pendingIds.has(id)) return;
+    enqueue(id, async () => {
+      try {
+        await invoke('delete_thought', { id });
+        setThoughts((prev) => prev.filter((t) => t.id !== id));
+      } catch (e) {
+        setError(String(e));
+      }
+    });
   };
 
   if (!selectedCharacterId) {
@@ -59,6 +64,9 @@ export function ThoughtView() {
         <h1 className="text-xl font-semibold">思考履歴</h1>
         {selectedCharacter && (
           <span className="text-sm text-muted-foreground">— {selectedCharacter.name}</span>
+        )}
+        {processing && (
+          <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
         )}
       </div>
 
@@ -83,29 +91,36 @@ export function ThoughtView() {
           </div>
         ) : (
           <div className="space-y-3">
-            {thoughts.map((thought) => (
-              <div
-                key={thought.id}
-                className="p-4 rounded-lg border border-border bg-card group relative"
-              >
-                <button
-                  onClick={() => handleDelete(thought.id)}
-                  className="absolute top-2 right-2 p-1.5 rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10 opacity-0 group-hover:opacity-100 transition-opacity"
-                  aria-label="思考を削除"
+            {thoughts.map((thought) => {
+              const isPending = pendingIds.has(thought.id);
+              return (
+                <div
+                  key={thought.id}
+                  className={`p-4 rounded-lg border border-border bg-card group relative transition-opacity ${isPending ? 'opacity-40 pointer-events-none' : ''}`}
                 >
-                  <Trash2 className="w-3.5 h-3.5" />
-                </button>
-                <p className="text-sm whitespace-pre-wrap">{thought.content}</p>
-                {thought.context && (
-                  <p className="mt-2 text-xs text-muted-foreground italic">
-                    コンテキスト: {thought.context}
-                  </p>
-                )}
-                <div className="mt-2 text-xs text-muted-foreground">
-                  {new Date(thought.created_at).toLocaleString('ja-JP')}
+                  {isPending ? (
+                    <Loader2 className="absolute top-2 right-2 w-3.5 h-3.5 animate-spin text-muted-foreground" />
+                  ) : (
+                    <button
+                      onClick={() => handleDelete(thought.id)}
+                      className="absolute top-2 right-2 p-1.5 rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10 opacity-0 group-hover:opacity-100 transition-opacity"
+                      aria-label="思考を削除"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                  <p className="text-sm whitespace-pre-wrap">{thought.content}</p>
+                  {thought.context && (
+                    <p className="mt-2 text-xs text-muted-foreground italic">
+                      コンテキスト: {thought.context}
+                    </p>
+                  )}
+                  <div className="mt-2 text-xs text-muted-foreground">
+                    {new Date(thought.created_at).toLocaleString('ja-JP')}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
