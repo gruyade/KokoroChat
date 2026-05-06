@@ -19,6 +19,7 @@
     "@tauri-apps/plugin-fs": "^2.0.0",
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.1.0",
+    "highlight.js": "^11.11.1",
     "lucide-react": "^0.460.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
