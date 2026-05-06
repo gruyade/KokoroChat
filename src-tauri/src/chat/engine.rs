@@ -62,6 +62,17 @@ pub trait ChatEngine: Send + Sync {
 
     /// セッション削除
     async fn delete_session(&self, session_id: &str) -> Result<(), AppError>;
+
+    /// メッセージ編集＋再送信（後続メッセージ削除 → 内容更新 → 再送信）
+    /// `partial_content_accumulator` が Some の場合、ストリーミング中に部分コンテンツを蓄積する
+    async fn edit_and_resend(
+        &self,
+        session_id: &str,
+        message_id: &str,
+        new_content: &str,
+        app_handle: &AppHandle,
+        partial_content_accumulator: Option<Arc<Mutex<String>>>,
+    ) -> Result<(), AppError>;
 }
 
 /// デフォルトChatEngine実装
@@ -590,6 +601,161 @@ impl ChatEngine for DefaultChatEngine {
             AppError::Database(format!("Failed to acquire DB lock: {}", e))
         })?;
         chat_repo::delete_session(db.connection(), session_id)
+    }
+
+    async fn edit_and_resend(
+        &self,
+        session_id: &str,
+        message_id: &str,
+        new_content: &str,
+        app_handle: &AppHandle,
+        partial_content_accumulator: Option<Arc<Mutex<String>>>,
+    ) -> Result<(), AppError> {
+        // 1. 対象メッセージの検証、後続メッセージ削除、内容更新
+        {
+            let db = self.db.lock().map_err(|e| {
+                AppError::Database(format!("Failed to acquire DB lock: {}", e))
+            })?;
+            let conn = db.connection();
+
+            // 対象メッセージを取得して role=User であることを確認
+            let messages = chat_repo::get_messages(conn, session_id)?;
+            let target_msg = messages
+                .iter()
+                .find(|m| m.id == message_id)
+                .ok_or_else(|| AppError::NotFound(format!("Message not found: {}", message_id)))?;
+
+            if target_msg.role != ChatRole::User {
+                return Err(AppError::Validation(
+                    "Only user messages can be edited".to_string(),
+                ));
+            }
+
+            // 対象メッセージ以降の全メッセージを削除
+            chat_repo::delete_messages_after(conn, session_id, message_id)?;
+
+            // 対象メッセージの content を更新
+            chat_repo::update_message_content(conn, message_id, new_content)?;
+        }
+
+        // 2. 更新後のコンテキストを組み立てて再送信
+        let (system_prompt, memories, thoughts, history) = {
+            let db = self.db.lock().map_err(|e| {
+                AppError::Database(format!("Failed to acquire DB lock: {}", e))
+            })?;
+            let conn = db.connection();
+
+            let session = chat_repo::get_session(conn, session_id)?
+                .ok_or_else(|| AppError::NotFound(format!("Session not found: {}", session_id)))?;
+
+            let character = char_repo::get_character(conn, &session.character_id)?
+                .ok_or_else(|| {
+                    AppError::NotFound(format!("Character not found: {}", session.character_id))
+                })?;
+
+            let memories = mem_repo::list_memories(conn, &session.character_id)?;
+
+            let threshold_minutes = self.config_manager.get_config().thought.auto_delete_threshold_minutes;
+            let thoughts = if threshold_minutes > 0 {
+                let since = chrono::Utc::now() - chrono::Duration::minutes(threshold_minutes as i64);
+                let since_str = since.to_rfc3339();
+                thought_repo::get_recent_thoughts(conn, &session.character_id, &since_str)?
+            } else {
+                thought_repo::get_thoughts(conn, &session.character_id, None)?
+            };
+
+            let history = chat_repo::get_messages(conn, session_id)?;
+
+            (character.system_prompt, memories, thoughts, history)
+        };
+
+        // コンテキスト組み立て: 履歴末尾のuserメッセージ（編集済み）を除外し、user_contentとして渡す
+        let history_without_last_user: Vec<_> = {
+            let mut h = history.clone();
+            if let Some(last) = h.last() {
+                if last.role == ChatRole::User {
+                    h.pop();
+                }
+            }
+            h
+        };
+
+        let llm_messages = self.build_context(
+            &system_prompt,
+            &memories,
+            &thoughts,
+            &history_without_last_user,
+            new_content,
+            None,
+        );
+
+        // 3. LLMストリーミング呼び出し
+        let session_id_owned = session_id.to_string();
+        let app_handle_clone = app_handle.clone();
+
+        let session_id_for_callback = session_id_owned.clone();
+        let accumulator = partial_content_accumulator.clone();
+        let callback = Box::new(move |chunk: String| {
+            if let Some(ref acc) = accumulator {
+                if let Ok(mut content) = acc.lock() {
+                    content.push_str(&chunk);
+                }
+            }
+            let _ = app_handle_clone.emit(
+                "chat:stream",
+                ChatStreamEvent {
+                    session_id: session_id_for_callback.clone(),
+                    chunk,
+                    done: false,
+                },
+            );
+        });
+
+        let _llm_guard = self.llm_lock.lock().await;
+        let full_response = self
+            .llm_client
+            .chat_stream(&llm_messages, &self.current_llm_config(), callback)
+            .await?;
+        drop(_llm_guard);
+
+        // 4. ストリーミング完了イベント
+        app_handle.emit(
+            "chat:stream",
+            ChatStreamEvent {
+                session_id: session_id_owned.clone(),
+                chunk: String::new(),
+                done: true,
+            },
+        ).map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
+
+        // 5. アシスタントメッセージ保存
+        let assistant_msg_id = uuid::Uuid::new_v4().to_string();
+        let assistant_now = chrono::Utc::now().to_rfc3339();
+
+        let assistant_message = ChatMessageRecord {
+            id: assistant_msg_id,
+            session_id: session_id_owned.clone(),
+            role: ChatRole::Assistant,
+            content: full_response.clone(),
+            attachments: None,
+            tool_calls: None,
+            tool_call_id: None,
+            created_at: assistant_now.clone(),
+        };
+
+        {
+            let db = self.db.lock().map_err(|e| {
+                AppError::Database(format!("Failed to acquire DB lock: {}", e))
+            })?;
+            let conn = db.connection();
+
+            chat_repo::insert_message(conn, &assistant_message)?;
+
+            let preview = truncate_str(&full_response, 50);
+            chat_repo::update_session_metadata(conn, session_id, &assistant_now, &preview)?;
+        }
+
+        Ok(())
     }
 }
 

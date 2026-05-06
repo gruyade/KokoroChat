@@ -127,7 +127,17 @@ AI Character Chat アプリケーションのチャットUX改善。思考の自
 3. WHEN a non-send key combination is pressed (e.g., Shift+Enter when send key is Enter), THE Message_Input SHALL insert a newline character
 4. THE Settings view SHALL display a dropdown to select the send key preference under the "一般" (General) tab
 
-### Requirement 11: Delete Button Visibility After Slide Animation
+### Requirement 11: Fix Memory Compression Triggering Every Message
+
+**User Story:** As a user, I want memory compression to only trigger after a certain number of new messages since the last compression, so that it does not run on every single message once the threshold is exceeded.
+
+#### Acceptance Criteria
+
+1. WHEN the Memory_Manager checks whether to compress, THE Memory_Manager SHALL count only messages created after the last compression point (identified by `source_message_to` of the most recent memory for that session)
+2. WHEN no previous compression exists for the session, THE Memory_Manager SHALL count all messages in the session against the threshold
+3. THE Memory_Manager SHALL only compress messages that were created after the last compression point (not re-compress already-compressed messages)
+
+### Requirement 12: Delete Button Visibility After Slide Animation
 
 **User Story:** As a user, I want the delete button on newly slid-in chat messages to always be visible and clickable, so that I can delete messages immediately after they appear.
 

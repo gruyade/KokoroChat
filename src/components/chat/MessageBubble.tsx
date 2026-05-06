@@ -1,7 +1,9 @@
 import { useState } from 'react';
-import { Bot, User, Sparkles, Wrench, Copy, RefreshCw, Trash2, Info } from 'lucide-react';
+import { Bot, User, Sparkles, Wrench, Copy, RefreshCw, Trash2, Info, Pencil } from 'lucide-react';
 import type { ChatMessageRecord } from '../../types';
 import { ToolCallIndicator } from './ToolCallIndicator';
+import { EditableMessage } from './EditableMessage';
+import { useChatStore } from '../../stores';
 
 interface MessageBubbleProps {
   message: ChatMessageRecord;
@@ -50,6 +52,9 @@ export function MessageBubble({ message, onRegenerate, onDelete }: MessageBubble
   const config = getRoleConfig(message.role);
   const [showMenu, setShowMenu] = useState(false);
   const [copied, setCopied] = useState(false);
+  const { editingMessageId, setEditingMessage, editAndResend } = useChatStore();
+
+  const isEditing = editingMessageId === message.id;
 
   // [SYSTEM]プレフィックス付きメッセージはシステムメッセージとして表示
   const isSystemMessage = message.role === 'user' && message.content.startsWith('[SYSTEM] ');
@@ -69,6 +74,19 @@ export function MessageBubble({ message, onRegenerate, onDelete }: MessageBubble
   const handleDelete = () => {
     onDelete?.(message.id);
     setShowMenu(false);
+  };
+
+  const handleEdit = () => {
+    setEditingMessage(message.id);
+    setShowMenu(false);
+  };
+
+  const handleEditConfirm = (newContent: string) => {
+    editAndResend(message.id, newContent);
+  };
+
+  const handleEditCancel = () => {
+    setEditingMessage(null);
   };
 
   // システムメッセージの特別表示
@@ -104,40 +122,59 @@ export function MessageBubble({ message, onRegenerate, onDelete }: MessageBubble
               {config.label}
             </span>
           )}
-          <div className={`rounded-lg px-3 py-2 text-sm whitespace-pre-wrap ${config.bubble}`}>
-            {displayContent}
-          </div>
+          {isEditing ? (
+            <EditableMessage
+              originalContent={message.content}
+              onConfirm={handleEditConfirm}
+              onCancel={handleEditCancel}
+            />
+          ) : (
+            <>
+              <div className={`rounded-lg px-3 py-2 text-sm whitespace-pre-wrap ${config.bubble}`}>
+                {displayContent}
+              </div>
 
-          {/* Action buttons — 常にスペース確保、ホバーで表示 */}
-          <div className={`flex items-center gap-0.5 h-6 ${message.role === 'user' ? 'justify-end' : ''}`}>
-            <div className={`flex items-center gap-0.5 transition-opacity ${showMenu ? 'opacity-100' : 'opacity-0'}`}>
-              <button
-                onClick={handleCopy}
-                className="p-1 rounded text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
-                title={copied ? 'コピー済み' : 'コピー'}
-              >
-                <Copy className="h-3.5 w-3.5" />
-              </button>
-              {message.role === 'assistant' && onRegenerate && (
-                <button
-                  onClick={handleRegenerate}
-                  className="p-1 rounded text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
-                  title="再生成"
-                >
-                  <RefreshCw className="h-3.5 w-3.5" />
-                </button>
-              )}
-              {onDelete && (
-                <button
-                  onClick={handleDelete}
-                  className="p-1 rounded text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
-                  title="削除"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </button>
-              )}
-            </div>
-          </div>
+              {/* Action buttons — 常にスペース確保、ホバーで表示 */}
+              <div className={`flex items-center gap-0.5 h-6 ${message.role === 'user' ? 'justify-end' : ''}`}>
+                <div className={`flex items-center gap-0.5 transition-opacity ${showMenu ? 'opacity-100' : 'opacity-0'}`}>
+                  <button
+                    onClick={handleCopy}
+                    className="p-1 rounded text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                    title={copied ? 'コピー済み' : 'コピー'}
+                  >
+                    <Copy className="h-3.5 w-3.5" />
+                  </button>
+                  {message.role === 'user' && !isSystemMessage && (
+                    <button
+                      onClick={handleEdit}
+                      className="p-1 rounded text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                      title="編集"
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                  {message.role === 'assistant' && onRegenerate && (
+                    <button
+                      onClick={handleRegenerate}
+                      className="p-1 rounded text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                      title="再生成"
+                    >
+                      <RefreshCw className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                  {onDelete && (
+                    <button
+                      onClick={handleDelete}
+                      className="p-1 rounded text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
+                      title="削除"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </div>
+              </div>
+            </>
+          )}
 
           {/* Attachments */}
           {message.attachments && message.attachments.length > 0 && (

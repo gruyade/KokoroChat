@@ -10,6 +10,7 @@ interface ChatState {
   isAbortable: boolean;
   streamingContent: string;
   error: string | null;
+  editingMessageId: string | null;
   fetchSessions: (characterId: string) => Promise<void>;
   createSession: (characterId: string) => Promise<string>;
   selectSession: (sessionId: string | null) => void;
@@ -20,6 +21,8 @@ interface ChatState {
   finishStreaming: (fullContent: string) => void;
   regenerateMessage: (messageId: string) => Promise<void>;
   stopGeneration: () => Promise<void>;
+  setEditingMessage: (id: string | null) => void;
+  editAndResend: (messageId: string, newContent: string) => Promise<void>;
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -30,6 +33,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   isAbortable: false,
   streamingContent: '',
   error: null,
+  editingMessageId: null,
 
   fetchSessions: async (characterId: string) => {
     set({ error: null });
@@ -176,5 +180,41 @@ export const useChatStore = create<ChatState>((set, get) => ({
       // 停止コマンド失敗時は無視（ストリーミングは自然完了を待つ）
     }
     set({ isAbortable: false });
+  },
+
+  setEditingMessage: (id: string | null) => {
+    set({ editingMessageId: id });
+  },
+
+  editAndResend: async (messageId: string, newContent: string) => {
+    const { currentSessionId, messages } = get();
+    if (!currentSessionId) return;
+
+    // 編集対象メッセージ以降をローカル状態から削除し、対象メッセージの内容を更新
+    const targetIndex = messages.findIndex((m) => m.id === messageId);
+    if (targetIndex === -1) return;
+
+    const updatedMessages = messages.slice(0, targetIndex + 1).map((m) =>
+      m.id === messageId ? { ...m, content: newContent } : m
+    );
+
+    set({
+      messages: updatedMessages,
+      isStreaming: true,
+      isAbortable: true,
+      streamingContent: '',
+      error: null,
+      editingMessageId: null,
+    });
+
+    try {
+      await invoke('edit_and_resend', {
+        sessionId: currentSessionId,
+        messageId,
+        newContent,
+      });
+    } catch (e) {
+      set({ error: String(e), isStreaming: false, isAbortable: false });
+    }
   },
 }));

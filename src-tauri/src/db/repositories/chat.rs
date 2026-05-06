@@ -139,6 +139,40 @@ pub fn delete_message(conn: &Connection, id: &str) -> Result<bool, AppError> {
     Ok(rows_affected > 0)
 }
 
+/// 指定メッセージ以降の全メッセージを削除（指定メッセージ自体は残す）
+/// created_at が対象メッセージより後のメッセージを削除する
+pub fn delete_messages_after(conn: &Connection, session_id: &str, message_id: &str) -> Result<u32, AppError> {
+    // 対象メッセージの created_at を取得
+    let created_at: String = conn.query_row(
+        "SELECT created_at FROM chat_messages WHERE id = ?1 AND session_id = ?2",
+        params![message_id, session_id],
+        |row| row.get(0),
+    ).map_err(|e| match e {
+        rusqlite::Error::QueryReturnedNoRows => {
+            AppError::NotFound(format!("Message not found: {}", message_id))
+        }
+        other => AppError::Database(other.to_string()),
+    })?;
+
+    let rows_affected = conn.execute(
+        "DELETE FROM chat_messages WHERE session_id = ?1 AND created_at > ?2",
+        params![session_id, created_at],
+    )?;
+    Ok(rows_affected as u32)
+}
+
+/// 指定メッセージの content を更新
+pub fn update_message_content(conn: &Connection, message_id: &str, new_content: &str) -> Result<(), AppError> {
+    let rows_affected = conn.execute(
+        "UPDATE chat_messages SET content = ?1 WHERE id = ?2",
+        params![new_content, message_id],
+    )?;
+    if rows_affected == 0 {
+        return Err(AppError::NotFound(format!("Message not found: {}", message_id)));
+    }
+    Ok(())
+}
+
 /// セッションIDでメッセージ一覧取得（作成日時の昇順）
 pub fn get_messages(
     conn: &Connection,
@@ -473,5 +507,118 @@ mod tests {
 
         let messages = get_messages(conn, "sess-001").unwrap();
         assert_eq!(messages[0].role, ChatRole::Spontaneous);
+    }
+
+    #[test]
+    fn test_delete_messages_after() {
+        let db = setup_db();
+        let conn = db.connection();
+        let session = sample_session();
+        insert_session(conn, &session).unwrap();
+
+        let msg1 = ChatMessageRecord {
+            id: "msg-001".to_string(),
+            session_id: "sess-001".to_string(),
+            role: ChatRole::User,
+            content: "最初のメッセージ".to_string(),
+            attachments: None,
+            tool_calls: None,
+            tool_call_id: None,
+            created_at: "2024-01-01T10:00:00Z".to_string(),
+        };
+        let msg2 = ChatMessageRecord {
+            id: "msg-002".to_string(),
+            session_id: "sess-001".to_string(),
+            role: ChatRole::Assistant,
+            content: "返答1".to_string(),
+            attachments: None,
+            tool_calls: None,
+            tool_call_id: None,
+            created_at: "2024-01-01T10:01:00Z".to_string(),
+        };
+        let msg3 = ChatMessageRecord {
+            id: "msg-003".to_string(),
+            session_id: "sess-001".to_string(),
+            role: ChatRole::User,
+            content: "2番目のメッセージ".to_string(),
+            attachments: None,
+            tool_calls: None,
+            tool_call_id: None,
+            created_at: "2024-01-01T10:02:00Z".to_string(),
+        };
+
+        insert_message(conn, &msg1).unwrap();
+        insert_message(conn, &msg2).unwrap();
+        insert_message(conn, &msg3).unwrap();
+
+        // msg-001 以降を削除 → msg-002, msg-003 が削除される
+        let deleted = delete_messages_after(conn, "sess-001", "msg-001").unwrap();
+        assert_eq!(deleted, 2);
+
+        let messages = get_messages(conn, "sess-001").unwrap();
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].id, "msg-001");
+    }
+
+    #[test]
+    fn test_delete_messages_after_last_message() {
+        let db = setup_db();
+        let conn = db.connection();
+        let session = sample_session();
+        insert_session(conn, &session).unwrap();
+
+        let msg1 = ChatMessageRecord {
+            id: "msg-001".to_string(),
+            session_id: "sess-001".to_string(),
+            role: ChatRole::User,
+            content: "唯一のメッセージ".to_string(),
+            attachments: None,
+            tool_calls: None,
+            tool_call_id: None,
+            created_at: "2024-01-01T10:00:00Z".to_string(),
+        };
+
+        insert_message(conn, &msg1).unwrap();
+
+        // 最後のメッセージ以降を削除 → 何も削除されない
+        let deleted = delete_messages_after(conn, "sess-001", "msg-001").unwrap();
+        assert_eq!(deleted, 0);
+
+        let messages = get_messages(conn, "sess-001").unwrap();
+        assert_eq!(messages.len(), 1);
+    }
+
+    #[test]
+    fn test_update_message_content() {
+        let db = setup_db();
+        let conn = db.connection();
+        let session = sample_session();
+        insert_session(conn, &session).unwrap();
+
+        let msg = ChatMessageRecord {
+            id: "msg-001".to_string(),
+            session_id: "sess-001".to_string(),
+            role: ChatRole::User,
+            content: "元の内容".to_string(),
+            attachments: None,
+            tool_calls: None,
+            tool_call_id: None,
+            created_at: "2024-01-01T10:00:00Z".to_string(),
+        };
+
+        insert_message(conn, &msg).unwrap();
+        update_message_content(conn, "msg-001", "更新後の内容").unwrap();
+
+        let messages = get_messages(conn, "sess-001").unwrap();
+        assert_eq!(messages[0].content, "更新後の内容");
+    }
+
+    #[test]
+    fn test_update_message_content_not_found() {
+        let db = setup_db();
+        let conn = db.connection();
+
+        let result = update_message_content(conn, "nonexistent", "新しい内容");
+        assert!(result.is_err());
     }
 }

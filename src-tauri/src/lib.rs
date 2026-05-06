@@ -174,6 +174,7 @@ pub fn run() {
             commands::chat::regenerate_message,
             commands::chat::stop_generation,
             commands::chat::trigger_spontaneous_check,
+            commands::chat::edit_and_resend,
             commands::config::get_config,
             commands::config::set_config,
             commands::config::test_llm_connection,
