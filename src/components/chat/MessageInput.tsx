@@ -1,14 +1,15 @@
-import { useState, useRef, useCallback, type KeyboardEvent } from 'react';
+import { useState, useRef, useCallback, useEffect, type KeyboardEvent } from 'react';
 import { Send, Paperclip, Info, Square } from 'lucide-react';
 
 interface MessageInputProps {
   onSend: (content: string, isSystem?: boolean) => void;
   disabled?: boolean;
+  isStreaming?: boolean;
   isAbortable?: boolean;
   onStop?: () => void;
 }
 
-export function MessageInput({ onSend, disabled = false, isAbortable = false, onStop }: MessageInputProps) {
+export function MessageInput({ onSend, disabled = false, isStreaming = false, isAbortable = false, onStop }: MessageInputProps) {
   const [value, setValue] = useState('');
   const [systemMode, setSystemMode] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -29,6 +30,7 @@ export function MessageInput({ onSend, disabled = false, isAbortable = false, on
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
     }
+    textareaRef.current?.focus();
   }, [value, disabled, onSend, systemMode]);
 
   const handleKeyDown = useCallback(
@@ -40,6 +42,15 @@ export function MessageInput({ onSend, disabled = false, isAbortable = false, on
     },
     [handleSend]
   );
+
+  // ストリーミング完了後にフォーカスを復帰
+  const prevStreamingRef = useRef(isStreaming);
+  useEffect(() => {
+    if (prevStreamingRef.current && !isStreaming) {
+      textareaRef.current?.focus();
+    }
+    prevStreamingRef.current = isStreaming;
+  }, [isStreaming]);
 
   return (
     <div className="border-t border-border bg-background px-4 py-3">

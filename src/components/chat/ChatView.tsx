@@ -135,7 +135,7 @@ export function ChatView() {
       )}
 
       {/* Input area */}
-      <MessageInput onSend={handleSend} disabled={isStreaming} isAbortable={isAbortable} onStop={stopGeneration} />
+      <MessageInput onSend={handleSend} disabled={isStreaming} isStreaming={isStreaming} isAbortable={isAbortable} onStop={stopGeneration} />
     </div>
   );
 }
