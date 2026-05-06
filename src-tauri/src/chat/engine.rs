@@ -34,20 +34,24 @@ pub trait ChatEngine: Send + Sync {
     async fn create_session(&self, character_id: &str) -> Result<String, AppError>;
 
     /// メッセージ送信（ストリーミングでイベント発火）
+    /// `partial_content_accumulator` が Some の場合、ストリーミング中に部分コンテンツを蓄積する
     async fn send_message(
         &self,
         session_id: &str,
         content: &str,
         attachments: Option<Vec<Attachment>>,
         app_handle: &AppHandle,
+        partial_content_accumulator: Option<Arc<Mutex<String>>>,
     ) -> Result<(), AppError>;
 
     /// メッセージ再生成（対象assistantメッセージ削除→直前userメッセージで再送信）
+    /// `partial_content_accumulator` が Some の場合、ストリーミング中に部分コンテンツを蓄積する
     async fn regenerate(
         &self,
         session_id: &str,
         target_message_id: &str,
         app_handle: &AppHandle,
+        partial_content_accumulator: Option<Arc<Mutex<String>>>,
     ) -> Result<(), AppError>;
 
     /// セッションのメッセージ履歴取得
@@ -242,6 +246,7 @@ impl ChatEngine for DefaultChatEngine {
         content: &str,
         attachments: Option<Vec<Attachment>>,
         app_handle: &AppHandle,
+        partial_content_accumulator: Option<Arc<Mutex<String>>>,
     ) -> Result<(), AppError> {
         let now = chrono::Utc::now().to_rfc3339();
         let user_msg_id = uuid::Uuid::new_v4().to_string();
@@ -324,7 +329,14 @@ impl ChatEngine for DefaultChatEngine {
         let app_handle_clone = app_handle.clone();
 
         let session_id_for_callback = session_id_owned.clone();
+        let accumulator = partial_content_accumulator.clone();
         let callback = Box::new(move |chunk: String| {
+            // 部分コンテンツ蓄積
+            if let Some(ref acc) = accumulator {
+                if let Ok(mut content) = acc.lock() {
+                    content.push_str(&chunk);
+                }
+            }
             let _ = app_handle_clone.emit(
                 "chat:stream",
                 ChatStreamEvent {
@@ -392,6 +404,7 @@ impl ChatEngine for DefaultChatEngine {
         session_id: &str,
         target_message_id: &str,
         app_handle: &AppHandle,
+        partial_content_accumulator: Option<Arc<Mutex<String>>>,
     ) -> Result<(), AppError> {
         // 1. 対象メッセージを取得し、直前のuserメッセージを特定
         let user_content = {
@@ -493,7 +506,14 @@ impl ChatEngine for DefaultChatEngine {
         let app_handle_clone = app_handle.clone();
 
         let session_id_for_callback = session_id_owned.clone();
+        let accumulator = partial_content_accumulator.clone();
         let callback = Box::new(move |chunk: String| {
+            // 部分コンテンツ蓄積
+            if let Some(ref acc) = accumulator {
+                if let Ok(mut content) = acc.lock() {
+                    content.push_str(&chunk);
+                }
+            }
             let _ = app_handle_clone.emit(
                 "chat:stream",
                 ChatStreamEvent {

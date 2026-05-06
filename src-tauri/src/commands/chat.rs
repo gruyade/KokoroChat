@@ -41,10 +41,11 @@ pub async fn send_message(
     // 部分コンテンツ蓄積用
     let partial_content = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
     let partial_content_for_register = partial_content.clone();
+    let partial_content_for_engine = partial_content.clone();
 
     let join_handle = tokio::spawn(async move {
         chat_engine
-            .send_message(&session_id_clone, &content_clone, None, &app_handle_clone)
+            .send_message(&session_id_clone, &content_clone, None, &app_handle_clone, Some(partial_content_for_engine))
             .await
     });
 
@@ -252,10 +253,46 @@ pub async fn regenerate_message(
     app_handle: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
-    state
-        .chat_engine
-        .regenerate(&session_id, &message_id, &app_handle)
-        .await
+    let chat_engine = state.chat_engine.clone();
+    let stream_abort_manager = state.stream_abort_manager.clone();
+    let session_id_clone = session_id.clone();
+    let message_id_clone = message_id.clone();
+    let app_handle_clone = app_handle.clone();
+
+    // 部分コンテンツ蓄積用
+    let partial_content = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+    let partial_content_for_register = partial_content.clone();
+    let partial_content_for_engine = partial_content.clone();
+
+    let join_handle = tokio::spawn(async move {
+        chat_engine
+            .regenerate(&session_id_clone, &message_id_clone, &app_handle_clone, Some(partial_content_for_engine))
+            .await
+    });
+
+    // AbortHandle を StreamAbortManager に登録
+    stream_abort_manager.register(
+        &session_id,
+        join_handle.abort_handle(),
+        partial_content_for_register,
+    );
+
+    // タスク完了を待機
+    match join_handle.await {
+        Ok(inner_result) => {
+            stream_abort_manager.remove(&session_id);
+            inner_result
+        }
+        Err(join_err) => {
+            if join_err.is_cancelled() {
+                // 中断された場合: stop_generation コマンド側で処理済み
+                Ok(())
+            } else {
+                stream_abort_manager.remove(&session_id);
+                Err(AppError::Io(format!("Task panicked: {}", join_err)))
+            }
+        }
+    }
 }
 
 /// 生成停止
