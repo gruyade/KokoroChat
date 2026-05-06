@@ -11,6 +11,7 @@ export function MemoryView() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [deletedIds, setDeletedIds] = useState<Set<string>>(new Set());
+  const { processing, enqueue } = useOperationQueue();
 
   const selectedCharacter = characters.find((c) => c.id === selectedCharacterId);
 
@@ -30,10 +31,6 @@ export function MemoryView() {
       setLoading(false);
     }
   }, [selectedCharacterId]);
-
-  const { processing, enqueue } = useOperationQueue(() => {
-    loadMemories();
-  });
 
   useEffect(() => {
     if (!selectedCharacterId) return;

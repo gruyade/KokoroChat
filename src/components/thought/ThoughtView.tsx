@@ -11,6 +11,7 @@ export function ThoughtView() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [deletedIds, setDeletedIds] = useState<Set<string>>(new Set());
+  const { processing, enqueue } = useOperationQueue();
 
   const selectedCharacter = characters.find((c) => c.id === selectedCharacterId);
 
@@ -30,10 +31,6 @@ export function ThoughtView() {
       setLoading(false);
     }
   }, [selectedCharacterId]);
-
-  const { processing, enqueue } = useOperationQueue(() => {
-    loadThoughts();
-  });
 
   useEffect(() => {
     if (!selectedCharacterId) return;
