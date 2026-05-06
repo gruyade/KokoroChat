@@ -23,8 +23,10 @@ export function ChatView() {
   const isNearBottomRef = useRef(true);
   const rafIdRef = useRef<number | null>(null);
   const isProgrammaticScrollRef = useRef(false);
+  const lastSmoothScrollTimeRef = useRef(0);
 
-  // スクロールイベントでオートスクロール状態を更新（プログラムスクロール中は無視）
+  // スクロールイベントでオートスクロール状態を更新
+  // isProgrammaticScrollRef はscrollイベント経由の更新のみブロック（ユーザー操作イベントはブロックしない）
   const handleScroll = useCallback(() => {
     if (isProgrammaticScrollRef.current) return;
     const container = scrollContainerRef.current;
@@ -36,22 +38,85 @@ export function ChatView() {
     );
   }, []);
 
+  // wheel/touchmoveイベントリスナー: ユーザーが上方向にスクロールした場合、
+  // isProgrammaticScrollRefに関係なく即座にisNearBottomRefをfalseに設定
+  useEffect(() => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+
+    const handleWheel = (e: WheelEvent) => {
+      // deltaY > 0 は下方向、deltaY < 0 は上方向
+      if (e.deltaY < 0) {
+        isNearBottomRef.current = false;
+      } else if (e.deltaY > 0) {
+        // 下方向スクロール時は現在位置で判定
+        const nearBottom = shouldAutoScroll(
+          container.scrollHeight,
+          container.scrollTop,
+          container.clientHeight
+        );
+        if (nearBottom) {
+          isNearBottomRef.current = true;
+        }
+      }
+    };
+
+    let lastTouchY: number | null = null;
+    const handleTouchStart = (e: TouchEvent) => {
+      if (e.touches.length > 0) {
+        lastTouchY = e.touches[0].clientY;
+      }
+    };
+    const handleTouchMove = (e: TouchEvent) => {
+      if (e.touches.length > 0 && lastTouchY !== null) {
+        const currentY = e.touches[0].clientY;
+        // タッチが下に動く = コンテンツが上にスクロール（ユーザーがスクロールアップ）
+        if (currentY > lastTouchY) {
+          isNearBottomRef.current = false;
+        }
+        lastTouchY = currentY;
+      }
+    };
+
+    container.addEventListener('wheel', handleWheel, { passive: true });
+    container.addEventListener('touchstart', handleTouchStart, { passive: true });
+    container.addEventListener('touchmove', handleTouchMove, { passive: true });
+    return () => {
+      container.removeEventListener('wheel', handleWheel);
+      container.removeEventListener('touchstart', handleTouchStart);
+      container.removeEventListener('touchmove', handleTouchMove);
+    };
+    // currentSessionId を依存に含めることで、セッション選択後にcontainerが出現した際に再登録
+  }, [currentSessionId]);
+
   // スクロールイベントリスナー登録
   useEffect(() => {
     const container = scrollContainerRef.current;
     if (!container) return;
     container.addEventListener('scroll', handleScroll, { passive: true });
     return () => container.removeEventListener('scroll', handleScroll);
-  }, [handleScroll]);
+  }, [handleScroll, currentSessionId]);
 
-  // requestAnimationFrame ベースのスムーズスクロール
+  // requestAnimationFrame ベースのスムーズスクロール（スロットリング付き）
   const smoothScrollToBottom = useCallback(() => {
     if (!isNearBottomRef.current) return;
+
+    // スロットリング: 前回の呼び出しから150ms以内なら無視
+    const now = Date.now();
+    if (now - lastSmoothScrollTimeRef.current < 150) return;
+    lastSmoothScrollTimeRef.current = now;
+
     if (rafIdRef.current !== null) {
       cancelAnimationFrame(rafIdRef.current);
     }
     isProgrammaticScrollRef.current = true;
     rafIdRef.current = requestAnimationFrame(() => {
+      // rAF実行直前に再チェック: スケジュールから実行までの間にユーザーがスクロールアップした場合をキャッチ
+      if (!isNearBottomRef.current) {
+        isProgrammaticScrollRef.current = false;
+        rafIdRef.current = null;
+        return;
+      }
       const container = scrollContainerRef.current;
       if (!container) return;
       container.scrollTo({
