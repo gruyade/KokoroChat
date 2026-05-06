@@ -2,7 +2,6 @@
 
 use tauri::{AppHandle, State};
 
-use crate::db::repositories::thought as thought_repo;
 use crate::error::AppError;
 use crate::models::Thought;
 use crate::state::AppState;
@@ -23,15 +22,7 @@ pub async fn delete_thought(
     id: String,
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
-    let db_guard = state.db.lock().map_err(|e| {
-        AppError::Database(format!("DB lock failed: {}", e))
-    })?;
-    let conn = db_guard.connection();
-    let deleted = thought_repo::delete_thought(conn, &id)?;
-    if !deleted {
-        return Err(AppError::NotFound(format!("thought {}", id)));
-    }
-    Ok(())
+    state.thought_engine.delete_thought(&id).await
 }
 
 /// 思考エンジン起動（キャラクター選択時にフロントエンドから呼ぶ）

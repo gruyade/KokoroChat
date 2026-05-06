@@ -22,7 +22,7 @@ export function ThoughtView() {
     setLoading(true);
     setError(null);
     try {
-      const result = await invoke<Thought[]>('list_thoughts', {
+      const result = await invoke<Thought[]>('get_thoughts', {
         characterId: selectedCharacterId,
       });
       setThoughts(result);

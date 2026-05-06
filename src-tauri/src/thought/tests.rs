@@ -464,3 +464,41 @@ fn test_pause_resume() {
     engine.resume();
     assert!(!engine.is_paused());
 }
+
+#[tokio::test]
+async fn test_delete_thought_removes_from_db() {
+    let db = setup_db();
+    let db = Arc::new(Mutex::new(db));
+    let mock_llm = Arc::new(MockLLMClient::new("削除テスト思考"));
+    let config = default_llm_config();
+
+    let engine = DefaultThoughtEngine::new(db.clone(), mock_llm, config, test_llm_lock());
+
+    // 思考を生成
+    let thought = engine.generate_thought("char-001").await.unwrap();
+
+    // 削除前: 存在する
+    let thoughts = engine.get_thoughts("char-001", None).await.unwrap();
+    assert_eq!(thoughts.len(), 1);
+
+    // 削除
+    engine.delete_thought(&thought.id).await.unwrap();
+
+    // 削除後: 存在しない
+    let thoughts = engine.get_thoughts("char-001", None).await.unwrap();
+    assert!(thoughts.is_empty());
+}
+
+#[tokio::test]
+async fn test_delete_thought_not_found() {
+    let db = setup_db();
+    let db = Arc::new(Mutex::new(db));
+    let mock_llm = Arc::new(MockLLMClient::new("unused"));
+    let config = default_llm_config();
+
+    let engine = DefaultThoughtEngine::new(db.clone(), mock_llm, config, test_llm_lock());
+
+    // 存在しないIDで削除 → NotFoundエラー
+    let result = engine.delete_thought("nonexistent-id").await;
+    assert!(result.is_err());
+}

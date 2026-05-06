@@ -26,6 +26,7 @@ pub struct ThoughtEvent {
 pub trait ThoughtEngine: Send + Sync {
     async fn generate_thought(&self, character_id: &str) -> Result<Thought, AppError>;
     async fn get_thoughts(&self, character_id: &str, limit: Option<u32>) -> Result<Vec<Thought>, AppError>;
+    async fn delete_thought(&self, id: &str) -> Result<(), AppError>;
     async fn cleanup_old_thoughts(&self, character_id: &str, threshold_minutes: u64) -> Result<u32, AppError>;
     fn set_frequency(&self, character_id: &str, interval_minutes: u64);
     fn start(&self, character_id: &str, app_handle: AppHandle);
@@ -252,6 +253,16 @@ impl ThoughtEngine for DefaultThoughtEngine {
         let db_guard = self.db.lock().unwrap();
         let conn = db_guard.connection();
         thought_repo::get_thoughts(conn, character_id, limit)
+    }
+
+    async fn delete_thought(&self, id: &str) -> Result<(), AppError> {
+        let db_guard = self.db.lock().unwrap();
+        let conn = db_guard.connection();
+        let deleted = thought_repo::delete_thought(conn, id)?;
+        if !deleted {
+            return Err(AppError::NotFound(format!("thought {}", id)));
+        }
+        Ok(())
     }
 
     async fn cleanup_old_thoughts(&self, character_id: &str, threshold_minutes: u64) -> Result<u32, AppError> {

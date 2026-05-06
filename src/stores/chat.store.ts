@@ -75,7 +75,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const { currentSessionId, messages } = get();
     if (!currentSessionId) return;
 
-    // ユーザーメッセージをローカルに即座に追加
+    // ユーザーメッセージをローカルに即座に追加（楽観的更新）
     const userMessage: ChatMessageRecord = {
       id: crypto.randomUUID(),
       session_id: currentSessionId,
@@ -83,6 +83,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       content,
       created_at: new Date().toISOString(),
     };
+    const previousMessages = messages;
     set({ messages: [...messages, userMessage], isStreaming: true, isAbortable: true, streamingContent: '', error: null });
 
     try {
@@ -92,7 +93,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         attachments: attachments ?? null,
       });
     } catch (e) {
-      set({ error: String(e), isStreaming: false, isAbortable: false });
+      // 送信失敗時はローカルに追加したメッセージをロールバック
+      set({ messages: previousMessages, error: String(e), isStreaming: false, isAbortable: false });
       throw e;
     }
   },
@@ -151,7 +153,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const { currentSessionId, messages } = get();
     if (!currentSessionId) return;
 
-    // 対象メッセージをローカル状態から削除し、ストリーミング開始
+    // 対象メッセージをローカル状態から削除し、ストリーミング開始（楽観的更新）
+    const previousMessages = messages;
     set({
       messages: messages.filter((m) => m.id !== messageId),
       isStreaming: true,
@@ -166,7 +169,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         messageId,
       });
     } catch (e) {
-      set({ error: String(e), isStreaming: false, isAbortable: false });
+      // 失敗時はメッセージをロールバック
+      set({ messages: previousMessages, error: String(e), isStreaming: false, isAbortable: false });
     }
   },
 
@@ -176,10 +180,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     try {
       await invoke('stop_generation', { sessionId: currentSessionId });
+      // isAbortable は finishStreaming（chat:stream done イベント受信時）でクリアされる
+      // ここでは送信ボタンの連打を防ぐためのみ設定
+      set({ isAbortable: false });
     } catch {
       // 停止コマンド失敗時は無視（ストリーミングは自然完了を待つ）
+      set({ isAbortable: false });
     }
-    set({ isAbortable: false });
   },
 
   setEditingMessage: (id: string | null) => {
@@ -190,10 +197,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
     const { currentSessionId, messages } = get();
     if (!currentSessionId) return;
 
-    // 編集対象メッセージ以降をローカル状態から削除し、対象メッセージの内容を更新
+    // 編集対象メッセージ以降をローカル状態から削除し、対象メッセージの内容を更新（楽観的更新）
     const targetIndex = messages.findIndex((m) => m.id === messageId);
     if (targetIndex === -1) return;
 
+    const previousMessages = messages;
     const updatedMessages = messages.slice(0, targetIndex + 1).map((m) =>
       m.id === messageId ? { ...m, content: newContent } : m
     );
@@ -214,7 +222,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
         newContent,
       });
     } catch (e) {
-      set({ error: String(e), isStreaming: false, isAbortable: false });
+      // 失敗時はメッセージをロールバック
+      set({ messages: previousMessages, error: String(e), isStreaming: false, isAbortable: false });
     }
   },
 }));
