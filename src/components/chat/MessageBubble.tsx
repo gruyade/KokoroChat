@@ -3,6 +3,7 @@ import { Bot, User, Sparkles, Wrench, Copy, RefreshCw, Trash2, Info, Pencil } fr
 import type { ChatMessageRecord } from '../../types';
 import { ToolCallIndicator } from './ToolCallIndicator';
 import { EditableMessage } from './EditableMessage';
+import { MarkdownRenderer } from './MarkdownRenderer';
 import { useChatStore } from '../../stores';
 
 interface MessageBubbleProps {
@@ -130,8 +131,11 @@ export function MessageBubble({ message, onRegenerate, onDelete }: MessageBubble
             />
           ) : (
             <>
-              <div className={`rounded-lg px-3 py-2 text-sm whitespace-pre-wrap ${config.bubble}`}>
-                {displayContent}
+              <div className={`rounded-lg px-3 py-2 text-sm ${config.bubble}`}>
+                <MarkdownRenderer
+                  content={displayContent}
+                  className="prose prose-sm prose-invert max-w-none prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-ol:my-1 prose-pre:my-2 prose-code:text-xs"
+                />
               </div>
 
               {/* Action buttons — 常にスペース確保、ホバーで表示 */}
