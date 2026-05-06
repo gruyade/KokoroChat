@@ -7,7 +7,7 @@ mod tests {
     use crate::config::model_config::ModelConfigManager;
     use crate::models::config::{
         AppConfig, AttachmentConfig, MemoryConfig, ModelPurpose, ModelSettings, PluginsConfig,
-        SpontaneousConfig, TTSGlobalConfig, Theme, ThoughtConfig, UIConfig,
+        SendKey, SpontaneousConfig, TTSGlobalConfig, Theme, ThoughtConfig, UIConfig,
     };
 
     #[test]
@@ -190,6 +190,7 @@ mod tests {
             ui: UIConfig {
                 theme: Theme::Light,
                 language: "en".to_string(),
+                send_key: SendKey::default(),
             },
             plugins: PluginsConfig {
                 enabled_plugins: vec!["calculator".to_string()],

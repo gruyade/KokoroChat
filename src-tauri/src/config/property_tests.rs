@@ -10,7 +10,7 @@ mod bug_condition_tests {
     use crate::config::model_config::ModelConfigManager;
     use crate::models::config::{
         AppConfig, AttachmentConfig, MemoryConfig, ModelPurpose, ModelSettings, PluginsConfig,
-        SpontaneousConfig, TTSGlobalConfig, Theme, ThoughtConfig, UIConfig,
+        SendKey, SpontaneousConfig, TTSGlobalConfig, Theme, ThoughtConfig, UIConfig,
     };
 
     // ========================================
@@ -98,6 +98,7 @@ mod bug_condition_tests {
             ui: UIConfig {
                 theme: Theme::Dark,
                 language: "ja".to_string(),
+                send_key: SendKey::default(),
             },
             plugins: PluginsConfig {
                 enabled_plugins: vec![],
@@ -188,7 +189,7 @@ mod preservation_tests {
     use crate::config::model_config::ModelConfigManager;
     use crate::models::config::{
         AppConfig, AttachmentConfig, MemoryConfig, ModelPurpose, ModelSettings, PluginsConfig,
-        SpontaneousConfig, TTSGlobalConfig, Theme, ThoughtConfig, UIConfig,
+        SendKey, SpontaneousConfig, TTSGlobalConfig, Theme, ThoughtConfig, UIConfig,
     };
 
     // ========================================
@@ -253,6 +254,7 @@ mod preservation_tests {
             ui: UIConfig {
                 theme: Theme::Dark,
                 language: "ja".to_string(),
+                send_key: SendKey::default(),
             },
             plugins: PluginsConfig {
                 enabled_plugins: vec![],
@@ -460,7 +462,7 @@ mod tests {
     use crate::config::model_config::ModelConfigManager;
     use crate::models::config::{
         AppConfig, AttachmentConfig, MemoryConfig, ModelPurpose, ModelSettings, PluginsConfig,
-        SpontaneousConfig, TTSGlobalConfig, Theme, ThoughtConfig, UIConfig,
+        SendKey, SpontaneousConfig, TTSGlobalConfig, Theme, ThoughtConfig, UIConfig,
     };
 
     // ========================================
@@ -571,7 +573,7 @@ mod tests {
                         compression_threshold,
                     },
                     tts: TTSGlobalConfig { enabled: tts_enabled },
-                    ui: UIConfig { theme, language },
+                    ui: UIConfig { theme, language, send_key: SendKey::default() },
                     plugins: PluginsConfig {
                         enabled_plugins,
                         plugin_settings: HashMap::new(),
