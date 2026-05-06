@@ -7,49 +7,97 @@ import { MessageInput } from './MessageInput';
 import { StreamingIndicator } from './StreamingIndicator';
 import { ChatHeaderControls } from './ChatHeaderControls';
 
+/**
+ * オートスクロール判定: 底から200px以内ならtrue
+ */
+export function shouldAutoScroll(scrollHeight: number, scrollTop: number, clientHeight: number): boolean {
+  return (scrollHeight - scrollTop - clientHeight) <= 200;
+}
+
 export function ChatView() {
   const { currentSessionId, messages, isStreaming, isAbortable, streamingContent, error, sendMessage, createSession, fetchHistory, stopGeneration } =
     useChatStore();
   const { selectedCharacterId, characters } = useCharacterStore();
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const prevMessageCountRef = useRef(0);
+  const isNearBottomRef = useRef(true);
+  const rafIdRef = useRef<number | null>(null);
 
-  // スクロールを最下部に移動（即座に）
-  const scrollToBottom = useCallback((instant = true) => {
+  // スクロールイベントでオートスクロール状態を更新
+  const handleScroll = useCallback(() => {
     const container = scrollContainerRef.current;
     if (!container) return;
-    if (instant) {
-      container.scrollTop = container.scrollHeight;
-    } else {
-      // 差分が小さい場合のみスムーズ（ストリーミング中のチャンク追加）
-      const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
-      if (distanceFromBottom < 200) {
-        container.scrollTop = container.scrollHeight;
-      }
-    }
+    isNearBottomRef.current = shouldAutoScroll(
+      container.scrollHeight,
+      container.scrollTop,
+      container.clientHeight
+    );
   }, []);
 
-  // メッセージ数が変わった時（新メッセージ追加）→ 即座に最下部へ
+  // スクロールイベントリスナー登録
+  useEffect(() => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    container.addEventListener('scroll', handleScroll, { passive: true });
+    return () => container.removeEventListener('scroll', handleScroll);
+  }, [handleScroll]);
+
+  // requestAnimationFrame ベースのスムーズスクロール
+  const smoothScrollToBottom = useCallback(() => {
+    if (rafIdRef.current !== null) {
+      cancelAnimationFrame(rafIdRef.current);
+    }
+    rafIdRef.current = requestAnimationFrame(() => {
+      const container = scrollContainerRef.current;
+      if (!container) return;
+      container.scrollTo({
+        top: container.scrollHeight,
+        behavior: 'smooth',
+      });
+      rafIdRef.current = null;
+    });
+  }, []);
+
+  // 即座にスクロール（セッション切り替え等）
+  const scrollToBottomInstant = useCallback(() => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    container.scrollTop = container.scrollHeight;
+    isNearBottomRef.current = true;
+  }, []);
+
+  // メッセージ数が変わった時（新メッセージ追加）→ スムーズに最下部へ
   useEffect(() => {
     if (messages.length !== prevMessageCountRef.current) {
       prevMessageCountRef.current = messages.length;
-      scrollToBottom(true);
+      if (isNearBottomRef.current) {
+        smoothScrollToBottom();
+      }
     }
-  }, [messages.length, scrollToBottom]);
+  }, [messages.length, smoothScrollToBottom]);
 
-  // ストリーミング中 → 下部付近にいる場合のみ追従
+  // ストリーミング中 → オートスクロール有効時のみスムーズ追従
   useEffect(() => {
-    if (isStreaming && streamingContent) {
-      scrollToBottom(false);
+    if (isStreaming && streamingContent && isNearBottomRef.current) {
+      smoothScrollToBottom();
     }
-  }, [streamingContent, isStreaming, scrollToBottom]);
+  }, [streamingContent, isStreaming, smoothScrollToBottom]);
 
   // セッション切り替え時 → 即座に最下部へ
   useEffect(() => {
     // 少し遅延させてDOMレンダリング後にスクロール
-    const timer = setTimeout(() => scrollToBottom(true), 50);
+    const timer = setTimeout(() => scrollToBottomInstant(), 50);
     return () => clearTimeout(timer);
-  }, [currentSessionId, scrollToBottom]);
+  }, [currentSessionId, scrollToBottomInstant]);
+
+  // クリーンアップ: 未処理のrAFをキャンセル
+  useEffect(() => {
+    return () => {
+      if (rafIdRef.current !== null) {
+        cancelAnimationFrame(rafIdRef.current);
+      }
+    };
+  }, []);
 
   // セッション未選択
   if (!currentSessionId) {
