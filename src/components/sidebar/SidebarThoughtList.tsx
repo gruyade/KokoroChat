@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { Lightbulb, Loader2, Trash2 } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
@@ -10,25 +10,32 @@ export function SidebarThoughtList() {
   const { selectedCharacterId } = useCharacterStore();
   const [thoughts, setThoughts] = useState<Thought[]>([]);
   const [loading, setLoading] = useState(false);
-  const { pendingIds, processing, enqueue } = useOperationQueue();
+  const [deletedIds, setDeletedIds] = useState<Set<string>>(new Set());
 
-  const loadThoughts = (characterId: string) => {
+  const loadThoughts = useCallback((characterId: string) => {
     setLoading(true);
+    setDeletedIds(new Set());
     invoke<Thought[]>('get_thoughts', { characterId, limit: 20 })
       .then(setThoughts)
       .catch(() => setThoughts([]))
       .finally(() => setLoading(false));
-  };
+  }, []);
+
+  const { processing, enqueue } = useOperationQueue(() => {
+    // 全タスク完了時にリロード
+    if (selectedCharacterId) loadThoughts(selectedCharacterId);
+  });
 
   const handleDelete = (e: React.MouseEvent, id: string) => {
     e.stopPropagation();
-    if (pendingIds.has(id)) return; // 既にキュー内
-    enqueue(id, async () => {
+    if (deletedIds.has(id)) return;
+    // UIから即座に非表示（ローカルのみ、チカチカしない）
+    setDeletedIds((prev) => new Set(prev).add(id));
+    enqueue(async () => {
       try {
         await invoke('delete_thought', { id });
-        setThoughts((prev) => prev.filter((t) => t.id !== id));
       } catch {
-        // 失敗時はリストから除去しない（次回ロードで復元）
+        // 失敗時は次回リロードで復元される
       }
     });
   };
@@ -54,7 +61,9 @@ export function SidebarThoughtList() {
       cancelled = true;
       if (unlisten) unlisten();
     };
-  }, [selectedCharacterId]);
+  }, [selectedCharacterId, loadThoughts]);
+
+  const visibleThoughts = thoughts.filter((t) => !deletedIds.has(t.id));
 
   if (!selectedCharacterId) {
     return <div className="p-3 text-xs text-muted-foreground">キャラクターを選択してください</div>;
@@ -68,7 +77,15 @@ export function SidebarThoughtList() {
     );
   }
 
-  if (thoughts.length === 0 && !processing) {
+  if (processing && visibleThoughts.length === 0) {
+    return (
+      <div className="p-3 flex items-center gap-2 text-xs text-muted-foreground">
+        <Loader2 className="w-3 h-3 animate-spin" />処理中...
+      </div>
+    );
+  }
+
+  if (visibleThoughts.length === 0) {
     return (
       <div className="p-3 flex flex-col items-center gap-2 text-muted-foreground">
         <Lightbulb className="w-6 h-6" />
@@ -85,36 +102,26 @@ export function SidebarThoughtList() {
           <span>処理中...</span>
         </div>
       )}
-      {thoughts.map((thought) => {
-        const isPending = pendingIds.has(thought.id);
-        return (
-          <div
-            key={thought.id}
-            className={`group p-2.5 rounded-lg bg-muted/50 border border-border transition-opacity ${isPending ? 'opacity-40 pointer-events-none' : ''}`}
-          >
-            <div className="flex items-start justify-between gap-1">
-              <p className="text-xs leading-relaxed flex-1">{thought.content}</p>
-              {isPending ? (
-                <Loader2 className="w-3 h-3 animate-spin text-muted-foreground shrink-0" />
-              ) : (
-                <button
-                  onClick={(e) => handleDelete(e, thought.id)}
-                  className="p-0.5 rounded opacity-0 group-hover:opacity-100 hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-all shrink-0"
-                  title="削除"
-                >
-                  <Trash2 className="w-3 h-3" />
-                </button>
-              )}
-            </div>
-            {thought.context && (
-              <p className="text-xs text-muted-foreground mt-1 italic">{thought.context}</p>
-            )}
-            <div className="text-xs text-muted-foreground/70 mt-1">
-              {new Date(thought.created_at).toLocaleString('ja-JP', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
-            </div>
+      {visibleThoughts.map((thought) => (
+        <div key={thought.id} className="group p-2.5 rounded-lg bg-muted/50 border border-border">
+          <div className="flex items-start justify-between gap-1">
+            <p className="text-xs leading-relaxed flex-1">{thought.content}</p>
+            <button
+              onClick={(e) => handleDelete(e, thought.id)}
+              className="p-0.5 rounded opacity-0 group-hover:opacity-100 hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-all shrink-0"
+              title="削除"
+            >
+              <Trash2 className="w-3 h-3" />
+            </button>
           </div>
-        );
-      })}
+          {thought.context && (
+            <p className="text-xs text-muted-foreground mt-1 italic">{thought.context}</p>
+          )}
+          <div className="text-xs text-muted-foreground/70 mt-1">
+            {new Date(thought.created_at).toLocaleString('ja-JP', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }

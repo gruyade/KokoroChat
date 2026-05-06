@@ -2,48 +2,48 @@ import { useCallback, useRef, useState } from 'react';
 
 /**
  * 非同期操作をキューイングして順次実行するフック。
- * 連続した削除・更新操作がバックエンドと確実に同期するよう保証する。
  *
- * - pendingIds: 現在キューに入っている（処理待ち or 処理中）アイテムIDのSet
- * - processing: キューに1件以上のタスクが残っているか
+ * UIへの即時反映は行わず、バックグラウンドで順次処理する。
+ * コンポーネント再マウント時（画面切り替え後）にデータ再取得すれば
+ * 削除済みアイテムは自然に消える。
+ *
+ * - processing: キューに1件以上のタスクが残っているか（処理中表示用）
  * - enqueue: 操作をキューに追加
+ * - onComplete: 全タスク完了時に呼ばれるコールバックを設定
  */
-export function useOperationQueue() {
-  const [pendingIds, setPendingIds] = useState<Set<string>>(new Set());
-  const queueRef = useRef<Array<{ id: string; task: () => Promise<void> }>>([]);
+export function useOperationQueue(onAllComplete?: () => void) {
+  const [processing, setProcessing] = useState(false);
+  const queueRef = useRef<Array<() => Promise<void>>>([]);
   const runningRef = useRef(false);
+  const onAllCompleteRef = useRef(onAllComplete);
+  onAllCompleteRef.current = onAllComplete;
 
   const processQueue = useCallback(async () => {
     if (runningRef.current) return;
     runningRef.current = true;
+    setProcessing(true);
 
     while (queueRef.current.length > 0) {
-      const item = queueRef.current.shift()!;
+      const task = queueRef.current.shift()!;
       try {
-        await item.task();
+        await task();
       } catch {
         // エラーは各タスク内でハンドリング済み想定
       }
-      setPendingIds((prev) => {
-        const next = new Set(prev);
-        next.delete(item.id);
-        return next;
-      });
     }
 
     runningRef.current = false;
+    setProcessing(false);
+    onAllCompleteRef.current?.();
   }, []);
 
   const enqueue = useCallback(
-    (id: string, task: () => Promise<void>) => {
-      queueRef.current.push({ id, task });
-      setPendingIds((prev) => new Set(prev).add(id));
+    (task: () => Promise<void>) => {
+      queueRef.current.push(task);
       processQueue();
     },
     [processQueue]
   );
 
-  const processing = pendingIds.size > 0;
-
-  return { pendingIds, processing, enqueue };
+  return { processing, enqueue };
 }

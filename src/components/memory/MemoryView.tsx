@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { Brain, Trash2, Loader2 } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { useCharacterStore } from '../../stores';
@@ -10,19 +10,15 @@ export function MemoryView() {
   const [memories, setMemories] = useState<Memory[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const { pendingIds, processing, enqueue } = useOperationQueue();
+  const [deletedIds, setDeletedIds] = useState<Set<string>>(new Set());
 
   const selectedCharacter = characters.find((c) => c.id === selectedCharacterId);
 
-  useEffect(() => {
-    if (!selectedCharacterId) return;
-    loadMemories();
-  }, [selectedCharacterId]);
-
-  const loadMemories = async () => {
+  const loadMemories = useCallback(async () => {
     if (!selectedCharacterId) return;
     setLoading(true);
     setError(null);
+    setDeletedIds(new Set());
     try {
       const result = await invoke<Memory[]>('list_memories', {
         characterId: selectedCharacterId,
@@ -33,19 +29,30 @@ export function MemoryView() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [selectedCharacterId]);
+
+  const { processing, enqueue } = useOperationQueue(() => {
+    loadMemories();
+  });
+
+  useEffect(() => {
+    if (!selectedCharacterId) return;
+    loadMemories();
+  }, [selectedCharacterId, loadMemories]);
 
   const handleDelete = (id: string) => {
-    if (pendingIds.has(id)) return;
-    enqueue(id, async () => {
+    if (deletedIds.has(id)) return;
+    setDeletedIds((prev) => new Set(prev).add(id));
+    enqueue(async () => {
       try {
         await invoke('delete_memory', { id });
-        setMemories((prev) => prev.filter((m) => m.id !== id));
       } catch (e) {
         setError(String(e));
       }
     });
   };
+
+  const visibleMemories = memories.filter((m) => !deletedIds.has(m.id));
 
   if (!selectedCharacterId) {
     return (
@@ -84,43 +91,36 @@ export function MemoryView() {
             <Loader2 className="w-4 h-4 animate-spin mr-2" />
             読み込み中...
           </div>
-        ) : memories.length === 0 ? (
+        ) : visibleMemories.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-32 text-muted-foreground gap-2">
             <Brain className="w-8 h-8" />
             <p className="text-sm">記憶がまだ生成されていない</p>
           </div>
         ) : (
           <div className="space-y-3">
-            {memories.map((memory) => {
-              const isPending = pendingIds.has(memory.id);
-              return (
-                <div
-                  key={memory.id}
-                  className={`p-4 rounded-lg border border-border bg-card group transition-opacity ${isPending ? 'opacity-40 pointer-events-none' : ''}`}
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm whitespace-pre-wrap">{memory.content}</p>
-                      <div className="mt-2 flex items-center gap-3 text-xs text-muted-foreground">
-                        <span>{new Date(memory.created_at).toLocaleString('ja-JP')}</span>
-                        {memory.source_session_id && <span>セッション由来</span>}
-                      </div>
+            {visibleMemories.map((memory) => (
+              <div
+                key={memory.id}
+                className="p-4 rounded-lg border border-border bg-card group"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm whitespace-pre-wrap">{memory.content}</p>
+                    <div className="mt-2 flex items-center gap-3 text-xs text-muted-foreground">
+                      <span>{new Date(memory.created_at).toLocaleString('ja-JP')}</span>
+                      {memory.source_session_id && <span>セッション由来</span>}
                     </div>
-                    {isPending ? (
-                      <Loader2 className="w-4 h-4 animate-spin text-muted-foreground shrink-0" />
-                    ) : (
-                      <button
-                        onClick={() => handleDelete(memory.id)}
-                        className="p-1.5 rounded opacity-0 group-hover:opacity-100 hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-all"
-                        aria-label="削除"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    )}
                   </div>
+                  <button
+                    onClick={() => handleDelete(memory.id)}
+                    className="p-1.5 rounded opacity-0 group-hover:opacity-100 hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-all"
+                    aria-label="削除"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
                 </div>
-              );
-            })}
+              </div>
+            ))}
           </div>
         )}
       </div>
