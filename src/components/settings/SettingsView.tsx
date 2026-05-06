@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Settings, Save, Loader2 } from 'lucide-react';
 import { useConfigStore } from '../../stores';
 import { ModelConfigForm } from './ModelConfigForm';
-import type { AppConfig, ModelPurpose, ModelSettings } from '../../types';
+import type { AppConfig, ModelPurpose, ModelSettings, SendKey } from '../../types';
 
 type SettingsTab = 'models' | 'tts' | 'spontaneous' | 'thought' | 'general';
 
@@ -359,6 +359,40 @@ export function SettingsView() {
                   }
                   className="w-full px-3 py-1.5 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary"
                 />
+              </div>
+            </div>
+
+            {/* Send Key Config */}
+            <div className="p-4 rounded-lg border border-border space-y-3">
+              <h3 className="text-sm font-medium">送信キー</h3>
+              <div>
+                <label
+                  htmlFor="send-key"
+                  className="block text-xs text-muted-foreground mb-1"
+                >
+                  メッセージ送信に使用するキー
+                </label>
+                <select
+                  id="send-key"
+                  value={draft.ui.send_key}
+                  onChange={(e) =>
+                    setDraft({
+                      ...draft,
+                      ui: {
+                        ...draft.ui,
+                        send_key: e.target.value as SendKey,
+                      },
+                    })
+                  }
+                  className="w-full px-3 py-1.5 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                >
+                  <option value="enter">Enter</option>
+                  <option value="ctrl_enter">Ctrl+Enter</option>
+                  <option value="shift_enter">Shift+Enter</option>
+                </select>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  選択したキー以外のEnter系コンビネーションは改行挿入になる
+                </p>
               </div>
             </div>
           </div>

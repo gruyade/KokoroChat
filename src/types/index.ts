@@ -14,6 +14,7 @@ export type { Thought } from './thought';
 export type {
   ModelPurpose,
   Theme,
+  SendKey,
   ModelSettings,
   SpontaneousConfig,
   ThoughtConfig,

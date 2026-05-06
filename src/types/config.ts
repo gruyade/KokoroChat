@@ -37,10 +37,14 @@ export interface TTSGlobalConfig {
   enabled: boolean;
 }
 
+/** 送信キー設定 */
+export type SendKey = 'enter' | 'ctrl_enter' | 'shift_enter';
+
 /** UI設定 */
 export interface UIConfig {
   theme: Theme;
   language: string;
+  send_key: SendKey;
 }
 
 /** プラグイン設定 */

@@ -76,11 +76,29 @@ pub struct TTSGlobalConfig {
     pub enabled: bool,
 }
 
+/// メッセージ送信キー設定
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum SendKey {
+    Enter,
+    CtrlEnter,
+    ShiftEnter,
+}
+
+impl Default for SendKey {
+    fn default() -> Self {
+        SendKey::Enter
+    }
+}
+
 /// UI設定
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UIConfig {
     pub theme: Theme,
     pub language: String,
+    /// メッセージ送信キー設定
+    #[serde(default)]
+    pub send_key: SendKey,
 }
 
 /// テーマ

@@ -7,7 +7,7 @@ use std::sync::Mutex;
 use crate::error::AppError;
 use crate::models::config::{
     AppConfig, AttachmentConfig, MemoryConfig, ModelPurpose, ModelSettings, PluginsConfig,
-    SpontaneousConfig, TTSGlobalConfig, Theme, ThoughtConfig, UIConfig,
+    SendKey, SpontaneousConfig, TTSGlobalConfig, Theme, ThoughtConfig, UIConfig,
 };
 
 /// モデル設定管理
@@ -166,6 +166,7 @@ impl ModelConfigManager {
             ui: UIConfig {
                 theme: Theme::Dark,
                 language: "ja".to_string(),
+                send_key: SendKey::default(),
             },
             plugins: PluginsConfig {
                 enabled_plugins: vec![],

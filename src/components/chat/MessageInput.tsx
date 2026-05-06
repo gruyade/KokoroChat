@@ -1,5 +1,7 @@
 import { useState, useRef, useCallback, useEffect, type KeyboardEvent } from 'react';
 import { Send, Paperclip, Info, Square } from 'lucide-react';
+import { useConfigStore } from '../../stores';
+import type { SendKey } from '../../types';
 
 interface MessageInputProps {
   onSend: (content: string, isSystem?: boolean) => void;
@@ -13,6 +15,7 @@ export function MessageInput({ onSend, disabled = false, isStreaming = false, is
   const [value, setValue] = useState('');
   const [systemMode, setSystemMode] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const sendKey: SendKey = useConfigStore((s) => s.config?.ui.send_key) ?? 'enter';
 
   const adjustHeight = useCallback(() => {
     const textarea = textareaRef.current;
@@ -35,12 +38,20 @@ export function MessageInput({ onSend, disabled = false, isStreaming = false, is
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent<HTMLTextAreaElement>) => {
-      if (e.key === 'Enter' && !e.shiftKey) {
+      if (e.key !== 'Enter') return;
+
+      const isSendTrigger =
+        (sendKey === 'enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey) ||
+        (sendKey === 'ctrl_enter' && (e.ctrlKey || e.metaKey) && !e.shiftKey) ||
+        (sendKey === 'shift_enter' && e.shiftKey && !e.ctrlKey && !e.metaKey);
+
+      if (isSendTrigger) {
         e.preventDefault();
         handleSend();
       }
+      // それ以外のEnter系コンビネーションはデフォルト動作（改行挿入）
     },
-    [handleSend]
+    [handleSend, sendKey]
   );
 
   // ストリーミング完了後にフォーカスを復帰
