@@ -152,6 +152,7 @@ pub fn run() {
                 llm_lock,
                 db: db_for_chat.clone(),
                 stream_abort_manager: Arc::new(StreamAbortManager::new()),
+                spontaneous_paused: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             };
 
             app.manage(app_state);
@@ -194,6 +195,10 @@ pub fn run() {
             commands::thought::start_thought_engine,
             commands::thought::stop_thought_engine,
             commands::thought::delete_thought,
+            commands::thought::pause_thought_engine,
+            commands::thought::resume_thought_engine,
+            commands::thought::pause_spontaneous,
+            commands::thought::resume_spontaneous,
             commands::debug::debug_compress_memory,
             commands::debug::debug_generate_thought,
             commands::debug::debug_trigger_spontaneous,

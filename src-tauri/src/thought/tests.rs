@@ -443,3 +443,24 @@ fn test_thought_event_serialization() {
     assert!(json.contains("テスト思考"));
     assert!(json.contains("thought-001"));
 }
+
+#[test]
+fn test_pause_resume() {
+    let db = setup_db();
+    let db = Arc::new(Mutex::new(db));
+    let mock_llm = Arc::new(MockLLMClient::new("unused"));
+    let config = default_llm_config();
+
+    let engine = DefaultThoughtEngine::new(db.clone(), mock_llm, config, test_llm_lock());
+
+    // 初期状態: paused = false
+    assert!(!engine.is_paused());
+
+    // pause
+    engine.pause();
+    assert!(engine.is_paused());
+
+    // resume
+    engine.resume();
+    assert!(!engine.is_paused());
+}

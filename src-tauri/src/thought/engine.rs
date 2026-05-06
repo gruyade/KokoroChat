@@ -30,6 +30,9 @@ pub trait ThoughtEngine: Send + Sync {
     fn set_frequency(&self, character_id: &str, interval_minutes: u64);
     fn start(&self, character_id: &str, app_handle: AppHandle);
     fn stop(&self);
+    fn pause(&self);
+    fn resume(&self);
+    fn is_paused(&self) -> bool;
 }
 
 /// 内部状態（Mutex保護）
@@ -46,6 +49,7 @@ pub struct DefaultThoughtEngine {
     config_manager: Arc<crate::config::model_config::ModelConfigManager>,
     llm_lock: Arc<tokio::sync::Mutex<()>>,
     pub(crate) running: Arc<AtomicBool>,
+    pub(crate) paused: Arc<AtomicBool>,
     pub(crate) state: Arc<Mutex<EngineState>>,
 }
 
@@ -62,6 +66,7 @@ impl DefaultThoughtEngine {
             config_manager,
             llm_lock,
             running: Arc::new(AtomicBool::new(false)),
+            paused: Arc::new(AtomicBool::new(false)),
             state: Arc::new(Mutex::new(EngineState {
                 character_id: None,
                 interval_minutes: 5,
@@ -281,6 +286,7 @@ impl ThoughtEngine for DefaultThoughtEngine {
         }
 
         let running = Arc::clone(&self.running);
+        let paused = Arc::clone(&self.paused);
         let state = Arc::clone(&self.state);
         let db = Arc::clone(&self.db);
         let llm_client = Arc::clone(&self.llm_client);
@@ -302,6 +308,11 @@ impl ThoughtEngine for DefaultThoughtEngine {
                 // 停止フラグチェック
                 if !running.load(Ordering::SeqCst) {
                     break;
+                }
+
+                // 一時停止フラグチェック
+                if paused.load(Ordering::SeqCst) {
+                    continue;
                 }
 
                 // 思考生成
@@ -446,5 +457,19 @@ impl ThoughtEngine for DefaultThoughtEngine {
             handle.abort();
         }
         s.character_id = None;
+    }
+
+    fn pause(&self) {
+        self.paused.store(true, Ordering::SeqCst);
+        println!("[thought] engine paused");
+    }
+
+    fn resume(&self) {
+        self.paused.store(false, Ordering::SeqCst);
+        println!("[thought] engine resumed");
+    }
+
+    fn is_paused(&self) -> bool {
+        self.paused.load(Ordering::SeqCst)
     }
 }

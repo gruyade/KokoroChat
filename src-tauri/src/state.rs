@@ -1,5 +1,6 @@
 // Application State — Tauri managed state
 
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
 use crate::attachment::processor::AttachmentProcessor;
@@ -31,6 +32,8 @@ pub struct AppState {
     pub db: Arc<Mutex<Database>>,
     /// ストリーミング中断管理
     pub stream_abort_manager: Arc<StreamAbortManager>,
+    /// 自発的発話の一時停止フラグ
+    pub spontaneous_paused: Arc<AtomicBool>,
 }
 
 impl AppState {

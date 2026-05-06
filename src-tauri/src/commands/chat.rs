@@ -98,6 +98,13 @@ pub async fn trigger_spontaneous_check(
     use crate::llm::client::{ChatMessage, LLMResponse, MessageRole, LLMClientConfig};
     use crate::models::{ChatRole, ChatMessageRecord};
     use tauri::Emitter;
+    use std::sync::atomic::Ordering;
+
+    // 一時停止中はスキップ
+    if state.spontaneous_paused.load(Ordering::SeqCst) {
+        println!("[spontaneous] paused, skipping");
+        return Ok(false);
+    }
 
     let config = state.config_manager.get_config();
     if !config.spontaneous.enabled {

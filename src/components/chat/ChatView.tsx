@@ -5,6 +5,7 @@ import { useChatStore, useCharacterStore } from '../../stores';
 import { MessageBubble } from './MessageBubble';
 import { MessageInput } from './MessageInput';
 import { StreamingIndicator } from './StreamingIndicator';
+import { ChatHeaderControls } from './ChatHeaderControls';
 
 export function ChatView() {
   const { currentSessionId, messages, isStreaming, isAbortable, streamingContent, error, sendMessage, createSession, fetchHistory, stopGeneration } =
@@ -103,6 +104,11 @@ export function ChatView() {
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
+      {/* Header controls */}
+      <div className="flex items-center justify-end px-3 py-1.5 border-b border-border/50">
+        <ChatHeaderControls />
+      </div>
+
       {/* Messages area */}
       <div ref={scrollContainerRef} className="flex-1 overflow-y-auto py-4">
         {messages.length === 0 && !isStreaming && (

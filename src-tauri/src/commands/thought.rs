@@ -60,3 +60,43 @@ pub async fn stop_thought_engine(
     println!("[thought] engine stopped");
     Ok(())
 }
+
+/// 思考エンジン一時停止
+#[tauri::command]
+pub async fn pause_thought_engine(
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    state.thought_engine.pause();
+    Ok(())
+}
+
+/// 思考エンジン再開
+#[tauri::command]
+pub async fn resume_thought_engine(
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    state.thought_engine.resume();
+    Ok(())
+}
+
+/// 自発的発話一時停止
+#[tauri::command]
+pub async fn pause_spontaneous(
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    use std::sync::atomic::Ordering;
+    state.spontaneous_paused.store(true, Ordering::SeqCst);
+    println!("[spontaneous] paused");
+    Ok(())
+}
+
+/// 自発的発話再開
+#[tauri::command]
+pub async fn resume_spontaneous(
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    use std::sync::atomic::Ordering;
+    state.spontaneous_paused.store(false, Ordering::SeqCst);
+    println!("[spontaneous] resumed");
+    Ok(())
+}
