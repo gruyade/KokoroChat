@@ -104,7 +104,7 @@ export function MessageBubble({ message, onRegenerate, onDelete }: MessageBubble
 
   return (
     <div
-      className={`group relative flex ${config.align} px-4 py-1`}
+      className={`group relative flex ${config.align} px-4 py-1 will-change-transform`}
       onMouseEnter={() => setShowMenu(true)}
       onMouseLeave={() => setShowMenu(false)}
     >
@@ -139,8 +139,8 @@ export function MessageBubble({ message, onRegenerate, onDelete }: MessageBubble
               </div>
 
               {/* Action buttons — 常にスペース確保、ホバーで表示 */}
-              <div className={`flex items-center gap-0.5 h-6 ${message.role === 'user' ? 'justify-end' : ''}`}>
-                <div className={`flex items-center gap-0.5 transition-opacity ${showMenu ? 'opacity-100' : 'opacity-0'}`}>
+              <div className={`flex items-center gap-0.5 h-6 overflow-visible ${message.role === 'user' ? 'justify-end' : ''}`}>
+                <div className={`flex items-center gap-0.5 transition-opacity pointer-events-auto ${showMenu ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
                   <button
                     onClick={handleCopy}
                     className="p-1 rounded text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"

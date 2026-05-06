@@ -158,7 +158,7 @@ export function ChatView() {
       </div>
 
       {/* Messages area */}
-      <div ref={scrollContainerRef} className="flex-1 overflow-y-auto py-4">
+      <div ref={scrollContainerRef} className="flex-1 overflow-y-auto overflow-x-visible py-4">
         {messages.length === 0 && !isStreaming && (
           <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
             メッセージを送信して会話を始めましょう
