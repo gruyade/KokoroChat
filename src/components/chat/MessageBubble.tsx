@@ -134,7 +134,11 @@ export function MessageBubble({ message, onRegenerate, onDelete }: MessageBubble
               <div className={`rounded-lg px-3 py-2 text-sm ${config.bubble}`}>
                 <MarkdownRenderer
                   content={displayContent}
-                  className="prose prose-sm prose-invert max-w-none prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-ol:my-1 prose-pre:my-2 prose-code:text-xs"
+                  className={`prose prose-sm max-w-none prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-ol:my-1 prose-pre:my-2 prose-code:text-xs ${
+                    message.role === 'user'
+                      ? 'prose-p:text-primary-foreground prose-headings:text-primary-foreground prose-strong:text-primary-foreground prose-code:text-primary-foreground prose-li:text-primary-foreground text-primary-foreground'
+                      : 'prose-invert'
+                  }`}
                 />
               </div>
 

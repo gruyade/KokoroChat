@@ -1,10 +1,25 @@
 import { useState, useCallback } from 'react';
 import { Brain, MessageSquare } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
+import { create } from 'zustand';
+
+// 一時停止状態をZustandストアで管理（画面切り替えでもリセットされない）
+interface PauseState {
+  thoughtPaused: boolean;
+  spontaneousPaused: boolean;
+  setThoughtPaused: (paused: boolean) => void;
+  setSpontaneousPaused: (paused: boolean) => void;
+}
+
+export const usePauseStore = create<PauseState>((set) => ({
+  thoughtPaused: false,
+  spontaneousPaused: false,
+  setThoughtPaused: (paused) => set({ thoughtPaused: paused }),
+  setSpontaneousPaused: (paused) => set({ spontaneousPaused: paused }),
+}));
 
 export function ChatHeaderControls() {
-  const [thoughtPaused, setThoughtPaused] = useState(false);
-  const [spontaneousPaused, setSpontaneousPaused] = useState(false);
+  const { thoughtPaused, spontaneousPaused, setThoughtPaused, setSpontaneousPaused } = usePauseStore();
   const [error, setError] = useState<string | null>(null);
 
   const toggleThought = useCallback(async () => {
@@ -18,12 +33,11 @@ export function ChatHeaderControls() {
         await invoke('resume_thought_engine');
       }
     } catch (e) {
-      // 失敗時: トグル状態を元に戻す
       setThoughtPaused(!newState);
       setError(String(e));
       setTimeout(() => setError(null), 3000);
     }
-  }, [thoughtPaused]);
+  }, [thoughtPaused, setThoughtPaused]);
 
   const toggleSpontaneous = useCallback(async () => {
     const newState = !spontaneousPaused;
@@ -36,12 +50,11 @@ export function ChatHeaderControls() {
         await invoke('resume_spontaneous');
       }
     } catch (e) {
-      // 失敗時: トグル状態を元に戻す
       setSpontaneousPaused(!newState);
       setError(String(e));
       setTimeout(() => setError(null), 3000);
     }
-  }, [spontaneousPaused]);
+  }, [spontaneousPaused, setSpontaneousPaused]);
 
   return (
     <div className="flex items-center gap-1">
