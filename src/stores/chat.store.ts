@@ -11,6 +11,7 @@ interface ChatState {
   streamingContent: string;
   error: string | null;
   editingMessageId: string | null;
+  isTTSGenerating: boolean;
   fetchSessions: (characterId: string) => Promise<void>;
   createSession: (characterId: string) => Promise<string>;
   selectSession: (sessionId: string | null) => void;
@@ -19,6 +20,8 @@ interface ChatState {
   fetchHistory: (sessionId: string) => Promise<void>;
   appendStreamChunk: (chunk: string) => void;
   finishStreaming: (fullContent: string) => void;
+  setTTSGenerating: (value: boolean) => void;
+  finishWithAudio: (text: string, audio: string) => void;
   regenerateMessage: (messageId: string) => Promise<void>;
   stopGeneration: () => Promise<void>;
   setEditingMessage: (id: string | null) => void;
@@ -34,6 +37,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   streamingContent: '',
   error: null,
   editingMessageId: null,
+  isTTSGenerating: false,
 
   fetchSessions: async (characterId: string) => {
     set({ error: null });
@@ -145,6 +149,28 @@ export const useChatStore = create<ChatState>((set, get) => ({
       messages: [...messages, assistantMessage],
       isStreaming: false,
       isAbortable: false,
+      streamingContent: '',
+    });
+  },
+
+  setTTSGenerating: (value: boolean) => {
+    set({ isTTSGenerating: value });
+  },
+
+  finishWithAudio: (text: string, _audio: string) => {
+    const { currentSessionId, messages } = get();
+    const assistantMessage: ChatMessageRecord = {
+      id: crypto.randomUUID(),
+      session_id: currentSessionId ?? '',
+      role: 'assistant',
+      content: text,
+      created_at: new Date().toISOString(),
+    };
+    set({
+      messages: [...messages, assistantMessage],
+      isStreaming: false,
+      isAbortable: false,
+      isTTSGenerating: false,
       streamingContent: '',
     });
   },

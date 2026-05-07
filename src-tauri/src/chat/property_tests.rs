@@ -14,6 +14,8 @@ mod tests {
     use crate::error::AppError;
     use crate::llm::client::{ChatMessage, LLMClient, LLMClientConfig, LLMResponse, MessageRole};
     use crate::models::{ChatMessageRecord, ChatRole, Memory, ToolDefinition};
+    use crate::models::tts::TTSConfig;
+    use crate::tts::connector::TTSConnector;
 
     use async_trait::async_trait;
 
@@ -44,6 +46,23 @@ mod tests {
         }
 
         async fn test_connection(&self, _config: &LLMClientConfig) -> Result<(), AppError> {
+            Ok(())
+        }
+    }
+
+    // ========================================
+    // テスト用MockTTSConnector
+    // ========================================
+
+    struct MockTTSConnector;
+
+    #[async_trait]
+    impl TTSConnector for MockTTSConnector {
+        async fn synthesize(&self, _text: &str, _config: &TTSConfig, _voicepeak_path: Option<&str>) -> Result<Vec<u8>, AppError> {
+            Ok(vec![])
+        }
+
+        async fn test_connection(&self, _config: &TTSConfig, _voicepeak_path: Option<&str>) -> Result<(), AppError> {
             Ok(())
         }
     }
@@ -148,7 +167,7 @@ mod tests {
             spontaneous: SpontaneousConfig { enabled: false, min_interval_seconds: 60, probability: 0.3 },
             thought: ThoughtConfig { enabled: false, interval_minutes: 5, auto_delete_threshold_minutes: 1440 },
             memory: MemoryConfig { compression_threshold: 50 },
-            tts: TTSGlobalConfig { enabled: false },
+            tts: TTSGlobalConfig { enabled: false, voicepeak_path: None, timeout_seconds: 60, max_chunk_size: 140 },
             ui: UIConfig { theme: Theme::Dark, language: "ja".to_string(), send_key: SendKey::default() },
             plugins: PluginsConfig { enabled_plugins: vec![], plugin_settings: HashMap::new() },
             attachment: AttachmentConfig { max_file_size_bytes: 10 * 1024 * 1024, allowed_extensions: vec![] },
@@ -156,7 +175,8 @@ mod tests {
 
         let config_manager = Arc::new(crate::config::model_config::ModelConfigManager::new_with_config(config));
         let llm_lock = Arc::new(tokio::sync::Mutex::new(()));
-        DefaultChatEngine::new(db, llm_client, config_manager, llm_lock)
+        let tts_connector: Arc<dyn TTSConnector> = Arc::new(MockTTSConnector);
+        DefaultChatEngine::new(db, llm_client, config_manager, llm_lock, tts_connector, None)
     }
 
     // ========================================

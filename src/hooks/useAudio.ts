@@ -1,25 +1,66 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import { listen } from '@tauri-apps/api/event';
+import { create } from 'zustand';
+import type { TTSCompleteEvent } from '../types';
 
-/** tts:audio イベントペイロード */
-interface TTSAudioEvent {
-  data: string; // Base64エンコードされた音声データ
+const VOLUME_STORAGE_KEY = 'tts-volume';
+
+/** TTS音声状態のグローバルストア */
+interface AudioState {
+  isPlaying: boolean;
+  volume: number;
+  setPlaying: (playing: boolean) => void;
+  setVolume: (volume: number) => void;
 }
+
+export const useAudioStore = create<AudioState>((set) => ({
+  isPlaying: false,
+  volume: (() => {
+    try {
+      const saved = localStorage.getItem(VOLUME_STORAGE_KEY);
+      return saved ? parseFloat(saved) : 1.0;
+    } catch {
+      return 1.0;
+    }
+  })(),
+  setPlaying: (playing) => set({ isPlaying: playing }),
+  setVolume: (volume) => {
+    const clamped = Math.max(0, Math.min(1, volume));
+    set({ volume: clamped });
+    localStorage.setItem(VOLUME_STORAGE_KEY, clamped.toString());
+  },
+}));
 
 /**
  * TTS音声再生制御Hook
- * - tts:audio イベントリスナー
+ * - tts:complete イベントリスナー
  * - Web Audio APIによる音声再生
+ * - GainNodeによるボリュームコントロール
+ *
+ * このhookはアプリ内で1箇所のみマウントすること
  */
 export function useAudio() {
-  const [isPlaying, setIsPlaying] = useState(false);
   const audioContextRef = useRef<AudioContext | null>(null);
   const sourceNodeRef = useRef<AudioBufferSourceNode | null>(null);
+  const gainNodeRef = useRef<GainNode | null>(null);
+
+  // ストアのvolumeが変わったらGainNodeに反映
+  useEffect(() => {
+    return useAudioStore.subscribe((state) => {
+      if (gainNodeRef.current) {
+        gainNodeRef.current.gain.value = state.volume;
+      }
+    });
+  }, []);
 
   useEffect(() => {
     const setupListener = async () => {
-      const unlisten = await listen<TTSAudioEvent>('tts:audio', async (event) => {
-        await playAudio(event.payload.data);
+      const unlisten = await listen<TTSCompleteEvent>('tts:complete', (event) => {
+        const { audio } = event.payload;
+        console.log('[useAudio] tts:complete received, audio length:', audio?.length ?? 0);
+        if (audio) {
+          playAudio(audio).catch((e) => console.error('[useAudio] listener error:', e));
+        }
       });
 
       return unlisten;
@@ -38,32 +79,52 @@ export function useAudio() {
   }, []);
 
   const playAudio = async (base64Data: string) => {
-    stop();
+    try {
+      console.log('[useAudio] playAudio called, data length:', base64Data.length);
+      stop();
 
-    if (!audioContextRef.current) {
-      audioContextRef.current = new AudioContext();
+      if (!audioContextRef.current) {
+        audioContextRef.current = new AudioContext();
+        console.log('[useAudio] Created new AudioContext, state:', audioContextRef.current.state);
+      }
+
+      const audioContext = audioContextRef.current;
+
+      if (audioContext.state === 'suspended') {
+        await audioContext.resume();
+      }
+
+      // GainNode作成（ボリュームコントロール用）
+      if (!gainNodeRef.current) {
+        gainNodeRef.current = audioContext.createGain();
+        gainNodeRef.current.connect(audioContext.destination);
+      }
+      gainNodeRef.current.gain.value = useAudioStore.getState().volume;
+
+      const binaryString = atob(base64Data);
+      const bytes = new Uint8Array(binaryString.length);
+      for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+
+      const audioBuffer = await audioContext.decodeAudioData(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
+      console.log('[useAudio] Decoded audio buffer, duration:', audioBuffer.duration, 'sampleRate:', audioBuffer.sampleRate);
+      const source = audioContext.createBufferSource();
+      source.buffer = audioBuffer;
+      source.connect(gainNodeRef.current);
+
+      source.onended = () => {
+        useAudioStore.getState().setPlaying(false);
+        sourceNodeRef.current = null;
+      };
+
+      sourceNodeRef.current = source;
+      useAudioStore.getState().setPlaying(true);
+      source.start();
+    } catch (e) {
+      console.error('[useAudio] playAudio failed:', e);
+      useAudioStore.getState().setPlaying(false);
     }
-
-    const audioContext = audioContextRef.current;
-    const binaryString = atob(base64Data);
-    const bytes = new Uint8Array(binaryString.length);
-    for (let i = 0; i < binaryString.length; i++) {
-      bytes[i] = binaryString.charCodeAt(i);
-    }
-
-    const audioBuffer = await audioContext.decodeAudioData(bytes.buffer);
-    const source = audioContext.createBufferSource();
-    source.buffer = audioBuffer;
-    source.connect(audioContext.destination);
-
-    source.onended = () => {
-      setIsPlaying(false);
-      sourceNodeRef.current = null;
-    };
-
-    sourceNodeRef.current = source;
-    setIsPlaying(true);
-    source.start();
   };
 
   const stop = () => {
@@ -75,8 +136,6 @@ export function useAudio() {
       }
       sourceNodeRef.current = null;
     }
-    setIsPlaying(false);
+    useAudioStore.getState().setPlaying(false);
   };
-
-  return { isPlaying, stop };
 }

@@ -1,0 +1,13 @@
+{
+  "enabled": true,
+  "name": "ローカルLLMコードレビュー",
+  "description": "手動トリガーでgit diffの内容をローカルLLMに送り、コードレビューを実行する。レビュー結果をチャットに表示する。",
+  "version": "1",
+  "when": {
+    "type": "userTriggered"
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "以下の手順でローカルLLMによるコードレビューを実行してください：\n\n1. `git diff --cached` を実行してステージ済みの変更を取得する。差分がなければ `git diff` で未ステージの変更を取得する。\n2. 差分が空なら「レビュー対象の変更がない」と報告して終了。\n3. 差分がある場合、mcp_llm_sub_agent_invoke_llm ツールを使い、model_id=\"local-chat\" で以下のプロンプトを送信する：\n\n```\n以下のコード差分をレビューしてください。問題点、改善提案、良い点をそれぞれ箇条書きで指摘してください。\n\n<diff>\n{ここにgit diffの内容を挿入}\n</diff>\n```\n\n4. ローカルLLMの応答をそのままユーザーに表示する。"
+  }
+}

@@ -3,6 +3,7 @@
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
+use base64::Engine;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
@@ -11,6 +12,9 @@ use crate::db::repositories::{character as char_repo, chat as chat_repo, memory 
 use crate::error::AppError;
 use crate::llm::client::{ChatMessage, LLMClient, LLMClientConfig, LLMResponse, MessageRole};
 use crate::models::{Attachment, ChatMessageRecord, ChatRole, ChatSession, MessageAttachment, Thought};
+use crate::models::tts::{TTSCompleteEvent, TTSErrorEvent, TTSGeneratingEvent};
+use crate::tts::connector::TTSConnector;
+use crate::tts::flow_controller::TTSFlowController;
 
 /// ストリーミングチャットイベント
 #[derive(Clone, Serialize)]
@@ -82,6 +86,10 @@ pub struct DefaultChatEngine {
     config_manager: Arc<crate::config::model_config::ModelConfigManager>,
     /// LLMリクエスト直列化用ロック
     llm_lock: Arc<tokio::sync::Mutex<()>>,
+    /// TTS音声合成コネクタ
+    tts_connector: Arc<dyn TTSConnector>,
+    /// TTS Flow Controller（TTS有効時の音声生成オーケストレーター）
+    tts_flow_controller: Option<Arc<TTSFlowController>>,
 }
 
 impl DefaultChatEngine {
@@ -90,12 +98,16 @@ impl DefaultChatEngine {
         llm_client: Arc<dyn LLMClient>,
         config_manager: Arc<crate::config::model_config::ModelConfigManager>,
         llm_lock: Arc<tokio::sync::Mutex<()>>,
+        tts_connector: Arc<dyn TTSConnector>,
+        tts_flow_controller: Option<Arc<TTSFlowController>>,
     ) -> Self {
         Self {
             db,
             llm_client,
             config_manager,
             llm_lock,
+            tts_connector,
+            tts_flow_controller,
         }
     }
 
@@ -283,7 +295,7 @@ impl ChatEngine for DefaultChatEngine {
         };
 
         // DB操作（ロック範囲を最小化）
-        let (system_prompt, memories, thoughts, history) = {
+        let (system_prompt, memories, thoughts, history, tts_config) = {
             let db = self.db.lock().map_err(|e| {
                 AppError::Database(format!("Failed to acquire DB lock: {}", e))
             })?;
@@ -322,7 +334,7 @@ impl ChatEngine for DefaultChatEngine {
             // チャット履歴取得
             let history = chat_repo::get_messages(conn, session_id)?;
 
-            (character.system_prompt, memories, thoughts, history)
+            (character.system_prompt, memories, thoughts, history, character.tts_config)
         };
 
         // 2. コンテキスト組み立て
@@ -335,50 +347,139 @@ impl ChatEngine for DefaultChatEngine {
             attachment_text.as_deref(),
         );
 
-        // 3. LLMストリーミング呼び出し（ロック取得→完了まで保持）
-        let session_id_owned = session_id.to_string();
-        let app_handle_clone = app_handle.clone();
+        // TTS有効判定: グローバル設定 AND キャラクター個別TTS設定あり
+        let tts_enabled = self.config_manager.get_config().tts.enabled && tts_config.is_some();
 
-        let session_id_for_callback = session_id_owned.clone();
-        let accumulator = partial_content_accumulator.clone();
-        let callback = Box::new(move |chunk: String| {
-            // 部分コンテンツ蓄積
-            if let Some(ref acc) = accumulator {
-                if let Ok(mut content) = acc.lock() {
-                    content.push_str(&chunk);
+        let session_id_owned = session_id.to_string();
+
+        let full_response = if tts_enabled {
+            // === TTS有効パス: ストリーミングチャンクをフロントに送らず内部蓄積 ===
+            let accumulator = partial_content_accumulator.clone();
+            let callback = Box::new(move |chunk: String| {
+                // 部分コンテンツ蓄積のみ（フロントへのchat:streamイベントは発行しない）
+                if let Some(ref acc) = accumulator {
+                    if let Ok(mut content) = acc.lock() {
+                        content.push_str(&chunk);
+                    }
                 }
+            });
+
+            let _llm_guard = self.llm_lock.lock().await;
+            let response = self
+                .llm_client
+                .chat_stream(&llm_messages, &self.current_llm_config(), callback)
+                .await?;
+            drop(_llm_guard);
+
+            // tts:generating イベント発行
+            println!("[TTS] LLM response complete, starting TTS generation...");
+            println!("[TTS] Response length: {} chars", response.len());
+            app_handle.emit(
+                "tts:generating",
+                TTSGeneratingEvent {
+                    session_id: session_id_owned.clone(),
+                },
+            ).map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
+
+            // TTS Flow Controller で音声生成
+            let char_tts_config = tts_config.as_ref().unwrap();
+            let app_tts_config = self.config_manager.get_config().tts.clone();
+            let voicepeak_path = app_tts_config.voicepeak_path.as_deref();
+            let timeout_seconds = app_tts_config.timeout_seconds;
+            println!("[TTS] voicepeak_path: {:?}, timeout: {}s", voicepeak_path, timeout_seconds);
+            println!("[TTS] provider: {:?}", char_tts_config.provider);
+
+            if let Some(ref flow_controller) = self.tts_flow_controller {
+                match flow_controller
+                    .process(&response, char_tts_config, voicepeak_path, timeout_seconds)
+                    .await
+                {
+                    Ok(tts_result) => {
+                        println!("[TTS] Success! Audio size: {} bytes", tts_result.audio_data.len());
+                        // tts:complete イベント（テキスト + base64音声）
+                        let audio_base64 = base64::engine::general_purpose::STANDARD
+                            .encode(&tts_result.audio_data);
+                        println!("[TTS] Emitting tts:complete, base64 length: {}", audio_base64.len());
+                        app_handle.emit(
+                            "tts:complete",
+                            TTSCompleteEvent {
+                                session_id: session_id_owned.clone(),
+                                text: response.clone(),
+                                audio: audio_base64,
+                            },
+                        ).map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
+                        println!("[TTS] tts:complete emitted successfully");
+                    }
+                    Err(e) => {
+                        println!("[TTS] Error: {}", e);
+                        // tts:error イベント（テキスト + エラーメッセージ）
+                        app_handle.emit(
+                            "tts:error",
+                            TTSErrorEvent {
+                                session_id: session_id_owned.clone(),
+                                text: response.clone(),
+                                error: e.to_string(),
+                            },
+                        ).map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
+                    }
+                }
+            } else {
+                println!("[TTS] Error: Flow Controller not initialized");
+                // TTS Flow Controller未初期化: エラーイベント発行
+                app_handle.emit(
+                    "tts:error",
+                    TTSErrorEvent {
+                        session_id: session_id_owned.clone(),
+                        text: response.clone(),
+                        error: "TTS Flow Controller is not initialized".to_string(),
+                    },
+                ).map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
             }
-            let _ = app_handle_clone.emit(
+
+            response
+        } else {
+            // === TTS無効パス: 既存のストリーミングフロー（変更なし） ===
+            let app_handle_clone = app_handle.clone();
+            let session_id_for_callback = session_id_owned.clone();
+            let accumulator = partial_content_accumulator.clone();
+            let callback = Box::new(move |chunk: String| {
+                // 部分コンテンツ蓄積
+                if let Some(ref acc) = accumulator {
+                    if let Ok(mut content) = acc.lock() {
+                        content.push_str(&chunk);
+                    }
+                }
+                let _ = app_handle_clone.emit(
+                    "chat:stream",
+                    ChatStreamEvent {
+                        session_id: session_id_for_callback.clone(),
+                        chunk,
+                        done: false,
+                    },
+                );
+            });
+
+            let _llm_guard = self.llm_lock.lock().await;
+            let response = self
+                .llm_client
+                .chat_stream(&llm_messages, &self.current_llm_config(), callback)
+                .await?;
+            drop(_llm_guard);
+
+            // ストリーミング完了イベント
+            app_handle.emit(
                 "chat:stream",
                 ChatStreamEvent {
-                    session_id: session_id_for_callback.clone(),
-                    chunk,
-                    done: false,
+                    session_id: session_id_owned.clone(),
+                    chunk: String::new(),
+                    done: true,
                 },
-            );
-        });
+            ).map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
 
-        let _llm_guard = self.llm_lock.lock().await;
-        let full_response = self
-            .llm_client
-            .chat_stream(&llm_messages, &self.current_llm_config(), callback)
-            .await?;
-        drop(_llm_guard);
+            response
+        };
 
-        // 4. ストリーミング完了イベント
-        app_handle.emit(
-            "chat:stream",
-            ChatStreamEvent {
-                session_id: session_id_owned.clone(),
-                chunk: String::new(),
-                done: true,
-            },
-        ).map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
-
-        // 5. tool_call判定（非ストリーミングで再度呼び出し）
-        // ストリーミングではtool_callを検出できないため、
-        // レスポンスがtool_call形式かどうかを確認
-        // 現時点ではストリーミングレスポンスをテキストとして保存
+        // アシスタントメッセージ保存 & セッションメタデータ更新
         let assistant_msg_id = uuid::Uuid::new_v4().to_string();
         let assistant_now = chrono::Utc::now().to_rfc3339();
 
@@ -393,7 +494,6 @@ impl ChatEngine for DefaultChatEngine {
             created_at: assistant_now.clone(),
         };
 
-        // 6. アシスタントメッセージ保存 & セッションメタデータ更新
         {
             let db = self.db.lock().map_err(|e| {
                 AppError::Database(format!("Failed to acquire DB lock: {}", e))
@@ -457,7 +557,7 @@ impl ChatEngine for DefaultChatEngine {
         };
 
         // 2. 直前のuserメッセージのcontentで再送信（send_messageと同様のストリーミング処理）
-        let (system_prompt, memories, thoughts, history) = {
+        let (system_prompt, memories, thoughts, history, tts_config) = {
             let db = self.db.lock().map_err(|e| {
                 AppError::Database(format!("Failed to acquire DB lock: {}", e))
             })?;
@@ -484,7 +584,7 @@ impl ChatEngine for DefaultChatEngine {
 
             let history = chat_repo::get_messages(conn, session_id)?;
 
-            (character.system_prompt, memories, thoughts, history)
+            (character.system_prompt, memories, thoughts, history, character.tts_config)
         };
 
         // コンテキスト組み立て（履歴の最後のuserメッセージを除外して、user_contentを末尾に配置）
@@ -512,45 +612,123 @@ impl ChatEngine for DefaultChatEngine {
             None,
         );
 
-        // 3. LLMストリーミング呼び出し
-        let session_id_owned = session_id.to_string();
-        let app_handle_clone = app_handle.clone();
+        // 3. TTS有効判定
+        let tts_enabled = self.config_manager.get_config().tts.enabled && tts_config.is_some();
 
-        let session_id_for_callback = session_id_owned.clone();
-        let accumulator = partial_content_accumulator.clone();
-        let callback = Box::new(move |chunk: String| {
-            // 部分コンテンツ蓄積
-            if let Some(ref acc) = accumulator {
-                if let Ok(mut content) = acc.lock() {
-                    content.push_str(&chunk);
+        let session_id_owned = session_id.to_string();
+
+        let full_response = if tts_enabled {
+            // === TTS有効パス: ストリーミングチャンクをフロントに送らず内部蓄積 ===
+            let accumulator = partial_content_accumulator.clone();
+            let callback = Box::new(move |chunk: String| {
+                if let Some(ref acc) = accumulator {
+                    if let Ok(mut content) = acc.lock() {
+                        content.push_str(&chunk);
+                    }
                 }
+            });
+
+            let _llm_guard = self.llm_lock.lock().await;
+            let response = self
+                .llm_client
+                .chat_stream(&llm_messages, &self.current_llm_config(), callback)
+                .await?;
+            drop(_llm_guard);
+
+            // tts:generating イベント発行
+            app_handle.emit(
+                "tts:generating",
+                TTSGeneratingEvent {
+                    session_id: session_id_owned.clone(),
+                },
+            ).map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
+
+            // TTS Flow Controller で音声生成
+            let char_tts_config = tts_config.as_ref().unwrap();
+            let app_tts_config = self.config_manager.get_config().tts.clone();
+            let voicepeak_path = app_tts_config.voicepeak_path.as_deref();
+            let timeout_seconds = app_tts_config.timeout_seconds;
+
+            if let Some(ref flow_controller) = self.tts_flow_controller {
+                match flow_controller
+                    .process(&response, char_tts_config, voicepeak_path, timeout_seconds)
+                    .await
+                {
+                    Ok(tts_result) => {
+                        let audio_base64 = base64::engine::general_purpose::STANDARD
+                            .encode(&tts_result.audio_data);
+                        app_handle.emit(
+                            "tts:complete",
+                            TTSCompleteEvent {
+                                session_id: session_id_owned.clone(),
+                                text: response.clone(),
+                                audio: audio_base64,
+                            },
+                        ).map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
+                    }
+                    Err(e) => {
+                        app_handle.emit(
+                            "tts:error",
+                            TTSErrorEvent {
+                                session_id: session_id_owned.clone(),
+                                text: response.clone(),
+                                error: e.to_string(),
+                            },
+                        ).map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
+                    }
+                }
+            } else {
+                app_handle.emit(
+                    "tts:error",
+                    TTSErrorEvent {
+                        session_id: session_id_owned.clone(),
+                        text: response.clone(),
+                        error: "TTS Flow Controller is not initialized".to_string(),
+                    },
+                ).map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
             }
-            let _ = app_handle_clone.emit(
+
+            response
+        } else {
+            // === TTS無効パス: 既存のストリーミングフロー ===
+            let app_handle_clone = app_handle.clone();
+            let session_id_for_callback = session_id_owned.clone();
+            let accumulator = partial_content_accumulator.clone();
+            let callback = Box::new(move |chunk: String| {
+                if let Some(ref acc) = accumulator {
+                    if let Ok(mut content) = acc.lock() {
+                        content.push_str(&chunk);
+                    }
+                }
+                let _ = app_handle_clone.emit(
+                    "chat:stream",
+                    ChatStreamEvent {
+                        session_id: session_id_for_callback.clone(),
+                        chunk,
+                        done: false,
+                    },
+                );
+            });
+
+            let _llm_guard = self.llm_lock.lock().await;
+            let response = self
+                .llm_client
+                .chat_stream(&llm_messages, &self.current_llm_config(), callback)
+                .await?;
+            drop(_llm_guard);
+
+            // ストリーミング完了イベント
+            app_handle.emit(
                 "chat:stream",
                 ChatStreamEvent {
-                    session_id: session_id_for_callback.clone(),
-                    chunk,
-                    done: false,
+                    session_id: session_id_owned.clone(),
+                    chunk: String::new(),
+                    done: true,
                 },
-            );
-        });
+            ).map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
 
-        let _llm_guard = self.llm_lock.lock().await;
-        let full_response = self
-            .llm_client
-            .chat_stream(&llm_messages, &self.current_llm_config(), callback)
-            .await?;
-        drop(_llm_guard);
-
-        // 4. ストリーミング完了イベント
-        app_handle.emit(
-            "chat:stream",
-            ChatStreamEvent {
-                session_id: session_id_owned.clone(),
-                chunk: String::new(),
-                done: true,
-            },
-        ).map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
+            response
+        };
 
         // 5. アシスタントメッセージ保存
         let assistant_msg_id = uuid::Uuid::new_v4().to_string();
@@ -639,7 +817,7 @@ impl ChatEngine for DefaultChatEngine {
         }
 
         // 2. 更新後のコンテキストを組み立てて再送信
-        let (system_prompt, memories, thoughts, history) = {
+        let (system_prompt, memories, thoughts, history, tts_config) = {
             let db = self.db.lock().map_err(|e| {
                 AppError::Database(format!("Failed to acquire DB lock: {}", e))
             })?;
@@ -666,7 +844,7 @@ impl ChatEngine for DefaultChatEngine {
 
             let history = chat_repo::get_messages(conn, session_id)?;
 
-            (character.system_prompt, memories, thoughts, history)
+            (character.system_prompt, memories, thoughts, history, character.tts_config)
         };
 
         // コンテキスト組み立て: 履歴末尾のuserメッセージ（編集済み）を除外し、user_contentとして渡す
@@ -689,46 +867,122 @@ impl ChatEngine for DefaultChatEngine {
             None,
         );
 
-        // 3. LLMストリーミング呼び出し
-        let session_id_owned = session_id.to_string();
-        let app_handle_clone = app_handle.clone();
+        // 3. TTS有効判定
+        let tts_enabled = self.config_manager.get_config().tts.enabled && tts_config.is_some();
 
-        let session_id_for_callback = session_id_owned.clone();
-        let accumulator = partial_content_accumulator.clone();
-        let callback = Box::new(move |chunk: String| {
-            if let Some(ref acc) = accumulator {
-                if let Ok(mut content) = acc.lock() {
-                    content.push_str(&chunk);
+        let session_id_owned = session_id.to_string();
+
+        let full_response = if tts_enabled {
+            // === TTS有効パス ===
+            let accumulator = partial_content_accumulator.clone();
+            let callback = Box::new(move |chunk: String| {
+                if let Some(ref acc) = accumulator {
+                    if let Ok(mut content) = acc.lock() {
+                        content.push_str(&chunk);
+                    }
                 }
+            });
+
+            let _llm_guard = self.llm_lock.lock().await;
+            let response = self
+                .llm_client
+                .chat_stream(&llm_messages, &self.current_llm_config(), callback)
+                .await?;
+            drop(_llm_guard);
+
+            app_handle.emit(
+                "tts:generating",
+                TTSGeneratingEvent {
+                    session_id: session_id_owned.clone(),
+                },
+            ).map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
+
+            let char_tts_config = tts_config.as_ref().unwrap();
+            let app_tts_config = self.config_manager.get_config().tts.clone();
+            let voicepeak_path = app_tts_config.voicepeak_path.as_deref();
+            let timeout_seconds = app_tts_config.timeout_seconds;
+
+            if let Some(ref flow_controller) = self.tts_flow_controller {
+                match flow_controller
+                    .process(&response, char_tts_config, voicepeak_path, timeout_seconds)
+                    .await
+                {
+                    Ok(tts_result) => {
+                        let audio_base64 = base64::engine::general_purpose::STANDARD
+                            .encode(&tts_result.audio_data);
+                        app_handle.emit(
+                            "tts:complete",
+                            TTSCompleteEvent {
+                                session_id: session_id_owned.clone(),
+                                text: response.clone(),
+                                audio: audio_base64,
+                            },
+                        ).map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
+                    }
+                    Err(e) => {
+                        app_handle.emit(
+                            "tts:error",
+                            TTSErrorEvent {
+                                session_id: session_id_owned.clone(),
+                                text: response.clone(),
+                                error: e.to_string(),
+                            },
+                        ).map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
+                    }
+                }
+            } else {
+                app_handle.emit(
+                    "tts:error",
+                    TTSErrorEvent {
+                        session_id: session_id_owned.clone(),
+                        text: response.clone(),
+                        error: "TTS Flow Controller is not initialized".to_string(),
+                    },
+                ).map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
             }
-            let _ = app_handle_clone.emit(
+
+            response
+        } else {
+            // === TTS無効パス: 既存のストリーミングフロー ===
+            let app_handle_clone = app_handle.clone();
+            let session_id_for_callback = session_id_owned.clone();
+            let accumulator = partial_content_accumulator.clone();
+            let callback = Box::new(move |chunk: String| {
+                if let Some(ref acc) = accumulator {
+                    if let Ok(mut content) = acc.lock() {
+                        content.push_str(&chunk);
+                    }
+                }
+                let _ = app_handle_clone.emit(
+                    "chat:stream",
+                    ChatStreamEvent {
+                        session_id: session_id_for_callback.clone(),
+                        chunk,
+                        done: false,
+                    },
+                );
+            });
+
+            let _llm_guard = self.llm_lock.lock().await;
+            let response = self
+                .llm_client
+                .chat_stream(&llm_messages, &self.current_llm_config(), callback)
+                .await?;
+            drop(_llm_guard);
+
+            app_handle.emit(
                 "chat:stream",
                 ChatStreamEvent {
-                    session_id: session_id_for_callback.clone(),
-                    chunk,
-                    done: false,
+                    session_id: session_id_owned.clone(),
+                    chunk: String::new(),
+                    done: true,
                 },
-            );
-        });
+            ).map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
 
-        let _llm_guard = self.llm_lock.lock().await;
-        let full_response = self
-            .llm_client
-            .chat_stream(&llm_messages, &self.current_llm_config(), callback)
-            .await?;
-        drop(_llm_guard);
+            response
+        };
 
-        // 4. ストリーミング完了イベント
-        app_handle.emit(
-            "chat:stream",
-            ChatStreamEvent {
-                session_id: session_id_owned.clone(),
-                chunk: String::new(),
-                done: true,
-            },
-        ).map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
-
-        // 5. アシスタントメッセージ保存
+        // 4. アシスタントメッセージ保存
         let assistant_msg_id = uuid::Uuid::new_v4().to_string();
         let assistant_now = chrono::Utc::now().to_rfc3339();
 

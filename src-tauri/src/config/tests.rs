@@ -186,7 +186,7 @@ mod tests {
             memory: MemoryConfig {
                 compression_threshold: 100,
             },
-            tts: TTSGlobalConfig { enabled: true },
+            tts: TTSGlobalConfig { enabled: true, voicepeak_path: None, timeout_seconds: 60, max_chunk_size: 140 },
             ui: UIConfig {
                 theme: Theme::Light,
                 language: "en".to_string(),

@@ -15,7 +15,7 @@ export function shouldAutoScroll(scrollHeight: number, scrollTop: number, client
 }
 
 export function ChatView() {
-  const { currentSessionId, messages, isStreaming, isAbortable, streamingContent, error, sendMessage, createSession, fetchHistory, stopGeneration } =
+  const { currentSessionId, messages, isStreaming, isAbortable, streamingContent, error, isTTSGenerating, sendMessage, createSession, fetchHistory, stopGeneration } =
     useChatStore();
   const { selectedCharacterId, characters } = useCharacterStore();
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -250,6 +250,16 @@ export function ChatView() {
           />
         ))}
         {isStreaming && <StreamingIndicator content={streamingContent} />}
+        {isTTSGenerating && (
+          <div className="px-4 py-3 flex items-center gap-2 text-muted-foreground text-sm">
+            <div className="flex gap-1">
+              <span className="w-2 h-2 bg-primary rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+              <span className="w-2 h-2 bg-primary rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+              <span className="w-2 h-2 bg-primary rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+            </div>
+            <span>音声を生成中...</span>
+          </div>
+        )}
       </div>
 
       {/* Error display */}
@@ -260,7 +270,7 @@ export function ChatView() {
       )}
 
       {/* Input area */}
-      <MessageInput onSend={handleSend} disabled={isStreaming} isStreaming={isStreaming} isAbortable={isAbortable} onStop={stopGeneration} />
+      <MessageInput onSend={handleSend} disabled={isStreaming || isTTSGenerating} isStreaming={isStreaming} isAbortable={isAbortable} onStop={stopGeneration} />
     </div>
   );
 }

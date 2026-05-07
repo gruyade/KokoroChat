@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Plus, Users } from 'lucide-react';
-import { useCharacterStore } from '../../stores';
+import { useCharacterStore, useUIStore } from '../../stores';
 import { CharacterCard } from './CharacterCard';
 import { CharacterForm } from './CharacterForm';
 import type { Character } from '../../types';
@@ -40,18 +40,29 @@ export function CharacterView() {
     await deleteCharacter(id);
   };
 
-  const handleSave = async (data: { name: string; description: string; system_prompt: string }) => {
-    if (editingCharacter) {
-      await updateCharacter(editingCharacter.id, {
-        name: data.name,
-        description: data.description,
-        system_prompt: data.system_prompt,
-      });
-    } else {
-      await createCharacter(data.name, data.description, data.system_prompt || undefined);
+  const handleSave = async (data: { name: string; description: string; system_prompt: string; tts_config?: import('../../types').TTSConfig }) => {
+    const { showToast } = useUIStore.getState();
+    try {
+      if (editingCharacter) {
+        await updateCharacter(editingCharacter.id, {
+          name: data.name,
+          description: data.description,
+          system_prompt: data.system_prompt,
+          tts_config: data.tts_config,
+        });
+      } else {
+        const created = await createCharacter(data.name, data.description, data.system_prompt || undefined);
+        // 新規作成後にTTS設定がある場合は更新で追加
+        if (data.tts_config) {
+          await updateCharacter(created.id, { tts_config: data.tts_config });
+        }
+      }
+      setShowForm(false);
+      setEditingCharacter(null);
+      showToast(editingCharacter ? 'キャラクターを更新した' : 'キャラクターを作成した');
+    } catch {
+      showToast('キャラクターの保存に失敗', 'error');
     }
-    setShowForm(false);
-    setEditingCharacter(null);
   };
 
   return (
@@ -80,7 +91,7 @@ export function CharacterView() {
 
       {/* Form */}
       {showForm && (
-        <div className="mb-6 p-4 rounded-lg border border-border bg-card">
+        <div className="mb-6 p-4 rounded-lg border border-border bg-card overflow-y-auto max-h-[70vh]">
           <CharacterForm
             character={editingCharacter}
             onSave={handleSave}

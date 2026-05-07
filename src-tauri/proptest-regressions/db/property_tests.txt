@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 487b642099d2bca76f773f07db10a10cde2c391c29a00ce7130a9223efb77c6f # shrinks to character = Character { id: "bac59ee0-b37e-41ad-a7af-ac6a1a77716b", name: "ALpndT8ウて涽I81嗀どビKCきぎ兼8Bャ撜壸ゼ8CクQ勾43圿", description: "CyaゆFネTs7sYZknクz4f溜ット瀵汁sゅぷず捽sKHフ", system_prompt: "Aャ5pオESゐD搀柉どシj3ッVイぃJ旾ガミCp25p", avatar_path: Some("亞2ね妀PD42び摘k4"), tts_config: Some(TTSConfig { provider: Voicepeak, base_url: Some("http://localhost:1561"), reference_audio_path: None, caption: Some("Uvペ劮ヴニY1kゅ9S01Q伮ぉヨぎぬけMウせg00ぅVCセ橄浚はm"), narrator: None, emotion: Some({"happy": 18, "sad": 92}), speed: Some(1.5566216), pitch: None, irodori_mode: None }), created_at: "2028-04-26T19:24:59Z", updated_at: "2021-06-07T19:07:56Z" }

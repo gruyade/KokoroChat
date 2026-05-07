@@ -162,7 +162,7 @@ impl ModelConfigManager {
             memory: MemoryConfig {
                 compression_threshold: 50,
             },
-            tts: TTSGlobalConfig { enabled: false },
+            tts: TTSGlobalConfig { enabled: false, voicepeak_path: None, timeout_seconds: 60, max_chunk_size: 140 },
             ui: UIConfig {
                 theme: Theme::Dark,
                 language: "ja".to_string(),

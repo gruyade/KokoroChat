@@ -1,0 +1,86 @@
+# Implementation Plan
+
+- [x] 1. Write bug condition exploration test
+  - **Property 1: Bug Condition** - 思考カードに削除ボタンが存在しない
+  - **CRITICAL**: This test MUST FAIL on unfixed code - failure confirms the bug exists
+  - **DO NOT attempt to fix the test or the code when it fails**
+  - **NOTE**: This test encodes the expected behavior - it will validate the fix when it passes after implementation
+  - **GOAL**: Surface counterexamples that demonstrate the bug exists
+  - **Scoped PBT Approach**: Scope the property to rendered thought cards - for any thought data, the card should contain a delete button with Trash2 icon
+  - Test file: `src/components/sidebar/SidebarThoughtList.test.tsx`
+  - Use `fast-check` to generate arbitrary thought data arrays (1-20 items with random content/context/dates)
+  - Render `SidebarThoughtList` with mocked `invoke('get_thoughts')` returning generated thoughts
+  - Assert: for each rendered thought card, a button with title "削除" exists
+  - Assert: clicking the delete button triggers `confirm()` dialog
+  - Assert: after confirm, `invoke('delete_thought', { id })` is called
+  - Mock `@tauri-apps/api/core` invoke and `@tauri-apps/api/event` listen
+  - Mock `useCharacterStore` to return a selectedCharacterId
+  - Run test on UNFIXED code
+  - **EXPECTED OUTCOME**: Test FAILS (this is correct - it proves the bug exists: no delete button element in DOM)
+  - Document counterexamples found (e.g., "rendered thought card has no button element with title '削除'")
+  - Mark task complete when test is written, run, and failure is documented
+  - _Requirements: 1.1, 1.2, 2.1, 2.2_
+
+- [x] 2. Write preservation property tests (BEFORE implementing fix)
+  - **Property 2: Preservation** - 既存の表示・更新動作の維持
+  - **IMPORTANT**: Follow observation-first methodology
+  - Test file: `src/components/sidebar/SidebarThoughtList.test.tsx` (same file, separate describe block)
+  - Use `fast-check` to generate arbitrary thought data arrays
+  - Observe on UNFIXED code:
+    - Thought list renders all items with content, context (if present), and formatted date
+    - `thought:generated` event adds new thought to top of list, maintains max 20 items
+    - Empty state shows "思考なし" message with Lightbulb icon
+    - Loading state shows spinner with "読み込み中..." text
+    - No character selected shows "キャラクターを選択してください" message
+  - Write property-based tests:
+    - For all generated thought arrays (length 1-20): each thought's content text is rendered in the DOM
+    - For all generated thought arrays: layout order is content → context → date (top to bottom)
+    - For all generated thought arrays with length 20: adding a new thought via event keeps list at 20 items
+    - For generated thoughts with context: context text is rendered with italic styling
+  - Verify tests PASS on UNFIXED code (these behaviors already work correctly)
+  - **EXPECTED OUTCOME**: Tests PASS (this confirms baseline behavior to preserve)
+  - Mark task complete when tests are written, run, and passing on unfixed code
+  - _Requirements: 3.1, 3.2, 3.3_
+
+- [x] 3. Fix for thought delete button missing in SidebarThoughtList
+
+  - [x] 3.1 Implement the fix
+    - Add `Trash2` to lucide-react import: `import { Lightbulb, Loader2, Trash2 } from 'lucide-react';`
+    - Add `handleDelete` async function matching SidebarMemoryList pattern:
+      - `e.stopPropagation()` to prevent event propagation
+      - `confirm('この思考を削除してよいか？')` for confirmation dialog
+      - `await invoke('delete_thought', { id })` to call backend
+      - `setThoughts((prev) => prev.filter((t) => t.id !== id))` on success
+      - try/catch with empty catch for error handling
+    - Add `group` class to thought card div: `className="group p-2.5 rounded-lg bg-muted/50 border border-border"`
+    - Wrap content area in flex container: `<div className="flex items-start justify-between gap-1">`
+    - Add delete button element inside flex container:
+      - `opacity-0 group-hover:opacity-100` for hover visibility
+      - `hover:bg-destructive/10 hover:text-destructive` for delete color feedback
+      - `<Trash2 className="w-3 h-3" />` icon
+      - `title="削除"` for accessibility
+    - _Bug_Condition: isBugCondition(input) where input.component == "SidebarThoughtList" AND deleteButtonElement == null_
+    - _Expected_Behavior: hover on thought card → delete button visible → click → confirm → invoke('delete_thought') → remove from list_
+    - _Preservation: Thought list loading, real-time updates, layout structure unchanged_
+    - _Requirements: 1.1, 1.2, 2.1, 2.2, 3.1, 3.2, 3.3_
+
+  - [x] 3.2 Verify bug condition exploration test now passes
+    - **Property 1: Expected Behavior** - 思考カードに削除ボタンが存在する
+    - **IMPORTANT**: Re-run the SAME test from task 1 - do NOT write a new test
+    - The test from task 1 encodes the expected behavior (delete button exists and functions)
+    - When this test passes, it confirms the expected behavior is satisfied
+    - Run: `npx vitest run src/components/sidebar/SidebarThoughtList.test.tsx` (bug condition tests)
+    - **EXPECTED OUTCOME**: Test PASSES (confirms bug is fixed)
+    - _Requirements: 2.1, 2.2_
+
+  - [x] 3.3 Verify preservation tests still pass
+    - **Property 2: Preservation** - 既存の表示・更新動作の維持
+    - **IMPORTANT**: Re-run the SAME tests from task 2 - do NOT write new tests
+    - Run: `npx vitest run src/components/sidebar/SidebarThoughtList.test.tsx` (preservation tests)
+    - **EXPECTED OUTCOME**: Tests PASS (confirms no regressions)
+    - Confirm all tests still pass after fix (no regressions)
+
+- [x] 4. Checkpoint - Ensure all tests pass
+  - Run full test suite: `npx vitest run`
+  - Run type check: `npx tsc --noEmit`
+  - Ensure all tests pass, ask the user if questions arise.

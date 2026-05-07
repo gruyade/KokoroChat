@@ -2,12 +2,14 @@ import { useEffect, useRef } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useUIStore, useCharacterStore, useChatStore, useConfigStore } from './stores';
 import { useChat } from './hooks/useChat';
+import { useAudio } from './hooks/useAudio';
 import { useSpontaneousTimer } from './hooks/useSpontaneousTimer';
 import { Sidebar } from './components/sidebar/Sidebar';
 import { ChatView } from './components/chat/ChatView';
 import { CharacterView } from './components/character/CharacterView';
 import { SettingsView } from './components/settings/SettingsView';
 import { DebugPanel } from './components/debug/DebugPanel';
+import { ToastContainer } from './components/toast/Toast';
 
 const STORAGE_KEY = 'ai-character-chat-last-state';
 
@@ -37,6 +39,9 @@ function App() {
 
   // Tauriイベントリスナーを設定
   useChat();
+
+  // TTS音声再生（イベントリスナー登録）
+  useAudio();
 
   // 自発的発話タイマー
   useSpontaneousTimer();
@@ -113,6 +118,7 @@ function App() {
       <Sidebar />
       <MainContent />
       {isDebug && <DebugPanel />}
+      <ToastContainer />
     </div>
   );
 }

@@ -1,7 +1,8 @@
 import { useState, useCallback } from 'react';
-import { Brain, MessageSquare } from 'lucide-react';
+import { Brain, MessageSquare, Volume2, VolumeX } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { create } from 'zustand';
+import { useAudioStore } from '../../hooks/useAudio';
 
 // 一時停止状態をZustandストアで管理（画面切り替えでもリセットされない）
 interface PauseState {
@@ -20,6 +21,7 @@ export const usePauseStore = create<PauseState>((set) => ({
 
 export function ChatHeaderControls() {
   const { thoughtPaused, spontaneousPaused, setThoughtPaused, setSpontaneousPaused } = usePauseStore();
+  const { volume, setVolume } = useAudioStore();
   const [error, setError] = useState<string | null>(null);
 
   const toggleThought = useCallback(async () => {
@@ -58,6 +60,27 @@ export function ChatHeaderControls() {
 
   return (
     <div className="flex items-center gap-1">
+      {/* ボリュームコントロール */}
+      <div className="flex items-center gap-1 mr-2">
+        <button
+          onClick={() => setVolume(volume > 0 ? 0 : 1)}
+          title={volume > 0 ? 'ミュート' : 'ミュート解除'}
+          className="p-1.5 rounded-md transition-colors text-foreground hover:bg-muted/50"
+        >
+          {volume > 0 ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
+        </button>
+        <input
+          type="range"
+          min={0}
+          max={1}
+          step={0.05}
+          value={volume}
+          onChange={(e) => setVolume(parseFloat(e.target.value))}
+          className="w-16 h-1.5 rounded-lg appearance-none bg-muted cursor-pointer"
+          title={`音量: ${Math.round(volume * 100)}%`}
+        />
+      </div>
+
       {/* 思考生成トグル */}
       <button
         onClick={toggleThought}

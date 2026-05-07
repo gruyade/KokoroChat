@@ -28,12 +28,13 @@ thiserror = "1"
 async-trait = "0.1"
 pdf-extract = "0.7"
 base64 = "0.22"
+futures = "0.3"
 dotenvy = "0.15"
 rand = "0.8"
+tempfile = "3"
 
 [dev-dependencies]
 proptest = "1"
-tempfile = "3"
 
 [features]
 custom-protocol = ["tauri/custom-protocol"]

@@ -35,6 +35,12 @@ export interface MemoryConfig {
 /** TTS全体設定 */
 export interface TTSGlobalConfig {
   enabled: boolean;
+  /** VoicePeak CLI実行ファイルパス */
+  voicepeak_path?: string;
+  /** TTS生成タイムアウト（秒）。デフォルト: 60 */
+  timeout_seconds?: number;
+  /** テキスト分割の最大チャンクサイズ（文字数）。デフォルト: 140 */
+  max_chunk_size?: number;
 }
 
 /** 送信キー設定 */

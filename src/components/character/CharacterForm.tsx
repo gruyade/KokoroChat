@@ -1,11 +1,51 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Save, X, Wand2, Sparkles, Loader2 } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
-import type { Character } from '../../types';
+import type { Character, TTSConfig, TTSProvider, EmotionParams, IrodoriMode } from '../../types';
+
+/** TTS設定セクションのローカルステート */
+interface TTSFormState {
+  enabled: boolean;
+  provider: TTSProvider;
+  irodori: {
+    base_url: string;
+    reference_audio_path: string;
+    caption: string;
+    irodori_mode: IrodoriMode;
+  };
+  voicepeak: {
+    narrator: string;
+    emotion: EmotionParams;
+    speed: string;
+    pitch: string;
+  };
+}
+
+const DEFAULT_TTS_STATE: TTSFormState = {
+  enabled: false,
+  provider: 'voicepeak',
+  irodori: {
+    base_url: '',
+    reference_audio_path: '',
+    caption: '',
+    irodori_mode: 'caption',
+  },
+  voicepeak: {
+    narrator: '',
+    emotion: {},
+    speed: '',
+    pitch: '',
+  },
+};
 
 interface CharacterFormProps {
   character?: Character | null;
-  onSave: (data: { name: string; description: string; system_prompt: string }) => void;
+  onSave: (data: {
+    name: string;
+    description: string;
+    system_prompt: string;
+    tts_config?: TTSConfig;
+  }) => void;
   onCancel: () => void;
   loading?: boolean;
 }
@@ -16,6 +56,10 @@ export function CharacterForm({ character, onSave, onCancel, loading }: Characte
   const [systemPrompt, setSystemPrompt] = useState('');
   const [generating, setGenerating] = useState(false);
   const [improving, setImproving] = useState(false);
+  const [improveDirection, setImproveDirection] = useState('');
+  const [ttsState, setTtsState] = useState<TTSFormState>(DEFAULT_TTS_STATE);
+  const [emotionKeys, setEmotionKeys] = useState<string[]>([]);
+  const [emotionLoading, setEmotionLoading] = useState(false);
 
   useEffect(() => {
     if (character) {
@@ -29,10 +73,105 @@ export function CharacterForm({ character, onSave, onCancel, loading }: Characte
     }
   }, [character]);
 
+  // TTS設定の初期値ロード
+  useEffect(() => {
+    if (character?.tts_config) {
+      setTtsState({
+        enabled: true,
+        provider: character.tts_config.provider,
+        irodori: {
+          base_url: character.tts_config.base_url ?? '',
+          reference_audio_path: character.tts_config.reference_audio_path ?? '',
+          caption: character.tts_config.caption ?? '',
+          irodori_mode: character.tts_config.irodori_mode ?? 'caption',
+        },
+        voicepeak: {
+          narrator: character.tts_config.narrator ?? '',
+          emotion: character.tts_config.emotion ?? {},
+          speed: character.tts_config.speed?.toString() ?? '',
+          pitch: character.tts_config.pitch?.toString() ?? '',
+        },
+      });
+    } else {
+      setTtsState(DEFAULT_TTS_STATE);
+    }
+  }, [character]);
+
+  // ナレーター変更時に感情リストを取得
+  const fetchEmotionKeys = useCallback(async (narrator: string) => {
+    if (!narrator.trim()) {
+      setEmotionKeys([]);
+      return;
+    }
+    setEmotionLoading(true);
+    try {
+      const keys = await invoke<string[]>('list_voicepeak_emotions', { narrator: narrator.trim() });
+      setEmotionKeys(keys);
+      // 新しいキーに合わせてemotionを初期化（既存値は保持）
+      setTtsState((prev) => {
+        const newEmotion: Record<string, number> = {};
+        for (const key of keys) {
+          newEmotion[key] = prev.voicepeak.emotion[key] ?? 0;
+        }
+        return {
+          ...prev,
+          voicepeak: { ...prev.voicepeak, emotion: newEmotion },
+        };
+      });
+    } catch {
+      // 取得失敗時は既存のemotionキーをそのまま使用
+      setEmotionKeys(Object.keys(ttsState.voicepeak.emotion));
+    } finally {
+      setEmotionLoading(false);
+    }
+  }, [ttsState.voicepeak.emotion]);
+
+  // 初期ロード時にナレーターが設定済みなら感情リスト取得
+  useEffect(() => {
+    if (ttsState.enabled && ttsState.provider === 'voicepeak' && ttsState.voicepeak.narrator) {
+      fetchEmotionKeys(ttsState.voicepeak.narrator);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [character]);
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) return;
-    onSave({ name: name.trim(), description: description.trim(), system_prompt: systemPrompt });
+
+    let tts_config: TTSConfig | undefined = undefined;
+    if (ttsState.enabled) {
+      if (ttsState.provider === 'voicepeak') {
+        tts_config = {
+          provider: 'voicepeak',
+          narrator: ttsState.voicepeak.narrator || undefined,
+          // 感情キーが存在する場合は値が0でも保存（キー情報がEmotionGeneratorに必要）
+          emotion: Object.keys(ttsState.voicepeak.emotion).length > 0
+            ? ttsState.voicepeak.emotion
+            : undefined,
+          speed: ttsState.voicepeak.speed ? Number(ttsState.voicepeak.speed) : undefined,
+          pitch: ttsState.voicepeak.pitch ? Number(ttsState.voicepeak.pitch) : undefined,
+        };
+      } else {
+        tts_config = {
+          provider: 'irodori-tts',
+          base_url: ttsState.irodori.base_url || undefined,
+          irodori_mode: ttsState.irodori.irodori_mode,
+          reference_audio_path: ttsState.irodori.irodori_mode === 'reference_audio'
+            ? ttsState.irodori.reference_audio_path || undefined
+            : undefined,
+          caption: ttsState.irodori.irodori_mode === 'caption'
+            ? ttsState.irodori.caption || undefined
+            : undefined,
+        };
+      }
+    }
+
+    onSave({
+      name: name.trim(),
+      description: description.trim(),
+      system_prompt: systemPrompt,
+      tts_config,
+    });
   };
 
   const handleGenerate = async () => {
@@ -59,6 +198,7 @@ export function CharacterForm({ character, onSave, onCancel, loading }: Characte
         name: name.trim(),
         description: description.trim(),
         currentPrompt: systemPrompt,
+        direction: improveDirection.trim() || null,
       });
       setSystemPrompt(improved);
     } catch (e) {
@@ -160,7 +300,299 @@ export function CharacterForm({ character, onSave, onCancel, loading }: Characte
         <p className="text-xs text-muted-foreground mt-1">
           「生成」: 概要から新規作成 / 「改善」: 現在の内容をLLMで改良
         </p>
+        {/* 改善方向性入力欄 */}
+        <div className="mt-2">
+          <label htmlFor="improve-direction" className="block text-xs text-muted-foreground mb-1">
+            改善の方向性（任意）
+          </label>
+          <input
+            id="improve-direction"
+            type="text"
+            value={improveDirection}
+            onChange={(e) => setImproveDirection(e.target.value)}
+            placeholder="例: もっとツンデレ感を出して、語尾に「〜だし」を付けて"
+            className="w-full px-3 py-1.5 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+          />
+        </div>
       </div>
+
+      {/* TTS Settings */}
+      <fieldset className="border border-border rounded-md p-4 space-y-3">
+        <legend className="text-sm font-medium px-1">🔊 TTS設定</legend>
+
+        {/* TTS Toggle */}
+        <div className="flex items-center gap-2">
+          <input
+            id="tts-enabled"
+            type="checkbox"
+            role="switch"
+            aria-checked={ttsState.enabled}
+            checked={ttsState.enabled}
+            onChange={(e) =>
+              setTtsState((prev) => ({ ...prev, enabled: e.target.checked }))
+            }
+            className="w-4 h-4 rounded border-border text-primary focus:ring-primary"
+          />
+          <label htmlFor="tts-enabled" className="text-sm">
+            TTSを有効にする
+          </label>
+        </div>
+
+        {/* Provider Selection */}
+        <div role="radiogroup" aria-label="TTSプロバイダー選択">
+          <p className="text-sm font-medium mb-1">プロバイダー:</p>
+          <div className="flex flex-col gap-1">
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="radio"
+                name="tts-provider"
+                value="irodori-tts"
+                checked={ttsState.provider === 'irodori-tts'}
+                disabled={!ttsState.enabled}
+                aria-disabled={!ttsState.enabled}
+                onChange={() =>
+                  setTtsState((prev) => ({ ...prev, provider: 'irodori-tts' }))
+                }
+                className="text-primary focus:ring-primary"
+              />
+              TTSサーバー（Irodori-TTS）
+            </label>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="radio"
+                name="tts-provider"
+                value="voicepeak"
+                checked={ttsState.provider === 'voicepeak'}
+                disabled={!ttsState.enabled}
+                aria-disabled={!ttsState.enabled}
+                onChange={() =>
+                  setTtsState((prev) => ({ ...prev, provider: 'voicepeak' }))
+                }
+                className="text-primary focus:ring-primary"
+              />
+              VoicePeak（CLI方式）
+            </label>
+          </div>
+        </div>
+
+        {/* Provider-specific fields (hidden when TTS disabled) */}
+        {ttsState.enabled && ttsState.provider === 'irodori-tts' && (
+          <div className="space-y-2 border-t border-border pt-3">
+            <p className="text-xs font-medium text-muted-foreground">Irodori-TTS設定</p>
+
+            {/* Mode selector */}
+            <div>
+              <p className="text-xs mb-1">動作モード:</p>
+              <div className="flex gap-4">
+                <label className="flex items-center gap-2 text-xs">
+                  <input
+                    type="radio"
+                    name="irodori-mode"
+                    value="caption"
+                    checked={ttsState.irodori.irodori_mode === 'caption'}
+                    onChange={() =>
+                      setTtsState((prev) => ({
+                        ...prev,
+                        irodori: { ...prev.irodori, irodori_mode: 'caption' },
+                      }))
+                    }
+                    className="text-primary focus:ring-primary"
+                  />
+                  キャプションモード
+                </label>
+                <label className="flex items-center gap-2 text-xs">
+                  <input
+                    type="radio"
+                    name="irodori-mode"
+                    value="reference_audio"
+                    checked={ttsState.irodori.irodori_mode === 'reference_audio'}
+                    onChange={() =>
+                      setTtsState((prev) => ({
+                        ...prev,
+                        irodori: { ...prev.irodori, irodori_mode: 'reference_audio' },
+                      }))
+                    }
+                    className="text-primary focus:ring-primary"
+                  />
+                  参照音声モード
+                </label>
+              </div>
+            </div>
+
+            {/* Base URL (always shown) */}
+            <div>
+              <label htmlFor="tts-base-url" className="block text-xs mb-0.5">
+                ベースURL
+              </label>
+              <input
+                id="tts-base-url"
+                type="text"
+                value={ttsState.irodori.base_url}
+                onChange={(e) =>
+                  setTtsState((prev) => ({
+                    ...prev,
+                    irodori: { ...prev.irodori, base_url: e.target.value },
+                  }))
+                }
+                placeholder="http://localhost:8000"
+                className="w-full px-3 py-1.5 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+              />
+            </div>
+
+            {/* Caption mode: show caption field */}
+            {ttsState.irodori.irodori_mode === 'caption' && (
+              <div>
+                <label htmlFor="tts-caption" className="block text-xs mb-0.5">
+                  ベース声キャプション <span className="text-destructive">*</span>
+                </label>
+                <input
+                  id="tts-caption"
+                  type="text"
+                  value={ttsState.irodori.caption}
+                  onChange={(e) =>
+                    setTtsState((prev) => ({
+                      ...prev,
+                      irodori: { ...prev.irodori, caption: e.target.value },
+                    }))
+                  }
+                  placeholder="参照音声の説明テキスト（例: 明るく元気な女性の声）"
+                  required
+                  className="w-full px-3 py-1.5 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                />
+              </div>
+            )}
+
+            {/* Reference audio mode: show reference audio path field */}
+            {ttsState.irodori.irodori_mode === 'reference_audio' && (
+              <div>
+                <label htmlFor="tts-ref-audio" className="block text-xs mb-0.5">
+                  参照音声ファイルパス <span className="text-destructive">*</span>
+                </label>
+                <input
+                  id="tts-ref-audio"
+                  type="text"
+                  value={ttsState.irodori.reference_audio_path}
+                  onChange={(e) =>
+                    setTtsState((prev) => ({
+                      ...prev,
+                      irodori: { ...prev.irodori, reference_audio_path: e.target.value },
+                    }))
+                  }
+                  placeholder="/path/to/reference.wav"
+                  required
+                  className="w-full px-3 py-1.5 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                />
+              </div>
+            )}
+          </div>
+        )}
+
+        {ttsState.enabled && ttsState.provider === 'voicepeak' && (
+          <div className="space-y-2 border-t border-border pt-3">
+            <p className="text-xs font-medium text-muted-foreground">VoicePeak設定</p>
+            <div>
+              <label htmlFor="tts-narrator" className="block text-xs mb-0.5">
+                ナレーター
+              </label>
+              <input
+                id="tts-narrator"
+                type="text"
+                value={ttsState.voicepeak.narrator}
+                onChange={(e) =>
+                  setTtsState((prev) => ({
+                    ...prev,
+                    voicepeak: { ...prev.voicepeak, narrator: e.target.value },
+                  }))
+                }
+                onBlur={(e) => fetchEmotionKeys(e.target.value)}
+                placeholder="Japanese Female 1"
+                className="w-full px-3 py-1.5 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+              />
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label htmlFor="tts-speed" className="block text-xs mb-0.5">
+                  速度 (%)
+                </label>
+                <input
+                  id="tts-speed"
+                  type="number"
+                  value={ttsState.voicepeak.speed}
+                  onChange={(e) =>
+                    setTtsState((prev) => ({
+                      ...prev,
+                      voicepeak: { ...prev.voicepeak, speed: e.target.value },
+                    }))
+                  }
+                  placeholder="100"
+                  className="w-full px-3 py-1.5 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                />
+              </div>
+              <div>
+                <label htmlFor="tts-pitch" className="block text-xs mb-0.5">
+                  ピッチ
+                </label>
+                <input
+                  id="tts-pitch"
+                  type="number"
+                  value={ttsState.voicepeak.pitch}
+                  onChange={(e) =>
+                    setTtsState((prev) => ({
+                      ...prev,
+                      voicepeak: { ...prev.voicepeak, pitch: e.target.value },
+                    }))
+                  }
+                  placeholder="0"
+                  className="w-full px-3 py-1.5 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                />
+              </div>
+            </div>
+            {/* Emotion Sliders */}
+            <div className="space-y-1.5">
+              <p className="text-xs font-medium">
+                感情パラメータ（上限値）
+                {emotionLoading && <Loader2 className="inline w-3 h-3 ml-1 animate-spin" />}
+              </p>
+              {emotionKeys.length > 0 ? (
+                emotionKeys.map((key) => (
+                  <div key={key} className="flex items-center gap-2">
+                    <label htmlFor={`tts-emotion-${key}`} className="text-xs w-16 truncate">
+                      {key}
+                    </label>
+                    <input
+                      id={`tts-emotion-${key}`}
+                      type="range"
+                      min={0}
+                      max={100}
+                      value={ttsState.voicepeak.emotion[key] ?? 0}
+                      onChange={(e) =>
+                        setTtsState((prev) => ({
+                          ...prev,
+                          voicepeak: {
+                            ...prev.voicepeak,
+                            emotion: {
+                              ...prev.voicepeak.emotion,
+                              [key]: Number(e.target.value),
+                            },
+                          },
+                        }))
+                      }
+                      className="flex-1 h-2 rounded-lg appearance-none bg-muted"
+                    />
+                    <span className="text-xs w-8 text-right tabular-nums">
+                      {ttsState.voicepeak.emotion[key] ?? 0}
+                    </span>
+                  </div>
+                ))
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  ナレーターを入力して感情リストを取得
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+      </fieldset>
 
       {/* Actions */}
       <div className="flex gap-2 justify-end">

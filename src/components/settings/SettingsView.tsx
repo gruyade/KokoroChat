@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Settings, Save, Loader2 } from 'lucide-react';
-import { useConfigStore } from '../../stores';
+import { useConfigStore, useUIStore } from '../../stores';
 import { ModelConfigForm } from './ModelConfigForm';
 import type { AppConfig, ModelPurpose, ModelSettings, SendKey } from '../../types';
 
@@ -23,6 +23,7 @@ const MODEL_PURPOSES: { purpose: ModelPurpose; label: string }[] = [
 
 export function SettingsView() {
   const { config, loading, error, fetchConfig, updateConfig } = useConfigStore();
+  const { showToast } = useUIStore();
   const [activeTab, setActiveTab] = useState<SettingsTab>('models');
   const [draft, setDraft] = useState<AppConfig | null>(null);
   const [saving, setSaving] = useState(false);
@@ -42,6 +43,9 @@ export function SettingsView() {
     setSaving(true);
     try {
       await updateConfig(draft);
+      showToast('設定を保存した');
+    } catch {
+      showToast('設定の保存に失敗', 'error');
     } finally {
       setSaving(false);
     }
@@ -145,6 +149,27 @@ export function SettingsView() {
             <p className="text-xs text-muted-foreground">
               TTS設定はキャラクター個別に設定可能。ここではグローバルの有効/無効を切り替え。
             </p>
+            <div>
+              <label htmlFor="voicepeak-path" className="block text-xs text-muted-foreground mb-1">
+                VoicePeak 実行ファイルパス
+              </label>
+              <input
+                id="voicepeak-path"
+                type="text"
+                value={draft.tts.voicepeak_path ?? ''}
+                onChange={(e) =>
+                  setDraft({
+                    ...draft,
+                    tts: { ...draft.tts, voicepeak_path: e.target.value || undefined },
+                  })
+                }
+                placeholder="C:\Program Files\VOICEPEAK\voicepeak.exe"
+                className="w-full px-3 py-1.5 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+              />
+              <p className="mt-1 text-xs text-muted-foreground">
+                未指定時はPATHから「voicepeak」を検索
+              </p>
+            </div>
           </div>
         )}
 

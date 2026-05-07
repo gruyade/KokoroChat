@@ -7,6 +7,7 @@ use crate::models::tts::TTSConfig;
 use crate::state::AppState;
 #[allow(unused_imports)]
 use crate::tts::connector::TTSConnector;
+use crate::tts::voicepeak::VoicePeakHandler;
 
 /// テキスト音声合成
 ///
@@ -18,7 +19,8 @@ pub async fn synthesize_speech(
     config: TTSConfig,
     state: State<'_, AppState>,
 ) -> Result<Vec<u8>, AppError> {
-    state.tts_connector.synthesize(&text, &config).await
+    let voicepeak_path = state.config_manager.get_config().tts.voicepeak_path;
+    state.tts_connector.synthesize(&text, &config, voicepeak_path.as_deref()).await
 }
 
 /// TTS接続テスト
@@ -29,7 +31,18 @@ pub async fn test_tts_connection(
     config: TTSConfig,
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
-    state.tts_connector.test_connection(&config).await
+    let voicepeak_path = state.config_manager.get_config().tts.voicepeak_path;
+    state.tts_connector.test_connection(&config, voicepeak_path.as_deref()).await
+}
+
+/// VoicePeakナレーターの利用可能な感情リストを取得
+#[tauri::command]
+pub async fn list_voicepeak_emotions(
+    narrator: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<String>, AppError> {
+    let voicepeak_path = state.config_manager.get_config().tts.voicepeak_path;
+    VoicePeakHandler::list_emotions(voicepeak_path.as_deref(), &narrator).await
 }
 
 // TTS音声イベント定義（チャットエンジンからTTS有効時にemitされる）

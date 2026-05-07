@@ -94,7 +94,7 @@ mod bug_condition_tests {
             memory: MemoryConfig {
                 compression_threshold: 50,
             },
-            tts: TTSGlobalConfig { enabled: false },
+            tts: TTSGlobalConfig { enabled: false, voicepeak_path: None, timeout_seconds: 60, max_chunk_size: 140 },
             ui: UIConfig {
                 theme: Theme::Dark,
                 language: "ja".to_string(),
@@ -250,7 +250,7 @@ mod preservation_tests {
             memory: MemoryConfig {
                 compression_threshold: 50,
             },
-            tts: TTSGlobalConfig { enabled: false },
+            tts: TTSGlobalConfig { enabled: false, voicepeak_path: None, timeout_seconds: 60, max_chunk_size: 140 },
             ui: UIConfig {
                 theme: Theme::Dark,
                 language: "ja".to_string(),
@@ -572,7 +572,7 @@ mod tests {
                     memory: MemoryConfig {
                         compression_threshold,
                     },
-                    tts: TTSGlobalConfig { enabled: tts_enabled },
+                    tts: TTSGlobalConfig { enabled: tts_enabled, voicepeak_path: None, timeout_seconds: 60, max_chunk_size: 140 },
                     ui: UIConfig { theme, language, send_key: SendKey::default() },
                     plugins: PluginsConfig {
                         enabled_plugins,

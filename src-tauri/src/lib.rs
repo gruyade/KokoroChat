@@ -31,6 +31,7 @@ use plugin::registry::{DefaultPluginRegistry, PluginRegistry};
 use state::AppState;
 use thought::engine::DefaultThoughtEngine;
 use tts::connector::DefaultTTSConnector;
+use tts::flow_controller::TTSFlowController;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -87,12 +88,23 @@ pub fn run() {
                     config_manager.clone(),
                 ));
 
+            let tts_connector: Arc<dyn tts::connector::TTSConnector> =
+                Arc::new(DefaultTTSConnector::new());
+
+            let tts_flow_controller = Arc::new(TTSFlowController::new(
+                tts_connector.clone(),
+                llm_client.clone(),
+                config_manager.clone(),
+            ));
+
             let chat_engine: Arc<dyn chat::engine::ChatEngine> =
                 Arc::new(DefaultChatEngine::new(
                     db_for_chat.clone(),
                     llm_client.clone(),
                     config_manager.clone(),
                     llm_lock.clone(),
+                    tts_connector.clone(),
+                    Some(tts_flow_controller),
                 ));
 
             let memory_manager: Arc<dyn memory::manager::MemoryManager> =
@@ -106,9 +118,6 @@ pub fn run() {
                         .compression_threshold,
                     llm_lock.clone(),
                 ));
-
-            let tts_connector: Arc<dyn tts::connector::TTSConnector> =
-                Arc::new(DefaultTTSConnector::new());
 
             let attachment_processor: Arc<dyn attachment::processor::AttachmentProcessor> =
                 Arc::new(DefaultAttachmentProcessor::new());
@@ -184,6 +193,7 @@ pub fn run() {
             commands::memory::delete_memory,
             commands::tts::synthesize_speech,
             commands::tts::test_tts_connection,
+            commands::tts::list_voicepeak_emotions,
             commands::attachment::process_attachment,
             commands::attachment::get_supported_extensions,
             commands::plugin::list_plugins,

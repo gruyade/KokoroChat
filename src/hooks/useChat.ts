@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { listen } from '@tauri-apps/api/event';
 import { useChatStore } from '../stores/chat.store';
+import type { TTSCompleteEvent, TTSGeneratingEvent, TTSErrorEvent } from '../types';
 
 /** chat:stream イベントペイロード */
 interface ChatStreamEvent {
@@ -31,6 +32,7 @@ export function useChat() {
   const sendMessage = useChatStore((s) => s.sendMessage);
   const isStreaming = useChatStore((s) => s.isStreaming);
   const streamingContent = useChatStore((s) => s.streamingContent);
+  const isTTSGenerating = useChatStore((s) => s.isTTSGenerating);
 
   useEffect(() => {
     let streamContent = '';
@@ -47,6 +49,11 @@ export function useChat() {
         if (done) {
           useChatStore.getState().finishStreaming(streamContent);
           streamContent = '';
+          // ストリーミング完了後にDBから履歴を再取得し、正しいメッセージIDを同期
+          const { currentSessionId, fetchHistory } = useChatStore.getState();
+          if (currentSessionId) {
+            fetchHistory(currentSessionId);
+          }
         } else {
           streamContent += chunk;
           useChatStore.getState().appendStreamChunk(chunk);
@@ -72,6 +79,43 @@ export function useChat() {
       const unlistenTool = await listen<ToolExecutingEvent>('tool:executing', () => {});
       if (cancelled) { unlistenTool(); return; }
       unlisteners.push(unlistenTool);
+
+      const unlistenTTSGenerating = await listen<TTSGeneratingEvent>('tts:generating', (_event) => {
+        if (cancelled) return;
+        console.log('[TTS] Received tts:generating event');
+        useChatStore.getState().setTTSGenerating(true);
+      });
+      if (cancelled) { unlistenTTSGenerating(); return; }
+      unlisteners.push(unlistenTTSGenerating);
+
+      const unlistenTTSComplete = await listen<TTSCompleteEvent>('tts:complete', (event) => {
+        if (cancelled) return;
+        const { text, audio } = event.payload;
+        console.log('[TTS] Received tts:complete event, audio length:', audio?.length ?? 0);
+        useChatStore.getState().finishWithAudio(text, audio);
+        // 完了後にDBから履歴を再取得
+        const { currentSessionId, fetchHistory } = useChatStore.getState();
+        if (currentSessionId) {
+          fetchHistory(currentSessionId);
+        }
+      });
+      if (cancelled) { unlistenTTSComplete(); return; }
+      unlisteners.push(unlistenTTSComplete);
+
+      const unlistenTTSError = await listen<TTSErrorEvent>('tts:error', (event) => {
+        if (cancelled) return;
+        const { text, error } = event.payload;
+        console.log('[TTS] Received tts:error event:', error);
+        // テキストは即座に表示（finishWithAudioと同じ処理だが音声なし）
+        useChatStore.getState().finishWithAudio(text, '');
+        // 完了後にDBから履歴を再取得
+        const { currentSessionId, fetchHistory } = useChatStore.getState();
+        if (currentSessionId) {
+          fetchHistory(currentSessionId);
+        }
+      });
+      if (cancelled) { unlistenTTSError(); return; }
+      unlisteners.push(unlistenTTSError);
     };
 
     setupListeners();
@@ -82,5 +126,5 @@ export function useChat() {
     };
   }, []);
 
-  return { sendMessage, isStreaming, streamingContent };
+  return { sendMessage, isStreaming, streamingContent, isTTSGenerating };
 }

@@ -74,6 +74,23 @@ pub struct MemoryConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TTSGlobalConfig {
     pub enabled: bool,
+    /// VoicePeak CLI実行ファイルパス（例: "C:\\Program Files\\VOICEPEAK\\voicepeak.exe"）
+    #[serde(default)]
+    pub voicepeak_path: Option<String>,
+    /// TTS生成タイムアウト（秒）。デフォルト: 60
+    #[serde(default = "default_tts_timeout")]
+    pub timeout_seconds: u64,
+    /// テキスト分割の最大チャンクサイズ（文字数）。デフォルト: 140
+    #[serde(default = "default_max_chunk_size")]
+    pub max_chunk_size: usize,
+}
+
+fn default_tts_timeout() -> u64 {
+    60
+}
+
+fn default_max_chunk_size() -> usize {
+    140
 }
 
 /// メッセージ送信キー設定

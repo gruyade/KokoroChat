@@ -93,6 +93,7 @@ pub async fn improve_system_prompt(
     name: String,
     description: String,
     current_prompt: String,
+    direction: Option<String>,
     state: State<'_, AppState>,
 ) -> Result<String, AppError> {
     use crate::llm::client::{ChatMessage, LLMClientConfig, LLMResponse, MessageRole};
@@ -114,6 +115,14 @@ pub async fn improve_system_prompt(
             temperature: 0.7,
         });
 
+    let direction_text = match &direction {
+        Some(d) if !d.trim().is_empty() => format!(
+            "\n\n【改善の方向性（ユーザー指示）】\n{}\n\n上記の方向性を最優先で反映しつつ、以下の観点でも改善してください：",
+            d.trim()
+        ),
+        _ => "\n\n以下の観点で改善してください：".to_string(),
+    };
+
     let messages = vec![ChatMessage {
         role: MessageRole::User,
         content: format!(
@@ -121,15 +130,15 @@ pub async fn improve_system_prompt(
              以下の既存System Promptを改善してください。\n\n\
              【キャラクター名】{}\n\
              【概要説明】{}\n\
-             【現在のSystem Prompt】\n{}\n\n\
-             以下の観点で改善してください：\n\
+             【現在のSystem Prompt】\n{}\
+             {}\n\
              1. キャラクターの性格・人格をより具体的に\n\
              2. 話し方・口調のパターンをより明確に\n\
              3. 行動原理・価値観を追加\n\
              4. 会話における振る舞いのガイドラインを充実\n\
              5. 矛盾や曖昧な部分を解消\n\n\
              改善後のSystem Promptのみを出力してください。説明や前置きは不要です。",
-            name, description, current_prompt
+            name, description, current_prompt, direction_text
         ),
         tool_call_id: None,
     }];

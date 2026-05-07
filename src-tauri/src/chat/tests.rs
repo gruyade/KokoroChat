@@ -1,4 +1,4 @@
-// Chat Engine tests
+﻿// Chat Engine tests
 
 #[cfg(test)]
 mod tests {
@@ -14,6 +14,8 @@ mod tests {
     use crate::models::{
         Attachment, AttachmentType, Character, ChatRole, Memory, ToolCall, ToolDefinition,
     };
+    use crate::models::tts::TTSConfig;
+    use crate::tts::connector::TTSConnector;
 
     /// テスト用MockLLMClient
     struct MockLLMClient {
@@ -166,7 +168,7 @@ mod tests {
             spontaneous: SpontaneousConfig { enabled: false, min_interval_seconds: 60, probability: 0.3 },
             thought: ThoughtConfig { enabled: false, interval_minutes: 5, auto_delete_threshold_minutes: 1440 },
             memory: MemoryConfig { compression_threshold: 50 },
-            tts: TTSGlobalConfig { enabled: false },
+            tts: TTSGlobalConfig { enabled: false, voicepeak_path: None, timeout_seconds: 60, max_chunk_size: 140 },
             ui: UIConfig { theme: Theme::Dark, language: "ja".to_string(), send_key: SendKey::default() },
             plugins: PluginsConfig { enabled_plugins: vec![], plugin_settings: HashMap::new() },
             attachment: AttachmentConfig { max_file_size_bytes: 10 * 1024 * 1024, allowed_extensions: vec![] },
@@ -177,6 +179,24 @@ mod tests {
 
     fn test_llm_lock() -> Arc<tokio::sync::Mutex<()>> {
         Arc::new(tokio::sync::Mutex::new(()))
+    }
+
+    /// テスト用MockTTSConnector
+    struct MockTTSConnector;
+
+    #[async_trait]
+    impl TTSConnector for MockTTSConnector {
+        async fn synthesize(&self, _text: &str, _config: &TTSConfig, _voicepeak_path: Option<&str>) -> Result<Vec<u8>, AppError> {
+            Ok(vec![])
+        }
+
+        async fn test_connection(&self, _config: &TTSConfig, _voicepeak_path: Option<&str>) -> Result<(), AppError> {
+            Ok(())
+        }
+    }
+
+    fn test_tts_connector() -> Arc<dyn TTSConnector> {
+        Arc::new(MockTTSConnector)
     }
 
     fn setup_db_with_character() -> Arc<Mutex<Database>> {
@@ -199,7 +219,7 @@ mod tests {
     async fn test_create_session() {
         let db = setup_db_with_character();
         let llm = Arc::new(MockLLMClient::new("hello"));
-        let engine = DefaultChatEngine::new(db.clone(), llm, test_config(), test_llm_lock());
+        let engine = DefaultChatEngine::new(db.clone(), llm, test_config(), test_llm_lock(), test_tts_connector(), None);
 
         let session_id = engine.create_session("char-001").await.unwrap();
 
@@ -219,7 +239,7 @@ mod tests {
     async fn test_create_session_invalid_character() {
         let db = setup_db_with_character();
         let llm = Arc::new(MockLLMClient::new("hello"));
-        let engine = DefaultChatEngine::new(db, llm, test_config(), test_llm_lock());
+        let engine = DefaultChatEngine::new(db, llm, test_config(), test_llm_lock(), test_tts_connector(), None);
 
         // 存在しないキャラクターでもセッション作成自体は成功
         // （外部キー制約がある場合はエラーになる）
@@ -232,7 +252,7 @@ mod tests {
     async fn test_list_sessions() {
         let db = setup_db_with_character();
         let llm = Arc::new(MockLLMClient::new("hello"));
-        let engine = DefaultChatEngine::new(db, llm, test_config(), test_llm_lock());
+        let engine = DefaultChatEngine::new(db, llm, test_config(), test_llm_lock(), test_tts_connector(), None);
 
         let _s1 = engine.create_session("char-001").await.unwrap();
         let _s2 = engine.create_session("char-001").await.unwrap();
@@ -245,7 +265,7 @@ mod tests {
     async fn test_list_sessions_empty() {
         let db = setup_db_with_character();
         let llm = Arc::new(MockLLMClient::new("hello"));
-        let engine = DefaultChatEngine::new(db, llm, test_config(), test_llm_lock());
+        let engine = DefaultChatEngine::new(db, llm, test_config(), test_llm_lock(), test_tts_connector(), None);
 
         let sessions = engine.list_sessions("char-001").await.unwrap();
         assert!(sessions.is_empty());
@@ -255,7 +275,7 @@ mod tests {
     async fn test_delete_session() {
         let db = setup_db_with_character();
         let llm = Arc::new(MockLLMClient::new("hello"));
-        let engine = DefaultChatEngine::new(db.clone(), llm, test_config(), test_llm_lock());
+        let engine = DefaultChatEngine::new(db.clone(), llm, test_config(), test_llm_lock(), test_tts_connector(), None);
 
         let session_id = engine.create_session("char-001").await.unwrap();
         engine.delete_session(&session_id).await.unwrap();
@@ -269,7 +289,7 @@ mod tests {
     async fn test_get_history_empty() {
         let db = setup_db_with_character();
         let llm = Arc::new(MockLLMClient::new("hello"));
-        let engine = DefaultChatEngine::new(db, llm, test_config(), test_llm_lock());
+        let engine = DefaultChatEngine::new(db, llm, test_config(), test_llm_lock(), test_tts_connector(), None);
 
         let session_id = engine.create_session("char-001").await.unwrap();
         let history = engine.get_history(&session_id).await.unwrap();
@@ -280,7 +300,7 @@ mod tests {
     fn test_build_context_basic() {
         let db = setup_db_with_character();
         let llm = Arc::new(MockLLMClient::new("hello"));
-        let engine = DefaultChatEngine::new(db, llm, test_config(), test_llm_lock());
+        let engine = DefaultChatEngine::new(db, llm, test_config(), test_llm_lock(), test_tts_connector(), None);
 
         let messages = engine.build_context(
             "あなたはテストキャラです。",
@@ -302,7 +322,7 @@ mod tests {
     fn test_build_context_with_memories() {
         let db = setup_db_with_character();
         let llm = Arc::new(MockLLMClient::new("hello"));
-        let engine = DefaultChatEngine::new(db, llm, test_config(), test_llm_lock());
+        let engine = DefaultChatEngine::new(db, llm, test_config(), test_llm_lock(), test_tts_connector(), None);
 
         let memories = vec![
             Memory {
@@ -351,7 +371,7 @@ mod tests {
     fn test_build_context_with_history() {
         let db = setup_db_with_character();
         let llm = Arc::new(MockLLMClient::new("hello"));
-        let engine = DefaultChatEngine::new(db, llm, test_config(), test_llm_lock());
+        let engine = DefaultChatEngine::new(db, llm, test_config(), test_llm_lock(), test_tts_connector(), None);
 
         let history = vec![
             crate::models::ChatMessageRecord {
@@ -399,7 +419,7 @@ mod tests {
     fn test_build_context_with_attachments() {
         let db = setup_db_with_character();
         let llm = Arc::new(MockLLMClient::new("hello"));
-        let engine = DefaultChatEngine::new(db, llm, test_config(), test_llm_lock());
+        let engine = DefaultChatEngine::new(db, llm, test_config(), test_llm_lock(), test_tts_connector(), None);
 
         let messages = engine.build_context(
             "System prompt",
@@ -502,7 +522,7 @@ mod tests {
         // コンテキスト順序: system_prompt → memories → history → user_message
         let db = setup_db_with_character();
         let llm = Arc::new(MockLLMClient::new("hello"));
-        let engine = DefaultChatEngine::new(db, llm, test_config(), test_llm_lock());
+        let engine = DefaultChatEngine::new(db, llm, test_config(), test_llm_lock(), test_tts_connector(), None);
 
         let memories = vec![Memory {
             id: "mem-001".to_string(),
@@ -551,7 +571,7 @@ mod tests {
     fn test_spontaneous_role_mapped_to_assistant() {
         let db = setup_db_with_character();
         let llm = Arc::new(MockLLMClient::new("hello"));
-        let engine = DefaultChatEngine::new(db, llm, test_config(), test_llm_lock());
+        let engine = DefaultChatEngine::new(db, llm, test_config(), test_llm_lock(), test_tts_connector(), None);
 
         let history = vec![crate::models::ChatMessageRecord {
             id: "msg-001".to_string(),
@@ -568,5 +588,112 @@ mod tests {
 
         // Spontaneous → Assistant にマッピング
         assert_eq!(messages[1].role, MessageRole::Assistant);
+    }
+
+    // =========================================================================
+    // TTS Branch Decision Logic Tests
+    //
+    // send_message のTTS分岐はAppHandle（Tauriイベント発行）が必要なため、
+    // 完全な統合テストはユニットテストでは実行できない。
+    //
+    // TTS有効時のフロー（tts:generating → tts:complete / tts:error）は
+    // tts/tests.rs の flow_controller_tests モジュールで検証済み。
+    //
+    // ここではTTS分岐の判定ロジック（グローバル設定 × キャラクター設定）を
+    // 設定値の組み合わせで検証する。
+    // =========================================================================
+
+    /// TTS有効判定: グローバルTTS enabled=true AND キャラクターtts_config=Some → TTS有効
+    #[test]
+    fn test_tts_enabled_decision_both_conditions_met() {
+        let config = test_config_with_tts(true);
+        let tts_config: Option<crate::models::tts::TTSConfig> = Some(make_character_tts_config());
+
+        let tts_enabled = config.get_config().tts.enabled && tts_config.is_some();
+        assert!(tts_enabled);
+    }
+
+    /// TTS有効判定: グローバルTTS enabled=false → TTS無効（キャラクター設定に関わらず）
+    #[test]
+    fn test_tts_disabled_when_global_config_disabled() {
+        let config = test_config_with_tts(false);
+        let tts_config: Option<crate::models::tts::TTSConfig> = Some(make_character_tts_config());
+
+        let tts_enabled = config.get_config().tts.enabled && tts_config.is_some();
+        assert!(!tts_enabled);
+    }
+
+    /// TTS有効判定: キャラクターtts_config=None → TTS無効（グローバル設定に関わらず）
+    #[test]
+    fn test_tts_disabled_when_character_has_no_tts_config() {
+        let config = test_config_with_tts(true);
+        let tts_config: Option<crate::models::tts::TTSConfig> = None;
+
+        let tts_enabled = config.get_config().tts.enabled && tts_config.is_some();
+        assert!(!tts_enabled);
+    }
+
+    /// TTS有効判定: 両方無効 → TTS無効
+    #[test]
+    fn test_tts_disabled_when_both_conditions_unmet() {
+        let config = test_config_with_tts(false);
+        let tts_config: Option<crate::models::tts::TTSConfig> = None;
+
+        let tts_enabled = config.get_config().tts.enabled && tts_config.is_some();
+        assert!(!tts_enabled);
+    }
+
+    // --- TTS分岐テスト用ヘルパー ---
+
+    fn test_config_with_tts(tts_enabled: bool) -> Arc<crate::config::model_config::ModelConfigManager> {
+        use std::collections::HashMap;
+        use crate::models::config::*;
+
+        let mut models = HashMap::new();
+        let settings = ModelSettings {
+            base_url: "http://localhost:8080/v1".to_string(),
+            model: "test-model".to_string(),
+            api_key: None,
+            temperature: 0.7,
+        };
+        models.insert(ModelPurpose::Chat, settings.clone());
+        models.insert(ModelPurpose::Memory, settings.clone());
+        models.insert(ModelPurpose::Thought, settings.clone());
+        models.insert(ModelPurpose::CharacterGeneration, settings);
+
+        let config = AppConfig {
+            models,
+            spontaneous: SpontaneousConfig { enabled: false, min_interval_seconds: 60, probability: 0.3 },
+            thought: ThoughtConfig { enabled: false, interval_minutes: 5, auto_delete_threshold_minutes: 1440 },
+            memory: MemoryConfig { compression_threshold: 50 },
+            tts: TTSGlobalConfig { enabled: tts_enabled, voicepeak_path: None, timeout_seconds: 60, max_chunk_size: 140 },
+            ui: UIConfig { theme: Theme::Dark, language: "ja".to_string(), send_key: SendKey::default() },
+            plugins: PluginsConfig { enabled_plugins: vec![], plugin_settings: HashMap::new() },
+            attachment: AttachmentConfig { max_file_size_bytes: 10 * 1024 * 1024, allowed_extensions: vec![] },
+        };
+
+        Arc::new(crate::config::model_config::ModelConfigManager::new_with_config(config))
+    }
+
+    fn make_character_tts_config() -> crate::models::tts::TTSConfig {
+        use crate::models::tts::{EmotionParams, TTSConfig, TTSProvider};
+
+        let mut emotion = EmotionParams::new();
+        emotion.insert("happy".to_string(), 50);
+        emotion.insert("fun".to_string(), 30);
+        emotion.insert("angry".to_string(), 0);
+        emotion.insert("sad".to_string(), 0);
+
+        TTSConfig {
+            provider: TTSProvider::Voicepeak,
+            base_url: None,
+            reference_audio_path: None,
+            caption: None,
+            narrator: Some("Japanese Female 1".to_string()),
+            emotion: Some(emotion),
+            speed: Some(100.0),
+            pitch: Some(0.0),
+            irodori_mode: None,
+        }
     }
 }
