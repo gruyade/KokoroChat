@@ -1,10 +1,12 @@
 import { useState } from 'react';
-import { Bot, User, Sparkles, Wrench, Copy, RefreshCw, Trash2, Info, Pencil } from 'lucide-react';
+import { Bot, User, Sparkles, Wrench, Copy, RefreshCw, Trash2, Info, Pencil, Volume2 } from 'lucide-react';
+import { invoke } from '@tauri-apps/api/core';
 import type { ChatMessageRecord } from '../../types';
 import { ToolCallIndicator } from './ToolCallIndicator';
 import { EditableMessage } from './EditableMessage';
 import { MarkdownRenderer } from './MarkdownRenderer';
-import { useChatStore } from '../../stores';
+import { useChatStore, useCharacterStore, useConfigStore } from '../../stores';
+import { useAudioStore } from '../../hooks/useAudio';
 
 interface MessageBubbleProps {
   message: ChatMessageRecord;
@@ -53,13 +55,19 @@ export function MessageBubble({ message, onRegenerate, onDelete }: MessageBubble
   const config = getRoleConfig(message.role);
   const [showMenu, setShowMenu] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [ttsLoading, setTtsLoading] = useState(false);
   const { editingMessageId, setEditingMessage, editAndResend } = useChatStore();
+  const { selectedCharacterId } = useCharacterStore();
+  const { config: appConfig } = useConfigStore();
+  const ttsEnabled = appConfig?.tts?.enabled ?? false;
 
   const isEditing = editingMessageId === message.id;
 
   // [SYSTEM]プレフィックス付きメッセージはシステムメッセージとして表示
   const isSystemMessage = message.role === 'user' && message.content.startsWith('[SYSTEM] ');
-  const displayContent = isSystemMessage ? message.content.slice(9) : message.content;
+  const rawContent = isSystemMessage ? message.content.slice(9) : message.content;
+  // 《》で囲まれた地の文マーカーを除去して表示（イタリック表示に変換）
+  const displayContent = rawContent.replace(/《([^》]*)》/g, '*$1*');
 
   const handleCopy = async () => {
     await navigator.clipboard.writeText(displayContent);
@@ -84,6 +92,28 @@ export function MessageBubble({ message, onRegenerate, onDelete }: MessageBubble
 
   const handleEditConfirm = (newContent: string) => {
     editAndResend(message.id, newContent);
+  };
+
+  const handleGenerateSpeech = async () => {
+    if (!selectedCharacterId || ttsLoading) return;
+    setTtsLoading(true);
+    setShowMenu(false);
+    try {
+      const audioBase64 = await invoke<string>('generate_speech_for_message', {
+        text: message.content,
+        characterId: selectedCharacterId,
+      });
+      if (audioBase64) {
+        const playFn = useAudioStore.getState().playAudioFn;
+        if (playFn) {
+          playFn(audioBase64);
+        }
+      }
+    } catch (e) {
+      console.error('[TTS] generate_speech_for_message failed:', e);
+    } finally {
+      setTtsLoading(false);
+    }
   };
 
   const handleEditCancel = () => {
@@ -168,6 +198,16 @@ export function MessageBubble({ message, onRegenerate, onDelete }: MessageBubble
                       title="再生成"
                     >
                       <RefreshCw className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                  {message.role === 'assistant' && ttsEnabled && (
+                    <button
+                      onClick={handleGenerateSpeech}
+                      disabled={ttsLoading}
+                      className="p-1 rounded text-muted-foreground hover:bg-muted hover:text-foreground transition-colors disabled:opacity-50"
+                      title="音声生成"
+                    >
+                      <Volume2 className={`h-3.5 w-3.5 ${ttsLoading ? 'animate-pulse' : ''}`} />
                     </button>
                   )}
                   {onDelete && (

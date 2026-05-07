@@ -170,6 +170,44 @@ export function SettingsView() {
                 未指定時はPATHから「voicepeak」を検索
               </p>
             </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label htmlFor="tts-max-chunk" className="block text-xs text-muted-foreground mb-1">
+                  分割文字数
+                </label>
+                <input
+                  id="tts-max-chunk"
+                  type="number"
+                  value={draft.tts.max_chunk_size ?? 140}
+                  onChange={(e) =>
+                    setDraft({
+                      ...draft,
+                      tts: { ...draft.tts, max_chunk_size: Number(e.target.value) || 140 },
+                    })
+                  }
+                  placeholder="140"
+                  className="w-full px-3 py-1.5 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                />
+              </div>
+              <div>
+                <label htmlFor="tts-timeout" className="block text-xs text-muted-foreground mb-1">
+                  タイムアウト（秒）
+                </label>
+                <input
+                  id="tts-timeout"
+                  type="number"
+                  value={draft.tts.timeout_seconds ?? 60}
+                  onChange={(e) =>
+                    setDraft({
+                      ...draft,
+                      tts: { ...draft.tts, timeout_seconds: Number(e.target.value) || 60 },
+                    })
+                  }
+                  placeholder="60"
+                  className="w-full px-3 py-1.5 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                />
+              </div>
+            </div>
           </div>
         )}
 

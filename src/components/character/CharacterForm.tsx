@@ -33,8 +33,8 @@ const DEFAULT_TTS_STATE: TTSFormState = {
   voicepeak: {
     narrator: '',
     emotion: {},
-    speed: '',
-    pitch: '',
+    speed: '100',
+    pitch: '100',
   },
 };
 

@@ -194,6 +194,7 @@ pub fn run() {
             commands::tts::synthesize_speech,
             commands::tts::test_tts_connection,
             commands::tts::list_voicepeak_emotions,
+            commands::tts::generate_speech_for_message,
             commands::attachment::process_attachment,
             commands::attachment::get_supported_extensions,
             commands::plugin::list_plugins,

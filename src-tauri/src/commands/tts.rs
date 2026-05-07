@@ -45,6 +45,93 @@ pub async fn list_voicepeak_emotions(
     VoicePeakHandler::list_emotions(voicepeak_path.as_deref(), &narrator).await
 }
 
-// TTS音声イベント定義（チャットエンジンからTTS有効時にemitされる）
-// app_handle.emit("tts:audio", TTSAudioEvent { data: base64_audio })
-// 将来のチャット統合時に使用予定
+/// 既存メッセージテキストからspeechを抽出してTTS音声を生成
+///
+/// LLMにテキストを送り、会話文（speech）のみを抽出させてからTTS音声合成を行う。
+/// 返却値はbase64エンコードされたWAV音声データ。
+#[tauri::command]
+pub async fn generate_speech_for_message(
+    text: String,
+    character_id: String,
+    state: State<'_, AppState>,
+) -> Result<String, AppError> {
+    use base64::Engine;
+    use crate::db::repositories::character as char_repo;
+    use crate::llm::client::{ChatMessage, LLMClientConfig, LLMResponse, MessageRole};
+    use crate::models::config::ModelPurpose;
+
+    // キャラクターのTTS設定を取得
+    let tts_config = {
+        let db = state.db.lock().map_err(|e| AppError::Database(format!("DB lock failed: {}", e)))?;
+        let character = char_repo::get_character(db.connection(), &character_id)?
+            .ok_or_else(|| AppError::NotFound(format!("Character not found: {}", character_id)))?;
+        character.tts_config.ok_or_else(|| AppError::Validation("Character has no TTS config".to_string()))?
+    };
+
+    // LLMにspeech抽出を依頼
+    let llm_config = state.config_manager
+        .get_model_settings(&ModelPurpose::Chat)
+        .map(|s| LLMClientConfig {
+            base_url: s.base_url,
+            model: s.model,
+            api_key: s.api_key,
+            temperature: s.temperature,
+        })
+        .unwrap_or(LLMClientConfig {
+            base_url: String::new(),
+            model: String::new(),
+            api_key: None,
+            temperature: 0.7,
+        });
+
+    let messages = vec![
+        ChatMessage {
+            role: MessageRole::System,
+            content: "以下のテキストから、声に出して話すセリフと心の声だけを抽出してください。動作描写、効果音、擬音語、ナレーション、状況説明は除外してください。抽出したテキストのみを返してください。説明や装飾は不要です。".to_string(),
+            tool_call_id: None,
+        },
+        ChatMessage {
+            role: MessageRole::User,
+            content: text.clone(),
+            tool_call_id: None,
+        },
+    ];
+
+    let _llm_guard = state.llm_lock.lock().await;
+    let response = state.llm_client.chat(&messages, &llm_config, None).await?;
+    drop(_llm_guard);
+
+    let speech_text = match response {
+        LLMResponse::Text(t) => t.trim().to_string(),
+        _ => text.clone(), // フォールバック: 全文使用
+    };
+
+    if speech_text.is_empty() {
+        return Err(AppError::Tts("No speech text extracted".to_string()));
+    }
+
+    // TTS音声生成（イベント発行なし — フロントエンドが戻り値で直接再生）
+    let app_tts_config = state.config_manager.get_config().tts.clone();
+    let voicepeak_path = app_tts_config.voicepeak_path.as_deref();
+
+    use crate::tts::text_splitter::{split_text, SplitConfig};
+    use crate::tts::wav_concat::concatenate_wav;
+
+    let split_config = SplitConfig { max_chunk_size: app_tts_config.max_chunk_size };
+    let chunks = split_text(&speech_text, &split_config);
+
+    if chunks.is_empty() {
+        return Err(AppError::Tts("No text to synthesize".to_string()));
+    }
+
+    let mut audio_chunks: Vec<Vec<u8>> = Vec::new();
+    for chunk in &chunks {
+        let audio = state.tts_connector.synthesize(chunk, &tts_config, voicepeak_path).await?;
+        audio_chunks.push(audio);
+    }
+
+    let audio_data = concatenate_wav(&audio_chunks)?;
+    let audio_base64 = base64::engine::general_purpose::STANDARD.encode(&audio_data);
+
+    Ok(audio_base64)
+}

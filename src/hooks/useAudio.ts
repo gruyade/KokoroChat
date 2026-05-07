@@ -9,8 +9,10 @@ const VOLUME_STORAGE_KEY = 'tts-volume';
 interface AudioState {
   isPlaying: boolean;
   volume: number;
+  playAudioFn: ((base64: string) => void) | null;
   setPlaying: (playing: boolean) => void;
   setVolume: (volume: number) => void;
+  setPlayFn: (fn: ((base64: string) => void) | null) => void;
 }
 
 export const useAudioStore = create<AudioState>((set) => ({
@@ -23,12 +25,14 @@ export const useAudioStore = create<AudioState>((set) => ({
       return 1.0;
     }
   })(),
+  playAudioFn: null,
   setPlaying: (playing) => set({ isPlaying: playing }),
   setVolume: (volume) => {
     const clamped = Math.max(0, Math.min(1, volume));
     set({ volume: clamped });
     localStorage.setItem(VOLUME_STORAGE_KEY, clamped.toString());
   },
+  setPlayFn: (fn) => set({ playAudioFn: fn }),
 }));
 
 /**
@@ -54,6 +58,11 @@ export function useAudio() {
   }, []);
 
   useEffect(() => {
+    // playAudio関数をストアに登録（ボタン経由の再生用）
+    useAudioStore.getState().setPlayFn((base64: string) => {
+      playAudio(base64).catch((e) => console.error('[useAudio] play error:', e));
+    });
+
     const setupListener = async () => {
       const unlisten = await listen<TTSCompleteEvent>('tts:complete', (event) => {
         const { audio } = event.payload;
@@ -74,6 +83,7 @@ export function useAudio() {
     return () => {
       cleanup?.();
       stop();
+      useAudioStore.getState().setPlayFn(null);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

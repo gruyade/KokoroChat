@@ -90,13 +90,15 @@ export function useChat() {
 
       const unlistenTTSComplete = await listen<TTSCompleteEvent>('tts:complete', (event) => {
         if (cancelled) return;
-        const { text, audio } = event.payload;
+        const { session_id, text, audio } = event.payload;
         console.log('[TTS] Received tts:complete event, audio length:', audio?.length ?? 0);
-        useChatStore.getState().finishWithAudio(text, audio);
-        // 完了後にDBから履歴を再取得
-        const { currentSessionId, fetchHistory } = useChatStore.getState();
-        if (currentSessionId) {
-          fetchHistory(currentSessionId);
+        // session_idが空の場合はボタン経由の再生（ストア更新不要）
+        if (session_id) {
+          useChatStore.getState().finishWithAudio(text, audio);
+          const { currentSessionId, fetchHistory } = useChatStore.getState();
+          if (currentSessionId) {
+            fetchHistory(currentSessionId);
+          }
         }
       });
       if (cancelled) { unlistenTTSComplete(); return; }

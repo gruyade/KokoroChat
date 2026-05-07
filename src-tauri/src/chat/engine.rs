@@ -129,6 +129,53 @@ impl DefaultChatEngine {
             })
     }
 
+    /// TTS用LLM応答をパース: {"display": "...", "speech": "..."}
+    /// パース失敗時はフォールバックとして全文を両方に使用
+    fn parse_tts_response(response: &str) -> (String, String) {
+        // JSONブロック抽出（```json...```対応）
+        let json_str = if let Some(start) = response.find("```json") {
+            let after = &response[start + 7..];
+            if let Some(end) = after.find("```") {
+                after[..end].trim()
+            } else {
+                response.trim()
+            }
+        } else if let Some(start) = response.find("```") {
+            let after = &response[start + 3..];
+            if let Some(end) = after.find("```") {
+                after[..end].trim()
+            } else {
+                response.trim()
+            }
+        } else if let Some(start) = response.find('{') {
+            if let Some(end) = response.rfind('}') {
+                &response[start..=end]
+            } else {
+                response.trim()
+            }
+        } else {
+            response.trim()
+        };
+
+        #[derive(serde::Deserialize)]
+        struct TtsResponse {
+            display: Option<String>,
+            speech: Option<String>,
+        }
+
+        match serde_json::from_str::<TtsResponse>(json_str) {
+            Ok(parsed) => {
+                let display = parsed.display.unwrap_or_else(|| response.to_string());
+                let speech = parsed.speech.unwrap_or_else(|| display.clone());
+                (display, speech)
+            }
+            Err(e) => {
+                println!("[TTS] JSON parse failed ({}), using full text as fallback", e);
+                (response.to_string(), response.to_string())
+            }
+        }
+    }
+
     /// コンテキストメッセージ配列を組み立て
     /// [system_prompt, ...thought_context, ...memory_context, ...chat_history, user_message]
     pub(crate) fn build_context(
@@ -338,17 +385,24 @@ impl ChatEngine for DefaultChatEngine {
         };
 
         // 2. コンテキスト組み立て
+        // TTS有効判定: グローバル設定 AND キャラクター個別TTS設定あり
+        let tts_enabled = self.config_manager.get_config().tts.enabled && tts_config.is_some();
+
+        // TTS有効時はSystem Promptに出力フォーマットルールを付加
+        let effective_system_prompt = if tts_enabled {
+            format!("{}\n\n## 出力フォーマットルール（必ず守ること）\n応答は必ず以下のJSON形式で返してください。JSON以外のテキストは含めないでください。\n```\n{{\"display\": \"表示用テキスト（地の文・動作描写・効果音を含む全文）\", \"speech\": \"声に出して話すセリフと心の声のみ（動作描写・効果音・擬音・ナレーションは含めない）\"}}\n```\n重要: speechには実際に口から発する言葉と心の中で思っていることだけを入れてください。\n- 含める: セリフ、呼びかけ、返事、質問、心の声、独り言\n- 含めない: *動作描写*, 効果音, 擬音語, ナレーション, 状況説明\n例:\n```\n{{\"display\": \"*嬉しそうに手を振りながら* おはよう！今日も一緒に遊ぼうね！ *ぴょんぴょん跳ねる*\", \"speech\": \"おはよう！今日も一緒に遊ぼうね！\"}}\n```", system_prompt)
+        } else {
+            system_prompt.clone()
+        };
+
         let llm_messages = self.build_context(
-            &system_prompt,
+            &effective_system_prompt,
             &memories,
             &thoughts,
             &history,
             content,
             attachment_text.as_deref(),
         );
-
-        // TTS有効判定: グローバル設定 AND キャラクター個別TTS設定あり
-        let tts_enabled = self.config_manager.get_config().tts.enabled && tts_config.is_some();
 
         let session_id_owned = session_id.to_string();
 
@@ -371,9 +425,12 @@ impl ChatEngine for DefaultChatEngine {
                 .await?;
             drop(_llm_guard);
 
+            // LLM応答をJSONパース: {"display": "...", "speech": "..."}
+            let (display_text, speech_text) = Self::parse_tts_response(&response);
+            println!("[TTS] Parsed - display: {} chars, speech: {} chars", display_text.len(), speech_text.len());
+
             // tts:generating イベント発行
             println!("[TTS] LLM response complete, starting TTS generation...");
-            println!("[TTS] Response length: {} chars", response.len());
             app_handle.emit(
                 "tts:generating",
                 TTSGeneratingEvent {
@@ -381,7 +438,7 @@ impl ChatEngine for DefaultChatEngine {
                 },
             ).map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
 
-            // TTS Flow Controller で音声生成
+            // TTS Flow Controller で音声生成（speechテキストを使用）
             let char_tts_config = tts_config.as_ref().unwrap();
             let app_tts_config = self.config_manager.get_config().tts.clone();
             let voicepeak_path = app_tts_config.voicepeak_path.as_deref();
@@ -391,12 +448,11 @@ impl ChatEngine for DefaultChatEngine {
 
             if let Some(ref flow_controller) = self.tts_flow_controller {
                 match flow_controller
-                    .process(&response, char_tts_config, voicepeak_path, timeout_seconds)
+                    .process(&speech_text, char_tts_config, voicepeak_path, timeout_seconds)
                     .await
                 {
                     Ok(tts_result) => {
                         println!("[TTS] Success! Audio size: {} bytes", tts_result.audio_data.len());
-                        // tts:complete イベント（テキスト + base64音声）
                         let audio_base64 = base64::engine::general_purpose::STANDARD
                             .encode(&tts_result.audio_data);
                         println!("[TTS] Emitting tts:complete, base64 length: {}", audio_base64.len());
@@ -404,7 +460,7 @@ impl ChatEngine for DefaultChatEngine {
                             "tts:complete",
                             TTSCompleteEvent {
                                 session_id: session_id_owned.clone(),
-                                text: response.clone(),
+                                text: display_text.clone(),
                                 audio: audio_base64,
                             },
                         ).map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
@@ -412,12 +468,11 @@ impl ChatEngine for DefaultChatEngine {
                     }
                     Err(e) => {
                         println!("[TTS] Error: {}", e);
-                        // tts:error イベント（テキスト + エラーメッセージ）
                         app_handle.emit(
                             "tts:error",
                             TTSErrorEvent {
                                 session_id: session_id_owned.clone(),
-                                text: response.clone(),
+                                text: display_text.clone(),
                                 error: e.to_string(),
                             },
                         ).map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
@@ -425,18 +480,18 @@ impl ChatEngine for DefaultChatEngine {
                 }
             } else {
                 println!("[TTS] Error: Flow Controller not initialized");
-                // TTS Flow Controller未初期化: エラーイベント発行
                 app_handle.emit(
                     "tts:error",
                     TTSErrorEvent {
                         session_id: session_id_owned.clone(),
-                        text: response.clone(),
+                        text: display_text.clone(),
                         error: "TTS Flow Controller is not initialized".to_string(),
                     },
                 ).map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
             }
 
-            response
+            // DB保存用はdisplayテキスト
+            display_text
         } else {
             // === TTS無効パス: 既存のストリーミングフロー（変更なし） ===
             let app_handle_clone = app_handle.clone();
