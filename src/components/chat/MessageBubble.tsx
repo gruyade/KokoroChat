@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import { Bot, User, Sparkles, Wrench, Copy, RefreshCw, Trash2, Info, Pencil, Volume2 } from 'lucide-react';
-import { invoke, convertFileSrc } from '@tauri-apps/api/core';
+import { invoke } from '@tauri-apps/api/core';
 import type { ChatMessageRecord } from '../../types';
 import { ToolCallIndicator } from './ToolCallIndicator';
 import { EditableMessage } from './EditableMessage';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { useChatStore, useCharacterStore, useConfigStore } from '../../stores';
 import { useAudioStore } from '../../hooks/useAudio';
+import { AvatarImage } from '../common/AvatarImage';
 
 interface MessageBubbleProps {
   message: ChatMessageRecord;
@@ -175,8 +176,8 @@ export function MessageBubble({ message, onRegenerate, onDelete }: MessageBubble
         {config.showIcon && (
           <div className="shrink-0 mt-1 p-1 rounded-full bg-muted">
             {selectedCharacter?.avatar_path ? (
-              <img
-                src={convertFileSrc(selectedCharacter.avatar_path)}
+              <AvatarImage
+                avatarPath={selectedCharacter.avatar_path}
                 alt={selectedCharacter.name}
                 className="h-5 w-5 rounded-full object-cover"
               />

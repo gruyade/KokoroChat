@@ -392,6 +392,19 @@ pub async fn save_avatar(
     Ok(file_path.to_string_lossy().to_string())
 }
 
+/// アバター画像をBase64で読み込み
+#[tauri::command]
+pub async fn read_avatar(
+    avatar_path: String,
+) -> Result<String, AppError> {
+    use base64::Engine;
+
+    let data = std::fs::read(&avatar_path)
+        .map_err(|e| AppError::Io(format!("Failed to read avatar file: {}", e)))?;
+
+    Ok(base64::engine::general_purpose::STANDARD.encode(&data))
+}
+
 /// キャラクターデータのインポート
 ///
 /// エクスポートされたJSONデータからキャラクターを新規作成する。

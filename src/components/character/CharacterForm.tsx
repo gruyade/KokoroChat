@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Save, X, Wand2, Sparkles, Loader2, Camera } from 'lucide-react';
-import { invoke, convertFileSrc } from '@tauri-apps/api/core';
+import { invoke } from '@tauri-apps/api/core';
 import type { Character, TTSConfig, TTSProvider, EmotionParams, IrodoriMode } from '../../types';
 import { AvatarCropDialog } from './AvatarCropDialog';
+import { AvatarImage } from '../common/AvatarImage';
 
 /** TTS設定セクションのローカルステート */
 interface TTSFormState {
@@ -265,8 +266,8 @@ export function CharacterForm({ character, onSave, onCancel, loading }: Characte
           />
           <div className="w-16 h-16 rounded-full bg-muted border border-border flex items-center justify-center overflow-hidden group-hover:ring-2 group-hover:ring-primary transition-all">
             {avatarPath ? (
-              <img
-                src={convertFileSrc(avatarPath)}
+              <AvatarImage
+                avatarPath={avatarPath}
                 alt="アバター"
                 className="w-full h-full object-cover"
               />

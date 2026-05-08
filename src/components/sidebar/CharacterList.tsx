@@ -1,6 +1,6 @@
 import { Plus, User } from 'lucide-react';
-import { convertFileSrc } from '@tauri-apps/api/core';
 import { useCharacterStore } from '../../stores';
+import { AvatarImage } from '../common/AvatarImage';
 
 export function CharacterList() {
   const { characters, selectedCharacterId, selectCharacter } = useCharacterStore();
@@ -26,8 +26,8 @@ export function CharacterList() {
             }`}
           >
             {character.avatar_path ? (
-              <img
-                src={convertFileSrc(character.avatar_path)}
+              <AvatarImage
+                avatarPath={character.avatar_path}
                 alt={character.name}
                 className="h-5 w-5 rounded-full object-cover shrink-0"
               />
