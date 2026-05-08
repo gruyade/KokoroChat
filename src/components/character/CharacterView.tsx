@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
-import { Plus, Users } from 'lucide-react';
+import { Plus, Users, Upload } from 'lucide-react';
 import { useCharacterStore, useUIStore } from '../../stores';
 import { CharacterCard } from './CharacterCard';
 import { CharacterForm } from './CharacterForm';
+import { ImportDialog } from './ImportDialog';
 import type { Character } from '../../types';
 
 export function CharacterView() {
@@ -18,6 +19,7 @@ export function CharacterView() {
 
   const [showForm, setShowForm] = useState(false);
   const [editingCharacter, setEditingCharacter] = useState<Character | null>(null);
+  const [showImportDialog, setShowImportDialog] = useState(false);
 
   useEffect(() => {
     fetchCharacters();
@@ -73,62 +75,81 @@ export function CharacterView() {
           <Users className="w-5 h-5" />
           <h1 className="text-xl font-semibold">キャラクター管理</h1>
         </div>
-        <button
-          onClick={handleCreate}
-          className="px-3 py-2 text-sm rounded-md bg-primary text-primary-foreground hover:bg-primary/90 flex items-center gap-2 transition-colors"
-        >
-          <Plus className="w-4 h-4" />
-          新規作成
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowImportDialog(true)}
+            className="px-3 py-2 text-sm rounded-md border border-border hover:bg-muted flex items-center gap-2 transition-colors"
+          >
+            <Upload className="w-4 h-4" />
+            インポート
+          </button>
+          <button
+            onClick={handleCreate}
+            className="px-3 py-2 text-sm rounded-md bg-primary text-primary-foreground hover:bg-primary/90 flex items-center gap-2 transition-colors"
+          >
+            <Plus className="w-4 h-4" />
+            新規作成
+          </button>
+        </div>
       </div>
 
-      {/* Error */}
-      {error && (
-        <div className="mb-4 p-3 rounded-md bg-destructive/10 text-destructive text-sm">
-          {error}
-        </div>
-      )}
-
-      {/* Form */}
-      {showForm && (
-        <div className="mb-6 p-4 rounded-lg border border-border bg-card overflow-y-auto max-h-[70vh]">
-          <CharacterForm
-            character={editingCharacter}
-            onSave={handleSave}
-            onCancel={() => {
-              setShowForm(false);
-              setEditingCharacter(null);
-            }}
-            loading={loading}
-          />
-        </div>
-      )}
-
-      {/* Character List */}
+      {/* Content area - scrollable */}
       <div className="flex-1 overflow-y-auto">
-        {loading && characters.length === 0 ? (
-          <div className="flex items-center justify-center h-32 text-muted-foreground text-sm">
-            読み込み中...
-          </div>
-        ) : characters.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-32 text-muted-foreground gap-2">
-            <Users className="w-8 h-8" />
-            <p className="text-sm">キャラクターがまだ作成されていない</p>
-          </div>
-        ) : (
-          <div className="grid gap-3 grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
-            {characters.map((character) => (
-              <CharacterCard
-                key={character.id}
-                character={character}
-                onSelect={() => handleEdit(character)}
-                onEdit={() => handleEdit(character)}
-                onDelete={() => handleDelete(character.id)}
-              />
-            ))}
+        {/* Error */}
+        {error && (
+          <div className="mb-4 p-3 rounded-md bg-destructive/10 text-destructive text-sm">
+            {error}
           </div>
         )}
+
+        {/* Form */}
+        {showForm && (
+          <div className="mb-6 p-4 rounded-lg border border-border bg-card">
+            <CharacterForm
+              character={editingCharacter}
+              onSave={handleSave}
+              onCancel={() => {
+                setShowForm(false);
+                setEditingCharacter(null);
+              }}
+              loading={loading}
+            />
+          </div>
+        )}
+
+        {/* Character List */}
+        <div className="flex-1">
+          {loading && characters.length === 0 ? (
+            <div className="flex items-center justify-center h-32 text-muted-foreground text-sm">
+              読み込み中...
+            </div>
+          ) : characters.length === 0 ? (
+            <div className="flex flex-col items-center justify-center h-32 text-muted-foreground gap-2">
+              <Users className="w-8 h-8" />
+              <p className="text-sm">キャラクターがまだ作成されていない</p>
+            </div>
+          ) : (
+            <div className="grid gap-3 grid-cols-1 md:grid-cols-2 lg:grid-cols-3">
+              {characters.map((character) => (
+                <CharacterCard
+                  key={character.id}
+                  character={character}
+                  onSelect={() => handleEdit(character)}
+                  onEdit={() => handleEdit(character)}
+                  onDelete={() => handleDelete(character.id)}
+                />
+              ))}
+            </div>
+          )}
+        </div>
       </div>
+
+      {/* Import Dialog */}
+      <ImportDialog
+        isOpen={showImportDialog}
+        onClose={() => setShowImportDialog(false)}
+        onImported={() => fetchCharacters()}
+      />
     </div>
   );
 }

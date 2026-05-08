@@ -7,6 +7,17 @@ use crate::llm::client::LLMClientConfig;
 use crate::models::config::{AppConfig, ModelSettings};
 use crate::state::AppState;
 
+/// OpenAI互換 /models エンドポイントのレスポンス構造
+#[derive(serde::Deserialize)]
+struct ModelsResponse {
+    data: Vec<ModelEntry>,
+}
+
+#[derive(serde::Deserialize)]
+struct ModelEntry {
+    id: String,
+}
+
 /// 現在のアプリケーション設定を取得
 #[tauri::command]
 pub async fn get_config(state: State<'_, AppState>) -> Result<AppConfig, AppError> {
@@ -36,4 +47,53 @@ pub async fn test_llm_connection(
     };
 
     state.llm_client.test_connection(&config).await
+}
+
+/// 利用可能なモデル一覧を取得
+///
+/// OpenAI互換APIの /models エンドポイントにGETリクエストを送信し、
+/// レスポンスの data[].id を Vec<String> として返却する。
+#[tauri::command]
+pub async fn fetch_available_models(
+    base_url: String,
+    api_key: Option<String>,
+) -> Result<Vec<String>, AppError> {
+    let url = format!("{}/models", base_url.trim_end_matches('/'));
+
+    let client = reqwest::Client::new();
+    let mut request = client.get(&url);
+
+    if let Some(key) = &api_key {
+        if !key.is_empty() {
+            request = request.header("Authorization", format!("Bearer {}", key));
+        }
+    }
+
+    let response = request.send().await.map_err(|e| {
+        AppError::Network(format!("モデル一覧の取得に失敗: {}", e))
+    })?;
+
+    let status = response.status();
+    if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
+        return Err(AppError::LlmApi("API Keyが無効".to_string()));
+    }
+
+    if !status.is_success() {
+        return Err(AppError::LlmApi(format!(
+            "モデル一覧の取得に失敗 (HTTP {})",
+            status.as_u16()
+        )));
+    }
+
+    let body = response.text().await.map_err(|e| {
+        AppError::Network(format!("レスポンスの読み取りに失敗: {}", e))
+    })?;
+
+    let models_response: ModelsResponse = serde_json::from_str(&body).map_err(|e| {
+        AppError::Serialization(format!("モデル一覧のJSON解析に失敗: {}", e))
+    })?;
+
+    let model_ids: Vec<String> = models_response.data.into_iter().map(|m| m.id).collect();
+
+    Ok(model_ids)
 }

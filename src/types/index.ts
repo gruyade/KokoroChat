@@ -15,6 +15,7 @@ export type {
   ModelPurpose,
   Theme,
   SendKey,
+  LLMProvider,
   ModelSettings,
   SpontaneousConfig,
   ThoughtConfig,

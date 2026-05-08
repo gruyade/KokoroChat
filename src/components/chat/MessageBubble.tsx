@@ -120,13 +120,66 @@ export function MessageBubble({ message, onRegenerate, onDelete }: MessageBubble
     setEditingMessage(null);
   };
 
-  // システムメッセージの特別表示
+  // システムメッセージ: ユーザーメッセージと同じ右寄せバブルスタイルで表示
   if (isSystemMessage) {
     return (
-      <div className="flex justify-center px-4 py-1">
-        <div className="flex items-center gap-2 max-w-[80%] rounded-md bg-muted/50 border border-border/50 px-3 py-1.5 text-xs text-muted-foreground">
-          <Info className="h-3 w-3 shrink-0" />
-          <span className="whitespace-pre-wrap">{displayContent}</span>
+      <div
+        className="group relative flex justify-end px-4 py-1 will-change-transform"
+        onMouseEnter={() => setShowMenu(true)}
+        onMouseLeave={() => requestAnimationFrame(() => setShowMenu(false))}
+      >
+        <div className="flex items-start gap-2 max-w-[70%] flex-row-reverse">
+          <div className="flex flex-col gap-1">
+            <span className="text-xs text-muted-foreground flex items-center gap-1 justify-end">
+              <Info className="h-3 w-3" />
+              SYSTEM
+            </span>
+            {isEditing ? (
+              <EditableMessage
+                originalContent={message.content}
+                onConfirm={handleEditConfirm}
+                onCancel={handleEditCancel}
+              />
+            ) : (
+              <>
+                <div className="rounded-lg px-3 py-2 text-sm bg-primary text-primary-foreground">
+                  <MarkdownRenderer
+                    content={displayContent}
+                    className="prose prose-sm max-w-none prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-ol:my-1 prose-pre:my-2 prose-code:text-xs prose-p:text-primary-foreground prose-headings:text-primary-foreground prose-strong:text-primary-foreground prose-code:text-primary-foreground prose-li:text-primary-foreground text-primary-foreground"
+                  />
+                </div>
+
+                {/* Action buttons — ホバーで編集・削除を表示 */}
+                <div className="flex items-center gap-0.5 h-6 overflow-visible justify-end">
+                  <div className={`flex items-center gap-0.5 transition-opacity pointer-events-auto ${showMenu ? 'opacity-100' : 'opacity-0 invisible'}`}>
+                    <button
+                      onClick={handleCopy}
+                      className="p-1 rounded text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                      title={copied ? 'コピー済み' : 'コピー'}
+                    >
+                      <Copy className="h-3.5 w-3.5" />
+                    </button>
+                    <button
+                      onClick={handleEdit}
+                      className="p-1 rounded text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                      title="編集"
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                    </button>
+                    {onDelete && (
+                      <button
+                        onClick={handleDelete}
+                        className="p-1 rounded text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
+                        title="削除"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
         </div>
       </div>
     );
@@ -136,7 +189,7 @@ export function MessageBubble({ message, onRegenerate, onDelete }: MessageBubble
     <div
       className={`group relative flex ${config.align} px-4 py-1 will-change-transform`}
       onMouseEnter={() => setShowMenu(true)}
-      onMouseLeave={() => setShowMenu(false)}
+      onMouseLeave={() => requestAnimationFrame(() => setShowMenu(false))}
     >
       <div
         className={`flex items-start gap-2 max-w-[70%] ${message.role === 'user' ? 'flex-row-reverse' : ''}`}
@@ -174,7 +227,7 @@ export function MessageBubble({ message, onRegenerate, onDelete }: MessageBubble
 
               {/* Action buttons — 常にスペース確保、ホバーで表示 */}
               <div className={`flex items-center gap-0.5 h-6 overflow-visible ${message.role === 'user' ? 'justify-end' : ''}`}>
-                <div className={`flex items-center gap-0.5 transition-opacity pointer-events-auto ${showMenu ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
+                <div className={`flex items-center gap-0.5 transition-opacity pointer-events-auto ${showMenu ? 'opacity-100' : 'opacity-0 invisible'}`}>
                   <button
                     onClick={handleCopy}
                     className="p-1 rounded text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"

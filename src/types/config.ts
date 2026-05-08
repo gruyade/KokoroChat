@@ -4,8 +4,12 @@ export type ModelPurpose = 'chat' | 'memory' | 'thought' | 'character_generation
 /** テーマ */
 export type Theme = 'light' | 'dark';
 
+/** LLMプロバイダー種別 */
+export type LLMProvider = 'openai' | 'anthropic' | 'google' | 'openai_compatible';
+
 /** LLMモデル接続設定 */
 export interface ModelSettings {
+  provider?: LLMProvider;
   base_url: string;
   model: string;
   api_key?: string;

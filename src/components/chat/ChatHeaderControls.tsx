@@ -1,8 +1,11 @@
 import { useState, useCallback } from 'react';
-import { Brain, MessageSquare, Volume2, VolumeX } from 'lucide-react';
+import { Brain, MessageSquare, Volume2, VolumeX, Sparkles, Loader2 } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { create } from 'zustand';
 import { useAudioStore } from '../../hooks/useAudio';
+import { useChatStore } from '../../stores/chat.store';
+import { useConfigStore } from '../../stores/config.store';
+import { useUIStore } from '../../stores/ui.store';
 
 // 一時停止状態をZustandストアで管理（画面切り替えでもリセットされない）
 interface PauseState {
@@ -22,7 +25,27 @@ export const usePauseStore = create<PauseState>((set) => ({
 export function ChatHeaderControls() {
   const { thoughtPaused, spontaneousPaused, setThoughtPaused, setSpontaneousPaused } = usePauseStore();
   const { volume, setVolume } = useAudioStore();
+  const { config } = useConfigStore();
+  const currentSessionId = useChatStore((s) => s.currentSessionId);
   const [error, setError] = useState<string | null>(null);
+  const [memoryGenerating, setMemoryGenerating] = useState(false);
+
+  const thoughtEnabled = config?.thought?.enabled ?? false;
+  const spontaneousEnabled = config?.spontaneous?.enabled ?? false;
+
+  const handleGenerateMemory = useCallback(async () => {
+    const sessionId = useChatStore.getState().currentSessionId;
+    if (!sessionId || memoryGenerating) return;
+    setMemoryGenerating(true);
+    try {
+      await invoke('generate_memory_manual', { sessionId });
+      useUIStore.getState().showToast('記憶を生成した');
+    } catch (e) {
+      useUIStore.getState().showToast(`記憶生成に失敗: ${e}`, 'error');
+    } finally {
+      setMemoryGenerating(false);
+    }
+  }, [memoryGenerating]);
 
   const toggleThought = useCallback(async () => {
     const newState = !thoughtPaused;
@@ -81,31 +104,53 @@ export function ChatHeaderControls() {
         />
       </div>
 
-      {/* 思考生成トグル */}
+      {/* メモリ生成ボタン */}
       <button
-        onClick={toggleThought}
-        title={thoughtPaused ? '思考生成を再開' : '思考生成を一時停止'}
+        onClick={handleGenerateMemory}
+        disabled={!currentSessionId || memoryGenerating}
+        title="記憶を手動生成"
         className={`p-1.5 rounded-md transition-colors ${
-          thoughtPaused
-            ? 'text-muted-foreground bg-muted/50 opacity-50'
+          !currentSessionId || memoryGenerating
+            ? 'text-muted-foreground opacity-50 cursor-not-allowed'
             : 'text-foreground hover:bg-muted/50'
         }`}
       >
-        <Brain className="h-4 w-4" />
+        {memoryGenerating ? (
+          <Loader2 className="h-4 w-4 animate-spin" />
+        ) : (
+          <Sparkles className="h-4 w-4" />
+        )}
       </button>
 
+      {/* 思考生成トグル */}
+      {thoughtEnabled && (
+        <button
+          onClick={toggleThought}
+          title={thoughtPaused ? '思考生成を再開' : '思考生成を一時停止'}
+          className={`p-1.5 rounded-md transition-colors ${
+            thoughtPaused
+              ? 'text-muted-foreground bg-muted/50 opacity-50'
+              : 'text-foreground hover:bg-muted/50'
+          }`}
+        >
+          <Brain className="h-4 w-4" />
+        </button>
+      )}
+
       {/* 自発的発話トグル */}
-      <button
-        onClick={toggleSpontaneous}
-        title={spontaneousPaused ? '自発的発話を再開' : '自発的発話を一時停止'}
-        className={`p-1.5 rounded-md transition-colors ${
-          spontaneousPaused
-            ? 'text-muted-foreground bg-muted/50 opacity-50'
-            : 'text-foreground hover:bg-muted/50'
-        }`}
-      >
-        <MessageSquare className="h-4 w-4" />
-      </button>
+      {spontaneousEnabled && (
+        <button
+          onClick={toggleSpontaneous}
+          title={spontaneousPaused ? '自発的発話を再開' : '自発的発話を一時停止'}
+          className={`p-1.5 rounded-md transition-colors ${
+            spontaneousPaused
+              ? 'text-muted-foreground bg-muted/50 opacity-50'
+              : 'text-foreground hover:bg-muted/50'
+          }`}
+        >
+          <MessageSquare className="h-4 w-4" />
+        </button>
+      )}
 
       {/* エラー表示 */}
       {error && (

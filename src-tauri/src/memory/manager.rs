@@ -17,6 +17,9 @@ pub trait MemoryManager: Send + Sync {
     /// メッセージ数が閾値に達した場合、会話を圧縮して記憶として保存
     async fn check_and_compress(&self, session_id: &str) -> Result<(), AppError>;
 
+    /// 閾値チェックをスキップして強制的に会話を圧縮して記憶として保存
+    async fn force_compress(&self, session_id: &str) -> Result<(), AppError>;
+
     /// キャラクターに関連する記憶を取得（現時点では全件返却）
     async fn get_relevant_memories(
         &self,
@@ -108,11 +111,9 @@ impl DefaultMemoryManager {
             .collect::<Vec<_>>()
             .join("\n")
     }
-}
 
-#[async_trait]
-impl MemoryManager for DefaultMemoryManager {
-    async fn check_and_compress(&self, session_id: &str) -> Result<(), AppError> {
+    /// 圧縮の内部実装（skip_threshold=trueで閾値チェックをスキップ）
+    async fn compress_internal(&self, session_id: &str, skip_threshold: bool) -> Result<(), AppError> {
         // 1. セッションのメッセージを取得し、前回圧縮時点以降のみ抽出
         let (messages_to_compress, character_id) = {
             let db = self.db.lock().map_err(|e| {
@@ -149,8 +150,13 @@ impl MemoryManager for DefaultMemoryManager {
             (messages_to_compress, session.character_id)
         };
 
-        // 2. 新規メッセージ数が閾値未満なら何もしない
-        if (messages_to_compress.len() as u32) < self.compression_threshold {
+        // 2. 閾値チェック（skip_threshold=falseの場合のみ）
+        if !skip_threshold && (messages_to_compress.len() as u32) < self.compression_threshold {
+            return Ok(());
+        }
+
+        // 圧縮対象メッセージが0件の場合は何もしない
+        if messages_to_compress.is_empty() {
             return Ok(());
         }
 
@@ -171,7 +177,7 @@ impl MemoryManager for DefaultMemoryManager {
             },
         ];
 
-        // 4. LLMに要約を依頼（ロック取得で他のLLMリクエストと直列化）
+        // LLMロック取得で他のLLMリクエストと直列化
         let _llm_guard = self.llm_lock.lock().await;
 
         let response = self
@@ -210,6 +216,17 @@ impl MemoryManager for DefaultMemoryManager {
         memory_repo::insert_memory(conn, &memory)?;
 
         Ok(())
+    }
+}
+
+#[async_trait]
+impl MemoryManager for DefaultMemoryManager {
+    async fn check_and_compress(&self, session_id: &str) -> Result<(), AppError> {
+        self.compress_internal(session_id, false).await
+    }
+
+    async fn force_compress(&self, session_id: &str) -> Result<(), AppError> {
+        self.compress_internal(session_id, true).await
     }
 
     async fn get_relevant_memories(

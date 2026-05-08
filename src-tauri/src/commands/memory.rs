@@ -35,3 +35,12 @@ pub async fn delete_memory(
 ) -> Result<(), AppError> {
     state.memory_manager.delete_memory(&id).await
 }
+
+/// 手動メモリ生成（閾値チェックをスキップして強制実行）
+#[tauri::command]
+pub async fn generate_memory_manual(
+    session_id: String,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    state.memory_manager.force_compress(&session_id).await
+}

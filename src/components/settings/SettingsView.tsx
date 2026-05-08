@@ -6,9 +6,9 @@ import type { AppConfig, ModelPurpose, ModelSettings, SendKey } from '../../type
 
 type SettingsTab = 'models' | 'tts' | 'spontaneous' | 'thought' | 'general';
 
-const TABS: { id: SettingsTab; label: string }[] = [
+const TABS: { id: SettingsTab; label: string; badge?: string }[] = [
   { id: 'models', label: 'モデル設定' },
-  { id: 'tts', label: 'TTS' },
+  { id: 'tts', label: 'TTS', badge: 'WIP' },
   { id: 'spontaneous', label: '自発的発話' },
   { id: 'thought', label: '思考' },
   { id: 'general', label: '一般' },
@@ -103,13 +103,18 @@ export function SettingsView() {
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
-            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors flex items-center ${
               activeTab === tab.id
                 ? 'border-primary text-primary'
                 : 'border-transparent text-muted-foreground hover:text-foreground'
             }`}
           >
             {tab.label}
+            {tab.badge && (
+              <span className="ml-1 px-1.5 py-0.5 text-[10px] rounded bg-yellow-500/20 text-yellow-600">
+                {tab.badge}
+              </span>
+            )}
           </button>
         ))}
       </div>
