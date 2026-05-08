@@ -52,7 +52,7 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
     const trimmed = value.trim();
     if (!trimmed && attachments.length === 0) return;
     if (disabled) return;
-    onSend(trimmed || '(添付ファイル)', systemMode, attachments.length > 0 ? attachments : undefined);
+    onSend(trimmed, systemMode, attachments.length > 0 ? attachments : undefined);
     setValue('');
     setAttachments([]);
     if (textareaRef.current) {

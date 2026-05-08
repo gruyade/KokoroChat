@@ -191,8 +191,8 @@ export function MessageBubble({ message, onRegenerate, onDelete }: MessageBubble
             />
           ) : (
             <>
-              {/* 添付ファイルのみの場合はテキストバブルを非表示 */}
-              {!(message.content === '(添付ファイル)' && message.role === 'user' && message.attachments && message.attachments.length > 0) && (
+              {/* テキストが空でない場合のみバブルを表示 */}
+              {message.content.trim() !== '' && (
                 <div className={`rounded-lg px-3 py-2 text-sm ${config.bubble}`}>
                   <MarkdownRenderer
                     content={displayContent}
@@ -204,56 +204,6 @@ export function MessageBubble({ message, onRegenerate, onDelete }: MessageBubble
                   />
                 </div>
               )}
-
-              {/* Action buttons — 常にスペース確保、ホバーで表示 */}
-              <div className={`flex items-center gap-0.5 h-6 overflow-visible ${message.role === 'user' ? 'justify-end' : ''}`}>
-                <div className="flex items-center gap-0.5 transition-all pointer-events-auto opacity-0 invisible group-hover:opacity-100 group-hover:visible">
-                  <button
-                    onClick={handleCopy}
-                    className="p-1 rounded text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
-                    title={copied ? 'コピー済み' : 'コピー'}
-                  >
-                    <Copy className="h-3.5 w-3.5" />
-                  </button>
-                  {message.role === 'user' && !isSystemMessage && (
-                    <button
-                      onClick={handleEdit}
-                      className="p-1 rounded text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
-                      title="編集"
-                    >
-                      <Pencil className="h-3.5 w-3.5" />
-                    </button>
-                  )}
-                  {message.role === 'assistant' && onRegenerate && (
-                    <button
-                      onClick={handleRegenerate}
-                      className="p-1 rounded text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
-                      title="再生成"
-                    >
-                      <RefreshCw className="h-3.5 w-3.5" />
-                    </button>
-                  )}
-                  {message.role === 'assistant' && ttsEnabled && (
-                    <button
-                      onClick={handleGenerateSpeech}
-                      disabled={ttsLoading}
-                      className="p-1 rounded text-muted-foreground hover:bg-muted hover:text-foreground transition-colors disabled:opacity-50"
-                      title="音声生成"
-                    >
-                      <Volume2 className={`h-3.5 w-3.5 ${ttsLoading ? 'animate-pulse' : ''}`} />
-                    </button>
-                  )}
-                  {onDelete && (
-                    <button
-                      onClick={handleDelete}
-                      className="p-1 rounded text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
-                      title="削除"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  )}
-                </div>
-              </div>
             </>
           )}
 
@@ -285,6 +235,58 @@ export function MessageBubble({ message, onRegenerate, onDelete }: MessageBubble
               {message.tool_calls.map((tc) => (
                 <ToolCallIndicator key={tc.id} toolName={tc.name} />
               ))}
+            </div>
+          )}
+
+          {/* Action buttons — 全要素の下に配置、ホバーで表示 */}
+          {!isEditing && (
+            <div className={`flex items-center gap-0.5 h-6 overflow-visible ${message.role === 'user' ? 'justify-end' : ''}`}>
+              <div className="flex items-center gap-0.5 transition-all pointer-events-auto opacity-0 invisible group-hover:opacity-100 group-hover:visible">
+                <button
+                  onClick={handleCopy}
+                  className="p-1 rounded text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                  title={copied ? 'コピー済み' : 'コピー'}
+                >
+                  <Copy className="h-3.5 w-3.5" />
+                </button>
+                {message.role === 'user' && !isSystemMessage && (
+                  <button
+                    onClick={handleEdit}
+                    className="p-1 rounded text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                    title="編集"
+                  >
+                    <Pencil className="h-3.5 w-3.5" />
+                  </button>
+                )}
+                {message.role === 'assistant' && onRegenerate && (
+                  <button
+                    onClick={handleRegenerate}
+                    className="p-1 rounded text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                    title="再生成"
+                  >
+                    <RefreshCw className="h-3.5 w-3.5" />
+                  </button>
+                )}
+                {message.role === 'assistant' && ttsEnabled && (
+                  <button
+                    onClick={handleGenerateSpeech}
+                    disabled={ttsLoading}
+                    className="p-1 rounded text-muted-foreground hover:bg-muted hover:text-foreground transition-colors disabled:opacity-50"
+                    title="音声生成"
+                  >
+                    <Volume2 className={`h-3.5 w-3.5 ${ttsLoading ? 'animate-pulse' : ''}`} />
+                  </button>
+                )}
+                {onDelete && (
+                  <button
+                    onClick={handleDelete}
+                    className="p-1 rounded text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
+                    title="削除"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </div>
             </div>
           )}
         </div>
