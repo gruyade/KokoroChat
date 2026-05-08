@@ -65,18 +65,21 @@ mod bug_condition_tests {
             model: String::new(),
             api_key: None,
             temperature: 0.7,
+            provider: None,
         });
         models.insert(ModelPurpose::Thought, ModelSettings {
             base_url: String::new(),
             model: String::new(),
             api_key: None,
             temperature: 0.7,
+            provider: None,
         });
         models.insert(ModelPurpose::CharacterGeneration, ModelSettings {
             base_url: String::new(),
             model: String::new(),
             api_key: None,
             temperature: 0.7,
+            provider: None,
         });
 
         AppConfig {
@@ -94,7 +97,7 @@ mod bug_condition_tests {
             memory: MemoryConfig {
                 compression_threshold: 50,
             },
-            tts: TTSGlobalConfig { enabled: false, voicepeak_path: None, timeout_seconds: 60, max_chunk_size: 140 },
+            tts: TTSGlobalConfig { enabled: false, voicepeak_path: None, timeout_seconds: 60, max_chunk_size: 140, irodori_base_url: None, irodori_caption_base_url: None, irodori_reference_audio_base_url: None },
             ui: UIConfig {
                 theme: Theme::Dark,
                 language: "ja".to_string(),
@@ -131,6 +134,7 @@ mod bug_condition_tests {
                 model: config_model.clone(),
                 api_key: Some(config_api_key.clone()),
                 temperature: 0.7,
+                provider: None,
             };
 
             let config = make_config_with_chat_settings(settings);
@@ -227,6 +231,7 @@ mod preservation_tests {
             model: String::new(),
             api_key: None,
             temperature: 0.7,
+            provider: None,
         };
 
         let mut models = HashMap::new();
@@ -250,7 +255,7 @@ mod preservation_tests {
             memory: MemoryConfig {
                 compression_threshold: 50,
             },
-            tts: TTSGlobalConfig { enabled: false, voicepeak_path: None, timeout_seconds: 60, max_chunk_size: 140 },
+            tts: TTSGlobalConfig { enabled: false, voicepeak_path: None, timeout_seconds: 60, max_chunk_size: 140, irodori_base_url: None, irodori_caption_base_url: None, irodori_reference_audio_base_url: None },
             ui: UIConfig {
                 theme: Theme::Dark,
                 language: "ja".to_string(),
@@ -482,6 +487,7 @@ mod tests {
                 model,
                 api_key,
                 temperature,
+                provider: None,
             })
     }
 
@@ -572,7 +578,7 @@ mod tests {
                     memory: MemoryConfig {
                         compression_threshold,
                     },
-                    tts: TTSGlobalConfig { enabled: tts_enabled, voicepeak_path: None, timeout_seconds: 60, max_chunk_size: 140 },
+                    tts: TTSGlobalConfig { enabled: tts_enabled, voicepeak_path: None, timeout_seconds: 60, max_chunk_size: 140, irodori_base_url: None, irodori_caption_base_url: None, irodori_reference_audio_base_url: None },
                     ui: UIConfig { theme, language, send_key: SendKey::default() },
                     plugins: PluginsConfig {
                         enabled_plugins,
@@ -814,6 +820,125 @@ mod tests {
             prop_assert_eq!(
                 &loaded.attachment.allowed_extensions,
                 &config.attachment.allowed_extensions
+            );
+        }
+    }
+}
+
+// Feature: app-enhancements-v3, Property 4: ModelSettingsシリアライズ/デシリアライズ ラウンドトリップ
+#[cfg(test)]
+mod model_settings_round_trip_tests {
+    use proptest::prelude::*;
+
+    use crate::models::config::{LLMProvider, ModelSettings};
+
+    // ========================================
+    // Property 4: ModelSettings Serialize/Deserialize Round-Trip
+    // ========================================
+    // **Validates: Requirements 6.2, 6.3, 6.5, 6.6**
+    //
+    // For any valid ModelSettings value (including provider=Some/None),
+    // serializing to JSON and deserializing back SHALL produce an equivalent value.
+    // Additionally, JSON without a "provider" field SHALL deserialize with provider=None
+    // (backward compatibility).
+
+    /// LLMProvider のストラテジー（Some各種 + None）
+    fn arb_provider() -> impl Strategy<Value = Option<LLMProvider>> {
+        prop_oneof![
+            Just(None),
+            Just(Some(LLMProvider::Openai)),
+            Just(Some(LLMProvider::Anthropic)),
+            Just(Some(LLMProvider::Google)),
+            Just(Some(LLMProvider::OpenaiCompatible)),
+        ]
+    }
+
+    /// ModelSettings のストラテジー（providerフィールド含む）
+    fn arb_model_settings_with_provider() -> impl Strategy<Value = ModelSettings> {
+        (
+            arb_provider(),
+            "http://[a-z]{3,10}:[0-9]{4}/v[0-9]",
+            "[a-z]{3,10}-[0-9]{1,3}",
+            proptest::option::of("sk-[a-zA-Z0-9]{10,30}"),
+            0.0f32..2.0,
+        )
+            .prop_map(|(provider, base_url, model, api_key, temperature)| ModelSettings {
+                provider,
+                base_url,
+                model,
+                api_key,
+                temperature,
+            })
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(20))]
+
+        /// ModelSettings の JSON シリアライズ → デシリアライズで等価なオブジェクトが復元される
+        /// provider=Some(各種) および provider=None の全パターンを検証
+        #[test]
+        fn prop_model_settings_json_round_trip(
+            settings in arb_model_settings_with_provider(),
+        ) {
+            // シリアライズ
+            let json = serde_json::to_string(&settings).unwrap();
+
+            // デシリアライズ
+            let deserialized: ModelSettings = serde_json::from_str(&json).unwrap();
+
+            // 等価性確認
+            prop_assert_eq!(&deserialized.provider, &settings.provider,
+                "provider mismatch: original={:?}, deserialized={:?}",
+                settings.provider, deserialized.provider);
+            prop_assert_eq!(&deserialized.base_url, &settings.base_url,
+                "base_url mismatch");
+            prop_assert_eq!(&deserialized.model, &settings.model,
+                "model mismatch");
+            prop_assert_eq!(&deserialized.api_key, &settings.api_key,
+                "api_key mismatch");
+            prop_assert!(
+                (deserialized.temperature - settings.temperature).abs() < f32::EPSILON,
+                "temperature mismatch: {} vs {}",
+                deserialized.temperature, settings.temperature
+            );
+        }
+
+        /// providerフィールドが存在しないJSONからデシリアライズした場合、provider=Noneになる（後方互換性）
+        #[test]
+        fn prop_model_settings_missing_provider_defaults_to_none(
+            base_url in "http://[a-z]{3,10}:[0-9]{4}/v[0-9]",
+            model in "[a-z]{3,10}-[0-9]{1,3}",
+            api_key in proptest::option::of("sk-[a-zA-Z0-9]{10,30}"),
+            temperature in 0.0f32..2.0,
+        ) {
+            // providerフィールドを含まないJSONを手動構築
+            let json = match &api_key {
+                Some(key) => format!(
+                    r#"{{"base_url":"{}","model":"{}","api_key":"{}","temperature":{}}}"#,
+                    base_url, model, key, temperature
+                ),
+                None => format!(
+                    r#"{{"base_url":"{}","model":"{}","api_key":null,"temperature":{}}}"#,
+                    base_url, model, temperature
+                ),
+            };
+
+            // デシリアライズ
+            let deserialized: ModelSettings = serde_json::from_str(&json).unwrap();
+
+            // providerフィールド欠落時はNoneになることを確認
+            prop_assert_eq!(&deserialized.provider, &None,
+                "Missing provider field should deserialize as None, got {:?}",
+                deserialized.provider);
+
+            // 他のフィールドは正しく復元される
+            prop_assert_eq!(&deserialized.base_url, &base_url);
+            prop_assert_eq!(&deserialized.model, &model);
+            prop_assert_eq!(&deserialized.api_key, &api_key);
+            prop_assert!(
+                (deserialized.temperature - temperature).abs() < f32::EPSILON,
+                "temperature mismatch: {} vs {}",
+                deserialized.temperature, temperature
             );
         }
     }

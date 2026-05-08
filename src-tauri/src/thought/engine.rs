@@ -85,12 +85,14 @@ impl DefaultThoughtEngine {
                 model: s.model,
                 api_key: s.api_key,
                 temperature: s.temperature,
+                provider: s.provider,
             })
             .unwrap_or(LLMClientConfig {
                 base_url: String::new(),
                 model: String::new(),
                 api_key: None,
                 temperature: 0.7,
+                provider: None,
             })
     }
 
@@ -107,6 +109,7 @@ impl DefaultThoughtEngine {
             role: MessageRole::System,
             content: system_prompt.to_string(),
             tool_call_id: None,
+            images: None,
         });
 
         // 記憶コンテキスト
@@ -123,6 +126,7 @@ impl DefaultThoughtEngine {
                     memory_text
                 ),
                 tool_call_id: None,
+                images: None,
             });
         }
 
@@ -137,6 +141,7 @@ impl DefaultThoughtEngine {
                 role,
                 content: msg.content.clone(),
                 tool_call_id: None,
+                images: None,
             });
         }
 
@@ -152,6 +157,7 @@ impl DefaultThoughtEngine {
             )
             .to_string(),
             tool_call_id: None,
+            images: None,
         });
 
         messages
@@ -378,8 +384,8 @@ impl ThoughtEngine for DefaultThoughtEngine {
                     let _llm_guard = llm_lock.lock().await;
                     let llm_config = config_manager
                         .get_model_settings(&crate::models::config::ModelPurpose::Thought)
-                        .map(|s| LLMClientConfig { base_url: s.base_url, model: s.model, api_key: s.api_key, temperature: s.temperature })
-                        .unwrap_or(LLMClientConfig { base_url: String::new(), model: String::new(), api_key: None, temperature: 0.7 });
+                        .map(|s| LLMClientConfig { base_url: s.base_url, model: s.model, api_key: s.api_key, temperature: s.temperature, provider: s.provider })
+                        .unwrap_or(LLMClientConfig { base_url: String::new(), model: String::new(), api_key: None, temperature: 0.7, provider: None });
 
                     let response = match llm_client.chat(&prompt_messages, &llm_config, None).await {
                         Ok(resp) => resp,

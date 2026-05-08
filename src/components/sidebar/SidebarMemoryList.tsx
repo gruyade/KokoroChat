@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { Brain, Loader2, Trash2 } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { useCharacterStore } from '../../stores';
 import { useOperationQueue } from '../../hooks/useOperationQueue';
 import type { Memory } from '../../types';
@@ -25,6 +26,24 @@ export function SidebarMemoryList() {
   useEffect(() => {
     if (!selectedCharacterId) return;
     loadMemories();
+
+    let cancelled = false;
+    let unlisten: (() => void) | null = null;
+
+    listen<{ character_id: string; memory_id: string }>('memory:generated', (event) => {
+      if (cancelled) return;
+      if (event.payload.character_id === selectedCharacterId) {
+        loadMemories();
+      }
+    }).then((fn) => {
+      if (cancelled) { fn(); return; }
+      unlisten = fn;
+    });
+
+    return () => {
+      cancelled = true;
+      if (unlisten) unlisten();
+    };
   }, [selectedCharacterId, loadMemories]);
 
   const handleDelete = (e: React.MouseEvent, id: string) => {

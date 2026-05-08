@@ -157,6 +157,7 @@ mod tests {
             model: "test-model".to_string(),
             api_key: None,
             temperature: 0.7,
+            provider: None,
         };
         models.insert(ModelPurpose::Chat, settings.clone());
         models.insert(ModelPurpose::Memory, settings.clone());
@@ -168,7 +169,7 @@ mod tests {
             spontaneous: SpontaneousConfig { enabled: false, min_interval_seconds: 60, probability: 0.3 },
             thought: ThoughtConfig { enabled: false, interval_minutes: 5, auto_delete_threshold_minutes: 1440 },
             memory: MemoryConfig { compression_threshold: 50 },
-            tts: TTSGlobalConfig { enabled: false, voicepeak_path: None, timeout_seconds: 60, max_chunk_size: 140 },
+            tts: TTSGlobalConfig { enabled: false, voicepeak_path: None, timeout_seconds: 60, max_chunk_size: 140, irodori_base_url: None, irodori_caption_base_url: None, irodori_reference_audio_base_url: None },
             ui: UIConfig { theme: Theme::Dark, language: "ja".to_string(), send_key: SendKey::default() },
             plugins: PluginsConfig { enabled_plugins: vec![], plugin_settings: HashMap::new() },
             attachment: AttachmentConfig { max_file_size_bytes: 10 * 1024 * 1024, allowed_extensions: vec![] },
@@ -309,6 +310,7 @@ mod tests {
             &[],
             "こんにちは",
             None,
+            None,
         );
 
         assert_eq!(messages.len(), 2);
@@ -353,6 +355,7 @@ mod tests {
             &[],
             &[],
             "Hello",
+            None,
             None,
         );
 
@@ -403,6 +406,7 @@ mod tests {
             &history,
             "新しいメッセージ",
             None,
+            None,
         );
 
         // system_prompt + 2 history + user_message = 4
@@ -428,6 +432,7 @@ mod tests {
             &[],
             "ファイルを見て",
             Some("--- test.txt ---\nファイル内容"),
+            None,
         );
 
         assert_eq!(messages.len(), 2);
@@ -553,6 +558,7 @@ mod tests {
             &history,
             "新規メッセージ",
             None,
+            None,
         );
 
         // 順序確認: system(0) → memory(1) → history(2) → user(3)
@@ -584,7 +590,7 @@ mod tests {
             created_at: "2024-01-01T10:00:00Z".to_string(),
         }];
 
-        let messages = engine.build_context("Prompt", &[], &[], &history, "Hi", None);
+        let messages = engine.build_context("Prompt", &[], &[], &history, "Hi", None, None);
 
         // Spontaneous → Assistant にマッピング
         assert_eq!(messages[1].role, MessageRole::Assistant);
@@ -655,6 +661,7 @@ mod tests {
             model: "test-model".to_string(),
             api_key: None,
             temperature: 0.7,
+            provider: None,
         };
         models.insert(ModelPurpose::Chat, settings.clone());
         models.insert(ModelPurpose::Memory, settings.clone());
@@ -666,7 +673,7 @@ mod tests {
             spontaneous: SpontaneousConfig { enabled: false, min_interval_seconds: 60, probability: 0.3 },
             thought: ThoughtConfig { enabled: false, interval_minutes: 5, auto_delete_threshold_minutes: 1440 },
             memory: MemoryConfig { compression_threshold: 50 },
-            tts: TTSGlobalConfig { enabled: tts_enabled, voicepeak_path: None, timeout_seconds: 60, max_chunk_size: 140 },
+            tts: TTSGlobalConfig { enabled: tts_enabled, voicepeak_path: None, timeout_seconds: 60, max_chunk_size: 140, irodori_base_url: None, irodori_caption_base_url: None, irodori_reference_audio_base_url: None },
             ui: UIConfig { theme: Theme::Dark, language: "ja".to_string(), send_key: SendKey::default() },
             plugins: PluginsConfig { enabled_plugins: vec![], plugin_settings: HashMap::new() },
             attachment: AttachmentConfig { max_file_size_bytes: 10 * 1024 * 1024, allowed_extensions: vec![] },
@@ -687,6 +694,8 @@ mod tests {
         TTSConfig {
             provider: TTSProvider::Voicepeak,
             base_url: None,
+            caption_base_url: None,
+            reference_audio_base_url: None,
             reference_audio_path: None,
             caption: None,
             narrator: Some("Japanese Female 1".to_string()),

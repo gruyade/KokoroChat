@@ -175,6 +175,45 @@ export function SettingsView() {
                 未指定時はPATHから「voicepeak」を検索
               </p>
             </div>
+            <div>
+              <label htmlFor="irodori-caption-base-url" className="block text-xs text-muted-foreground mb-1">
+                IrodoriTTS キャプションモード ベースURL
+              </label>
+              <input
+                id="irodori-caption-base-url"
+                type="text"
+                value={draft.tts.irodori_caption_base_url ?? ''}
+                onChange={(e) =>
+                  setDraft({
+                    ...draft,
+                    tts: { ...draft.tts, irodori_caption_base_url: e.target.value || undefined },
+                  })
+                }
+                placeholder="http://localhost:8080"
+                className="w-full px-3 py-1.5 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+              />
+            </div>
+            <div>
+              <label htmlFor="irodori-refaudio-base-url" className="block text-xs text-muted-foreground mb-1">
+                IrodoriTTS 参照音源モード ベースURL
+              </label>
+              <input
+                id="irodori-refaudio-base-url"
+                type="text"
+                value={draft.tts.irodori_reference_audio_base_url ?? ''}
+                onChange={(e) =>
+                  setDraft({
+                    ...draft,
+                    tts: { ...draft.tts, irodori_reference_audio_base_url: e.target.value || undefined },
+                  })
+                }
+                placeholder="http://localhost:8080"
+                className="w-full px-3 py-1.5 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+              />
+              <p className="mt-1 text-xs text-muted-foreground">
+                キャラクターのIrodoriTTSモード選択に応じて使い分けられる
+              </p>
+            </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label htmlFor="tts-max-chunk" className="block text-xs text-muted-foreground mb-1">

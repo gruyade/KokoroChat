@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { Lightbulb, Loader2, Trash2 } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { useCharacterStore } from '../../stores';
 import { useOperationQueue } from '../../hooks/useOperationQueue';
 import type { Thought } from '../../types';
@@ -35,6 +36,21 @@ export function ThoughtView() {
   useEffect(() => {
     if (!selectedCharacterId) return;
     loadThoughts();
+  }, [selectedCharacterId, loadThoughts]);
+
+  // thought:generated イベントをリッスンし、該当キャラクターの思考を即時反映
+  useEffect(() => {
+    if (!selectedCharacterId) return;
+
+    const unlisten = listen<{ character_id: string }>('thought:generated', (event) => {
+      if (event.payload.character_id === selectedCharacterId) {
+        loadThoughts();
+      }
+    });
+
+    return () => {
+      unlisten.then((fn) => fn());
+    };
   }, [selectedCharacterId, loadThoughts]);
 
   const handleDelete = (id: string) => {

@@ -12,8 +12,8 @@ pub use attachment::{Attachment, AttachmentType, MAX_FILE_SIZE};
 pub use character::{Character, CharacterUpdate};
 pub use chat::{ChatMessageRecord, ChatRole, ChatSession, MessageAttachment};
 pub use config::{
-    AppConfig, AttachmentConfig, MemoryConfig, ModelPurpose, ModelSettings, PluginsConfig,
-    SpontaneousConfig, TTSGlobalConfig, Theme, ThoughtConfig, UIConfig,
+    AppConfig, AttachmentConfig, LLMProvider, MemoryConfig, ModelPurpose, ModelSettings,
+    PluginsConfig, SpontaneousConfig, TTSGlobalConfig, Theme, ThoughtConfig, UIConfig,
 };
 pub use memory::Memory;
 pub use plugin::{PluginInfo, ToolCall, ToolDefinition, ToolResult};

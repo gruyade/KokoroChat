@@ -136,6 +136,7 @@ impl ModelConfigManager {
         let mut models = HashMap::new();
 
         let default_settings = ModelSettings {
+            provider: None,
             base_url: String::new(),
             model: String::new(),
             api_key: None,
@@ -162,7 +163,7 @@ impl ModelConfigManager {
             memory: MemoryConfig {
                 compression_threshold: 50,
             },
-            tts: TTSGlobalConfig { enabled: false, voicepeak_path: None, timeout_seconds: 60, max_chunk_size: 140 },
+            tts: TTSGlobalConfig { enabled: false, voicepeak_path: None, timeout_seconds: 60, max_chunk_size: 140, irodori_base_url: None, irodori_caption_base_url: None, irodori_reference_audio_base_url: None },
             ui: UIConfig {
                 theme: Theme::Dark,
                 language: "ja".to_string(),
@@ -206,6 +207,7 @@ impl ModelConfigManager {
             .models
             .entry(purpose)
             .or_insert_with(|| ModelSettings {
+                provider: None,
                 base_url: String::new(),
                 model: String::new(),
                 api_key: None,

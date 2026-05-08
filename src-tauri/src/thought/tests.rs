@@ -141,6 +141,7 @@ fn default_llm_config() -> Arc<crate::config::model_config::ModelConfigManager> 
         model: "test-model".to_string(),
         api_key: None,
         temperature: 0.7,
+        provider: None,
     };
     models.insert(ModelPurpose::Chat, settings.clone());
     models.insert(ModelPurpose::Memory, settings.clone());
@@ -152,7 +153,7 @@ fn default_llm_config() -> Arc<crate::config::model_config::ModelConfigManager> 
         spontaneous: SpontaneousConfig { enabled: false, min_interval_seconds: 60, probability: 0.3 },
         thought: ThoughtConfig { enabled: false, interval_minutes: 5, auto_delete_threshold_minutes: 1440 },
         memory: MemoryConfig { compression_threshold: 50 },
-        tts: TTSGlobalConfig { enabled: false, voicepeak_path: None, timeout_seconds: 60, max_chunk_size: 140 },
+        tts: TTSGlobalConfig { enabled: false, voicepeak_path: None, timeout_seconds: 60, max_chunk_size: 140, irodori_base_url: None, irodori_caption_base_url: None, irodori_reference_audio_base_url: None },
         ui: UIConfig { theme: Theme::Dark, language: "ja".to_string(), send_key: SendKey::default() },
         plugins: PluginsConfig { enabled_plugins: vec![], plugin_settings: HashMap::new() },
         attachment: AttachmentConfig { max_file_size_bytes: 10 * 1024 * 1024, allowed_extensions: vec![] },

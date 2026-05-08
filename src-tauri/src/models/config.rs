@@ -13,9 +13,22 @@ pub enum ModelPurpose {
     CharacterGeneration,
 }
 
+/// LLMプロバイダー種別
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum LLMProvider {
+    Openai,
+    Anthropic,
+    Google,
+    OpenaiCompatible,
+}
+
 /// LLMモデル接続設定
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelSettings {
+    /// プロバイダー種別（後方互換のためOption型）
+    #[serde(default)]
+    pub provider: Option<LLMProvider>,
     pub base_url: String,
     pub model: String,
     pub api_key: Option<String>,
@@ -83,6 +96,15 @@ pub struct TTSGlobalConfig {
     /// テキスト分割の最大チャンクサイズ（文字数）。デフォルト: 140
     #[serde(default = "default_max_chunk_size")]
     pub max_chunk_size: usize,
+    /// IrodoriTTSデフォルトベースURL（後方互換用）
+    #[serde(default)]
+    pub irodori_base_url: Option<String>,
+    /// IrodoriTTS キャプションモード用ベースURL
+    #[serde(default)]
+    pub irodori_caption_base_url: Option<String>,
+    /// IrodoriTTS 参照音源モード用ベースURL
+    #[serde(default)]
+    pub irodori_reference_audio_base_url: Option<String>,
 }
 
 fn default_tts_timeout() -> u64 {

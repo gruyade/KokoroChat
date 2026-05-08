@@ -4,7 +4,43 @@ use reqwest::Client;
 use serde::Serialize;
 
 use crate::error::AppError;
-use crate::models::tts::TTSConfig;
+use crate::models::config::TTSGlobalConfig;
+use crate::models::tts::{IrodoriMode, TTSConfig};
+
+/// IrodoriTTSのベースURLを解決する
+/// 優先順位: グローバル設定のモード別URL > キャラクター個別(モード別) > キャラクター個別(共通) > グローバル共通URL
+pub fn resolve_irodori_base_url(
+    char_config: &TTSConfig,
+    global_config: &TTSGlobalConfig,
+) -> Option<String> {
+    // 1. グローバル設定のモード別URL（キャラクターのモード選択に基づく）
+    let global_mode_url = match char_config.irodori_mode {
+        Some(IrodoriMode::Caption) => global_config.irodori_caption_base_url.clone(),
+        Some(IrodoriMode::ReferenceAudio) => global_config.irodori_reference_audio_base_url.clone(),
+        None => None,
+    };
+    if global_mode_url.is_some() {
+        return global_mode_url;
+    }
+
+    // 2. キャラクター個別のモード別URL
+    let char_mode_url = match char_config.irodori_mode {
+        Some(IrodoriMode::Caption) => char_config.caption_base_url.clone(),
+        Some(IrodoriMode::ReferenceAudio) => char_config.reference_audio_base_url.clone(),
+        None => None,
+    };
+    if char_mode_url.is_some() {
+        return char_mode_url;
+    }
+
+    // 3. キャラクター個別の共通ベースURL
+    if char_config.base_url.is_some() {
+        return char_config.base_url.clone();
+    }
+
+    // 4. グローバル設定の共通ベースURL
+    global_config.irodori_base_url.clone()
+}
 
 /// Irodori-TTS APIリクエストボディ
 #[derive(Debug, Clone, Serialize)]

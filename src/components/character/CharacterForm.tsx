@@ -419,26 +419,6 @@ export function CharacterForm({ character, onSave, onCancel, loading }: Characte
               </div>
             </div>
 
-            {/* Base URL (always shown) */}
-            <div>
-              <label htmlFor="tts-base-url" className="block text-xs mb-0.5">
-                ベースURL
-              </label>
-              <input
-                id="tts-base-url"
-                type="text"
-                value={ttsState.irodori.base_url}
-                onChange={(e) =>
-                  setTtsState((prev) => ({
-                    ...prev,
-                    irodori: { ...prev.irodori, base_url: e.target.value },
-                  }))
-                }
-                placeholder="http://localhost:8000"
-                className="w-full px-3 py-1.5 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-              />
-            </div>
-
             {/* Caption mode: show caption field */}
             {ttsState.irodori.irodori_mode === 'caption' && (
               <div>

@@ -76,12 +76,14 @@ pub async fn generate_speech_for_message(
             model: s.model,
             api_key: s.api_key,
             temperature: s.temperature,
+            provider: s.provider,
         })
         .unwrap_or(LLMClientConfig {
             base_url: String::new(),
             model: String::new(),
             api_key: None,
             temperature: 0.7,
+            provider: None,
         });
 
     let messages = vec![
@@ -89,11 +91,13 @@ pub async fn generate_speech_for_message(
             role: MessageRole::System,
             content: "以下のテキストから、声に出して話すセリフと心の声だけを抽出してください。動作描写、効果音、擬音語、ナレーション、状況説明は除外してください。抽出したテキストのみを返してください。説明や装飾は不要です。".to_string(),
             tool_call_id: None,
+            images: None,
         },
         ChatMessage {
             role: MessageRole::User,
             content: text.clone(),
             tool_call_id: None,
+            images: None,
         },
     ];
 

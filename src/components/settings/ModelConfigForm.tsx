@@ -14,7 +14,7 @@ interface ProviderConfig {
 const PROVIDERS: Record<LLMProvider, ProviderConfig> = {
   openai: { label: 'OpenAI', defaultBaseUrl: 'https://api.openai.com/v1', supportsModelList: true },
   anthropic: { label: 'Anthropic', defaultBaseUrl: 'https://api.anthropic.com/v1', supportsModelList: true },
-  google: { label: 'Google', defaultBaseUrl: 'https://generativelanguage.googleapis.com/v1beta', supportsModelList: true },
+  google: { label: 'Google', defaultBaseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', supportsModelList: true },
   openai_compatible: { label: 'OpenAI互換', supportsModelList: true },
 };
 
@@ -106,6 +106,7 @@ export function ModelConfigForm({ purpose, label, settings, onChange }: ModelCon
       const models = await invoke<string[]>('fetch_available_models', {
         baseUrl,
         apiKey: settings.api_key || null,
+        provider: settings.provider || null,
       });
       setAvailableModels(models);
     } catch (e) {

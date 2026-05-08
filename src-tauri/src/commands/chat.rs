@@ -3,7 +3,7 @@
 use tauri::{AppHandle, State};
 
 use crate::error::AppError;
-use crate::models::{ChatMessageRecord, ChatRole, ChatSession};
+use crate::models::{Attachment, ChatMessageRecord, ChatRole, ChatSession};
 use crate::state::AppState;
 
 /// 新規チャットセッション作成
@@ -25,12 +25,10 @@ pub async fn create_session(
 pub async fn send_message(
     session_id: String,
     content: String,
-    attachments: Option<Vec<String>>,
+    attachments: Option<Vec<Attachment>>,
     app_handle: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
-    let _ = attachments;
-
     // AbortHandle 統合: LLM呼び出しを tokio::spawn でラップ
     let chat_engine = state.chat_engine.clone();
     let stream_abort_manager = state.stream_abort_manager.clone();
@@ -45,7 +43,7 @@ pub async fn send_message(
 
     let join_handle = tokio::spawn(async move {
         chat_engine
-            .send_message(&session_id_clone, &content_clone, None, &app_handle_clone, Some(partial_content_for_engine))
+            .send_message(&session_id_clone, &content_clone, attachments, &app_handle_clone, Some(partial_content_for_engine))
             .await
     });
 
@@ -79,8 +77,25 @@ pub async fn send_message(
     // バックグラウンドで記憶圧縮チェック
     let memory_manager = state.memory_manager.clone();
     let session_id_for_memory = session_id.clone();
+    let app_handle_for_memory = app_handle.clone();
     tokio::spawn(async move {
-        let _ = memory_manager.check_and_compress(&session_id_for_memory).await;
+        use tauri::Emitter;
+        use crate::commands::memory::MemoryGeneratedEvent;
+
+        match memory_manager.check_and_compress(&session_id_for_memory).await {
+            Ok(Some(memory)) => {
+                if let Err(e) = app_handle_for_memory.emit("memory:generated", MemoryGeneratedEvent {
+                    character_id: memory.character_id.clone(),
+                    memory_id: memory.id.clone(),
+                }) {
+                    println!("[memory] Failed to emit memory:generated event: {}", e);
+                }
+            }
+            Ok(None) => {}
+            Err(e) => {
+                println!("[memory] Memory compression failed: {}", e);
+            }
+        }
     });
 
     Ok(())
@@ -140,6 +155,7 @@ pub async fn trigger_spontaneous_check(
         role: MessageRole::System,
         content: system_prompt,
         tool_call_id: None,
+        images: None,
     }];
     for msg in &recent_messages {
         let role = match msg.role {
@@ -147,7 +163,7 @@ pub async fn trigger_spontaneous_check(
             ChatRole::Assistant | ChatRole::Spontaneous => MessageRole::Assistant,
             ChatRole::Tool => MessageRole::Tool,
         };
-        messages.push(ChatMessage { role, content: msg.content.clone(), tool_call_id: None });
+        messages.push(ChatMessage { role, content: msg.content.clone(), tool_call_id: None, images: None });
     }
 
     // 確率1.0の場合は必ず発話させる（デバッグ用途を想定）
@@ -161,13 +177,14 @@ pub async fn trigger_spontaneous_check(
         role: MessageRole::User,
         content: spontaneous_prompt,
         tool_call_id: None,
+        images: None,
     });
 
     // LLM呼び出し
     let llm_config = state.config_manager
         .get_model_settings(&crate::models::config::ModelPurpose::Chat)
-        .map(|s| LLMClientConfig { base_url: s.base_url, model: s.model, api_key: s.api_key, temperature: s.temperature })
-        .unwrap_or(LLMClientConfig { base_url: String::new(), model: String::new(), api_key: None, temperature: 0.9 });
+        .map(|s| LLMClientConfig { base_url: s.base_url, model: s.model, api_key: s.api_key, temperature: s.temperature, provider: s.provider })
+        .unwrap_or(LLMClientConfig { base_url: String::new(), model: String::new(), api_key: None, temperature: 0.9, provider: None });
 
     if llm_config.base_url.is_empty() {
         println!("[spontaneous] LLM base_url is empty, skipping");

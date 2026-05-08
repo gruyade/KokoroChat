@@ -15,10 +15,12 @@ use crate::models::Memory;
 #[async_trait]
 pub trait MemoryManager: Send + Sync {
     /// メッセージ数が閾値に達した場合、会話を圧縮して記憶として保存
-    async fn check_and_compress(&self, session_id: &str) -> Result<(), AppError>;
+    /// 圧縮が実行された場合は生成されたMemoryを返す
+    async fn check_and_compress(&self, session_id: &str) -> Result<Option<Memory>, AppError>;
 
     /// 閾値チェックをスキップして強制的に会話を圧縮して記憶として保存
-    async fn force_compress(&self, session_id: &str) -> Result<(), AppError>;
+    /// 圧縮が実行された場合は生成されたMemoryを返す
+    async fn force_compress(&self, session_id: &str) -> Result<Option<Memory>, AppError>;
 
     /// キャラクターに関連する記憶を取得（現時点では全件返却）
     async fn get_relevant_memories(
@@ -72,12 +74,14 @@ impl DefaultMemoryManager {
                 model: s.model,
                 api_key: s.api_key,
                 temperature: s.temperature,
+                provider: s.provider,
             })
             .unwrap_or(LLMClientConfig {
                 base_url: String::new(),
                 model: String::new(),
                 api_key: None,
                 temperature: 0.7,
+                provider: None,
             })
     }
 
@@ -113,7 +117,8 @@ impl DefaultMemoryManager {
     }
 
     /// 圧縮の内部実装（skip_threshold=trueで閾値チェックをスキップ）
-    async fn compress_internal(&self, session_id: &str, skip_threshold: bool) -> Result<(), AppError> {
+    /// 圧縮が実行された場合は生成されたMemoryを返す
+    async fn compress_internal(&self, session_id: &str, skip_threshold: bool) -> Result<Option<Memory>, AppError> {
         // 1. セッションのメッセージを取得し、前回圧縮時点以降のみ抽出
         let (messages_to_compress, character_id) = {
             let db = self.db.lock().map_err(|e| {
@@ -152,12 +157,12 @@ impl DefaultMemoryManager {
 
         // 2. 閾値チェック（skip_threshold=falseの場合のみ）
         if !skip_threshold && (messages_to_compress.len() as u32) < self.compression_threshold {
-            return Ok(());
+            return Ok(None);
         }
 
         // 圧縮対象メッセージが0件の場合は何もしない
         if messages_to_compress.is_empty() {
-            return Ok(());
+            return Ok(None);
         }
 
         // 3. メッセージを圧縮用テキストに変換
@@ -169,11 +174,13 @@ impl DefaultMemoryManager {
                 role: MessageRole::System,
                 content: Self::compression_system_prompt(),
                 tool_call_id: None,
+                images: None,
             },
             ChatMessage {
                 role: MessageRole::User,
                 content: format!("以下の会話を要約してください：\n\n{}", conversation_text),
                 tool_call_id: None,
+                images: None,
             },
         ];
 
@@ -215,17 +222,17 @@ impl DefaultMemoryManager {
         let conn = db.connection();
         memory_repo::insert_memory(conn, &memory)?;
 
-        Ok(())
+        Ok(Some(memory))
     }
 }
 
 #[async_trait]
 impl MemoryManager for DefaultMemoryManager {
-    async fn check_and_compress(&self, session_id: &str) -> Result<(), AppError> {
+    async fn check_and_compress(&self, session_id: &str) -> Result<Option<Memory>, AppError> {
         self.compress_internal(session_id, false).await
     }
 
-    async fn force_compress(&self, session_id: &str) -> Result<(), AppError> {
+    async fn force_compress(&self, session_id: &str) -> Result<Option<Memory>, AppError> {
         self.compress_internal(session_id, true).await
     }
 
@@ -373,6 +380,7 @@ mod tests {
             model: "test-model".to_string(),
             api_key: None,
             temperature: 0.3,
+            provider: None,
         };
         models.insert(ModelPurpose::Chat, settings.clone());
         models.insert(ModelPurpose::Memory, settings.clone());
@@ -384,7 +392,7 @@ mod tests {
             spontaneous: SpontaneousConfig { enabled: false, min_interval_seconds: 60, probability: 0.3 },
             thought: ThoughtConfig { enabled: false, interval_minutes: 5, auto_delete_threshold_minutes: 1440 },
             memory: MemoryConfig { compression_threshold: 50 },
-            tts: TTSGlobalConfig { enabled: false, voicepeak_path: None, timeout_seconds: 60, max_chunk_size: 140 },
+            tts: TTSGlobalConfig { enabled: false, voicepeak_path: None, timeout_seconds: 60, max_chunk_size: 140, irodori_base_url: None, irodori_caption_base_url: None, irodori_reference_audio_base_url: None },
             ui: UIConfig { theme: Theme::Dark, language: "ja".to_string(), send_key: SendKey::default() },
             plugins: PluginsConfig { enabled_plugins: vec![], plugin_settings: HashMap::new() },
             attachment: AttachmentConfig { max_file_size_bytes: 10 * 1024 * 1024, allowed_extensions: vec![] },

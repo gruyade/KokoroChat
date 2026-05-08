@@ -1,9 +1,10 @@
-import { useEffect, useRef, useCallback } from 'react';
-import { MessageSquare } from 'lucide-react';
+import { useEffect, useRef, useState, useCallback } from 'react';
+import { MessageSquare, UploadCloud } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { useChatStore, useCharacterStore } from '../../stores';
 import { MessageBubble } from './MessageBubble';
-import { MessageInput } from './MessageInput';
+import { MessageInput, type MessageInputRef } from './MessageInput';
 import { StreamingIndicator } from './StreamingIndicator';
 import { ChatHeaderControls } from './ChatHeaderControls';
 
@@ -19,11 +20,35 @@ export function ChatView() {
     useChatStore();
   const { selectedCharacterId, characters } = useCharacterStore();
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const messageInputRef = useRef<MessageInputRef>(null);
   const prevMessageCountRef = useRef(0);
   const isNearBottomRef = useRef(true);
   const rafIdRef = useRef<number | null>(null);
   const isProgrammaticScrollRef = useRef(false);
   const lastSmoothScrollTimeRef = useRef(0);
+
+  const [isDragOver, setIsDragOver] = useState(false);
+
+  // Tauri drag-drop イベント: ファイルパスを直接取得
+  useEffect(() => {
+    const unlisten = listen<{ paths: string[] }>('tauri://drag-drop', async (event) => {
+      setIsDragOver(false);
+      for (const path of event.payload.paths) {
+        await messageInputRef.current?.addAttachment(path);
+      }
+    });
+    return () => { unlisten.then(fn => fn()); };
+  }, []);
+
+  // Tauri drag-over / drag-leave イベント: オーバーレイ制御
+  useEffect(() => {
+    const unlistenOver = listen('tauri://drag-over', () => setIsDragOver(true));
+    const unlistenLeave = listen('tauri://drag-leave', () => setIsDragOver(false));
+    return () => {
+      unlistenOver.then(fn => fn());
+      unlistenLeave.then(fn => fn());
+    };
+  }, []);
 
   // スクロールイベントでオートスクロール状態を更新
   // isProgrammaticScrollRef はscrollイベント経由の更新のみブロック（ユーザー操作イベントはブロックしない）
@@ -143,15 +168,35 @@ export function ChatView() {
     }, 50);
   }, []);
 
-  // メッセージ数が変わった時（新メッセージ追加）→ スムーズに最下部へ
+  // セッション切り替え時はスクロール状態とメッセージカウントをリセット
   useEffect(() => {
+    isNearBottomRef.current = true;
+    prevMessageCountRef.current = 0;
+  }, [currentSessionId]);
+
+  // メッセージロードおよび追加時のスクロール制御
+  useEffect(() => {
+    // メッセージがない場合は何もしない
+    if (messages.length === 0) {
+      prevMessageCountRef.current = 0;
+      return;
+    }
+
+    // 履歴ロード時（前回0件からN件に増えた初回）は即座に最下部へ
+    if (prevMessageCountRef.current === 0) {
+      const timer = setTimeout(() => scrollToBottomInstant(), 50);
+      prevMessageCountRef.current = messages.length;
+      return () => clearTimeout(timer);
+    }
+
+    // 通常の新規メッセージ追加時はスムーズスクロール
     if (messages.length !== prevMessageCountRef.current) {
       prevMessageCountRef.current = messages.length;
       if (isNearBottomRef.current) {
         smoothScrollToBottom();
       }
     }
-  }, [messages.length, smoothScrollToBottom]);
+  }, [messages.length, smoothScrollToBottom, scrollToBottomInstant]);
 
   // ストリーミング中 → オートスクロール有効時のみスムーズ追従
   useEffect(() => {
@@ -159,13 +204,6 @@ export function ChatView() {
       smoothScrollToBottom();
     }
   }, [streamingContent, isStreaming, smoothScrollToBottom]);
-
-  // セッション切り替え時 → 即座に最下部へ
-  useEffect(() => {
-    // 少し遅延させてDOMレンダリング後にスクロール
-    const timer = setTimeout(() => scrollToBottomInstant(), 50);
-    return () => clearTimeout(timer);
-  }, [currentSessionId, scrollToBottomInstant]);
 
   // クリーンアップ: 未処理のrAFをキャンセル
   useEffect(() => {
@@ -200,11 +238,11 @@ export function ChatView() {
     );
   }
 
-  const handleSend = (content: string, isSystem?: boolean) => {
+  const handleSend = (content: string, isSystem?: boolean, attachments?: import('../../types').Attachment[]) => {
     if (isSystem) {
-      sendMessage(`[SYSTEM] ${content}`);
+      sendMessage(`[SYSTEM] ${content}`, attachments);
     } else {
-      sendMessage(content);
+      sendMessage(content, attachments);
     }
   };
 
@@ -228,7 +266,17 @@ export function ChatView() {
   };
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden">
+    <div className="relative flex-1 flex flex-col overflow-hidden">
+      {/* Drag-drop overlay */}
+      {isDragOver && (
+        <div className="absolute inset-0 bg-background/80 backdrop-blur-sm z-50 flex items-center justify-center pointer-events-none">
+          <div className="flex flex-col items-center gap-2 text-muted-foreground">
+            <UploadCloud className="h-12 w-12" />
+            <span className="text-sm font-medium">ファイルをドロップして添付</span>
+          </div>
+        </div>
+      )}
+
       {/* Header controls */}
       <div className="flex items-center justify-end px-3 py-1.5 border-b border-border/50">
         <ChatHeaderControls />
@@ -270,7 +318,15 @@ export function ChatView() {
       )}
 
       {/* Input area */}
-      <MessageInput onSend={handleSend} disabled={isStreaming || isTTSGenerating} isStreaming={isStreaming} isAbortable={isAbortable} onStop={stopGeneration} />
+      <MessageInput
+        ref={messageInputRef}
+        onSend={handleSend}
+        disabled={isStreaming || isTTSGenerating}
+        isStreaming={isStreaming}
+        isAbortable={isAbortable}
+        onStop={stopGeneration}
+        isDragOver={isDragOver}
+      />
     </div>
   );
 }

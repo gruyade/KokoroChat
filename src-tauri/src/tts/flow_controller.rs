@@ -207,12 +207,14 @@ impl TTSFlowController {
                 model: s.model,
                 api_key: s.api_key,
                 temperature: s.temperature,
+                provider: s.provider,
             })
             .unwrap_or(LLMClientConfig {
                 base_url: String::new(),
                 model: String::new(),
                 api_key: None,
                 temperature: 0.7,
+                provider: None,
             })
     }
 }

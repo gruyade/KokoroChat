@@ -67,6 +67,8 @@ mod emotion_generator_tests {
         TTSConfig {
             provider: TTSProvider::Voicepeak,
             base_url: None,
+            caption_base_url: None,
+            reference_audio_base_url: None,
             reference_audio_path: None,
             caption: None,
             narrator: Some("Japanese Female 1".to_string()),
@@ -83,6 +85,7 @@ mod emotion_generator_tests {
             model: "test-model".to_string(),
             api_key: None,
             temperature: 0.7,
+            provider: None,
         }
     }
 
@@ -288,6 +291,8 @@ mod tests {
         TTSConfig {
             provider: TTSProvider::IrodoriTts,
             base_url: Some("http://localhost:5000".to_string()),
+            caption_base_url: None,
+            reference_audio_base_url: None,
             reference_audio_path: Some("/path/to/reference.wav".to_string()),
             caption: Some("明るい声で話す".to_string()),
             narrator: None,
@@ -306,6 +311,8 @@ mod tests {
         TTSConfig {
             provider: TTSProvider::Voicepeak,
             base_url: None,
+            caption_base_url: None,
+            reference_audio_base_url: None,
             reference_audio_path: None,
             caption: None,
             narrator: Some("Japanese Female 1".to_string()),
@@ -336,6 +343,8 @@ mod tests {
         let config = TTSConfig {
             provider: TTSProvider::IrodoriTts,
             base_url: Some("http://localhost:5000".to_string()),
+            caption_base_url: None,
+            reference_audio_base_url: None,
             reference_audio_path: None,
             caption: None,
             narrator: None,
@@ -367,6 +376,8 @@ mod tests {
         let config = TTSConfig {
             provider: TTSProvider::IrodoriTts,
             base_url: Some("http://localhost:5000".to_string()),
+            caption_base_url: None,
+            reference_audio_base_url: None,
             reference_audio_path: None,
             caption: None,
             narrator: None,
@@ -414,6 +425,8 @@ mod tests {
         let config = TTSConfig {
             provider: TTSProvider::Voicepeak,
             base_url: None,
+            caption_base_url: None,
+            reference_audio_base_url: None,
             reference_audio_path: None,
             caption: None,
             narrator: None,
@@ -478,6 +491,8 @@ mod tests {
         let config = TTSConfig {
             provider: TTSProvider::Voicepeak,
             base_url: None,
+            caption_base_url: None,
+            reference_audio_base_url: None,
             reference_audio_path: None,
             caption: None,
             narrator: None,
@@ -532,6 +547,8 @@ mod tests {
         let config = TTSConfig {
             provider: TTSProvider::Voicepeak,
             base_url: None,
+            caption_base_url: None,
+            reference_audio_base_url: None,
             reference_audio_path: None,
             caption: None,
             narrator: Some("Japanese Male 1".to_string()),
@@ -557,6 +574,8 @@ mod tests {
         let config = TTSConfig {
             provider: TTSProvider::Voicepeak,
             base_url: None,
+            caption_base_url: None,
+            reference_audio_base_url: None,
             reference_audio_path: None,
             caption: None,
             narrator: None,
@@ -582,6 +601,8 @@ mod tests {
         let config = TTSConfig {
             provider: TTSProvider::Voicepeak,
             base_url: None,
+            caption_base_url: None,
+            reference_audio_base_url: None,
             reference_audio_path: None,
             caption: None,
             narrator: None,
@@ -788,6 +809,7 @@ mod caption_generator_tests {
             model: "test-model".to_string(),
             api_key: None,
             temperature: 0.7,
+            provider: None,
         }
     }
 
@@ -1015,6 +1037,7 @@ mod flow_controller_tests {
                 model: "test-model".to_string(),
                 api_key: None,
                 temperature: 0.7,
+                provider: None,
             },
         );
 
@@ -1036,6 +1059,9 @@ mod flow_controller_tests {
             tts: TTSGlobalConfig {
                 enabled: true,
                 voicepeak_path: None,
+                irodori_base_url: None,
+                irodori_caption_base_url: None,
+                irodori_reference_audio_base_url: None,
                 timeout_seconds: 60,
                 max_chunk_size: 140,
             },
@@ -1065,6 +1091,8 @@ mod flow_controller_tests {
         TTSConfig {
             provider: TTSProvider::Voicepeak,
             base_url: None,
+            caption_base_url: None,
+            reference_audio_base_url: None,
             reference_audio_path: None,
             caption: None,
             narrator: Some("Japanese Female 1".to_string()),
@@ -1079,6 +1107,8 @@ mod flow_controller_tests {
         TTSConfig {
             provider: TTSProvider::IrodoriTts,
             base_url: Some("http://localhost:5000".to_string()),
+            caption_base_url: None,
+            reference_audio_base_url: None,
             reference_audio_path: Some("/path/to/ref.wav".to_string()),
             caption: Some("落ち着いた女性の声".to_string()),
             narrator: None,
@@ -1093,6 +1123,8 @@ mod flow_controller_tests {
         TTSConfig {
             provider: TTSProvider::IrodoriTts,
             base_url: Some("http://localhost:5000".to_string()),
+            caption_base_url: None,
+            reference_audio_base_url: None,
             reference_audio_path: Some("/path/to/ref.wav".to_string()),
             caption: None,
             narrator: None,

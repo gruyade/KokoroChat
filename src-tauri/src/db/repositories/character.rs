@@ -221,6 +221,8 @@ mod tests {
         character.tts_config = Some(TTSConfig {
             provider: TTSProvider::Voicepeak,
             base_url: Some("http://localhost:8080".to_string()),
+            caption_base_url: None,
+            reference_audio_base_url: None,
             reference_audio_path: None,
             caption: None,
             narrator: Some("narrator1".to_string()),

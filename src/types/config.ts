@@ -45,6 +45,12 @@ export interface TTSGlobalConfig {
   timeout_seconds?: number;
   /** テキスト分割の最大チャンクサイズ（文字数）。デフォルト: 140 */
   max_chunk_size?: number;
+  /** IrodoriTTSデフォルトベースURL（後方互換用、未使用） */
+  irodori_base_url?: string;
+  /** IrodoriTTS キャプションモード用ベースURL */
+  irodori_caption_base_url?: string;
+  /** IrodoriTTS 参照音源モード用ベースURL */
+  irodori_reference_audio_base_url?: string;
 }
 
 /** 送信キー設定 */

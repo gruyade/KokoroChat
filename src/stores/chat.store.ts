@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { invoke } from '@tauri-apps/api/core';
-import type { ChatSession, ChatMessageRecord } from '../types';
+import type { Attachment, ChatSession, ChatMessageRecord } from '../types';
 
 interface ChatState {
   sessions: ChatSession[];
@@ -15,7 +15,7 @@ interface ChatState {
   fetchSessions: (characterId: string) => Promise<void>;
   createSession: (characterId: string) => Promise<string>;
   selectSession: (sessionId: string | null) => void;
-  sendMessage: (content: string, attachments?: string[]) => Promise<void>;
+  sendMessage: (content: string, attachments?: Attachment[]) => Promise<void>;
   deleteSession: (sessionId: string) => Promise<void>;
   fetchHistory: (sessionId: string) => Promise<void>;
   appendStreamChunk: (chunk: string) => void;
@@ -75,17 +75,25 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set({ currentSessionId: sessionId, messages: [], streamingContent: '' });
   },
 
-  sendMessage: async (content: string, attachments?: string[]) => {
+  sendMessage: async (content: string, attachments?: Attachment[]) => {
     const { currentSessionId, messages } = get();
     if (!currentSessionId) return;
 
     // ユーザーメッセージをローカルに即座に追加（楽観的更新）
+    // 添付ファイル情報をMessageAttachment形式に変換してローカル表示用に保持
+    const messageAttachments = attachments?.map((a) => ({
+      file_name: a.file_name,
+      attachment_type: a.attachment_type,
+      extracted_text: a.extracted_text,
+      base64_data: a.base64_data,
+    }));
     const userMessage: ChatMessageRecord = {
       id: crypto.randomUUID(),
       session_id: currentSessionId,
       role: 'user',
       content,
       created_at: new Date().toISOString(),
+      attachments: messageAttachments,
     };
     const previousMessages = messages;
     set({ messages: [...messages, userMessage], isStreaming: true, isAbortable: true, streamingContent: '', error: null });

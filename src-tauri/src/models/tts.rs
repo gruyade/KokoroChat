@@ -25,6 +25,12 @@ pub struct TTSConfig {
     /// Irodori-TTS用ベースURL（VoicePeakでは不使用）
     #[serde(default)]
     pub base_url: Option<String>,
+    /// Irodori-TTS: キャプションモード用ベースURL
+    #[serde(default)]
+    pub caption_base_url: Option<String>,
+    /// Irodori-TTS: 参照音声モード用ベースURL
+    #[serde(default)]
+    pub reference_audio_base_url: Option<String>,
     /// Irodori-TTS: 参照音声ファイルパス
     pub reference_audio_path: Option<String>,
     /// Irodori-TTS: キャプション

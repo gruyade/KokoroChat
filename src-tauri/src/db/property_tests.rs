@@ -67,6 +67,8 @@ mod tests {
                     TTSConfig {
                         provider,
                         base_url: Some(base_url),
+                        caption_base_url: None,
+                        reference_audio_base_url: None,
                         reference_audio_path: ref_audio,
                         caption,
                         narrator,

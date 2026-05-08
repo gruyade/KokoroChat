@@ -40,6 +40,8 @@ mod tests {
             .prop_map(|(base_url, reference_audio_path, caption)| TTSConfig {
                 provider: TTSProvider::IrodoriTts,
                 base_url: Some(base_url),
+                caption_base_url: None,
+                reference_audio_base_url: None,
                 reference_audio_path,
                 caption,
                 narrator: None,
@@ -62,6 +64,8 @@ mod tests {
                 |(narrator, emotion, speed, pitch)| TTSConfig {
                     provider: TTSProvider::Voicepeak,
                     base_url: None,
+                    caption_base_url: None,
+                    reference_audio_base_url: None,
                     reference_audio_path: None,
                     caption: None,
                     narrator,
@@ -116,6 +120,8 @@ mod tests {
             let config = TTSConfig {
                 provider: TTSProvider::IrodoriTts,
                 base_url: Some(base_url),
+                caption_base_url: None,
+                reference_audio_base_url: None,
                 reference_audio_path: Some(ref_path.clone()),
                 caption,
                 narrator: None,
@@ -146,6 +152,8 @@ mod tests {
             let config = TTSConfig {
                 provider: TTSProvider::IrodoriTts,
                 base_url: Some(base_url),
+                caption_base_url: None,
+                reference_audio_base_url: None,
                 reference_audio_path: ref_path,
                 caption: Some(caption.clone()),
                 narrator: None,
@@ -325,6 +333,8 @@ mod tests {
             let config = TTSConfig {
                 provider: TTSProvider::Voicepeak,
                 base_url: None,
+                caption_base_url: None,
+                reference_audio_base_url: None,
                 reference_audio_path: None,
                 caption: None,
                 narrator: None,
@@ -442,6 +452,8 @@ mod tests {
         Just(TTSConfig {
             provider: TTSProvider::Voicepeak,
             base_url: None,
+            caption_base_url: None,
+            reference_audio_base_url: None,
             reference_audio_path: None,
             caption: None,
             narrator: None,
@@ -789,6 +801,114 @@ mod tests {
                 "Result '{}' must contain dynamic caption '{}' as substring",
                 result, dynamic_caption
             );
+        }
+    }
+
+    // ========================================
+    // Feature: app-enhancements-v3, Property 1: IrodoriTTSベースURL解決の優先順位
+    // ========================================
+    // **Validates: Requirements 4.3, 4.4**
+
+    use crate::models::config::TTSGlobalConfig;
+    use crate::models::tts::IrodoriMode;
+    use crate::tts::irodori::resolve_irodori_base_url;
+
+    /// IrodoriMode のストラテジー
+    fn arb_irodori_mode() -> impl Strategy<Value = Option<IrodoriMode>> {
+        prop::sample::select(vec![
+            None,
+            Some(IrodoriMode::Caption),
+            Some(IrodoriMode::ReferenceAudio),
+        ])
+    }
+
+    /// URL解決テスト用 TTSConfig のストラテジー
+    fn arb_tts_config_for_url_resolution() -> impl Strategy<Value = TTSConfig> {
+        (
+            arb_irodori_mode(),
+            proptest::option::of("http://[a-z]{3,8}:[0-9]{4}/base"),
+            proptest::option::of("http://[a-z]{3,8}:[0-9]{4}/caption"),
+            proptest::option::of("http://[a-z]{3,8}:[0-9]{4}/refaudio"),
+        )
+            .prop_map(|(irodori_mode, base_url, caption_base_url, reference_audio_base_url)| {
+                TTSConfig {
+                    provider: TTSProvider::IrodoriTts,
+                    base_url,
+                    caption_base_url,
+                    reference_audio_base_url,
+                    reference_audio_path: None,
+                    caption: None,
+                    narrator: None,
+                    emotion: None,
+                    speed: None,
+                    pitch: None,
+                    irodori_mode,
+                }
+            })
+    }
+
+    /// URL解決テスト用 TTSGlobalConfig のストラテジー
+    fn arb_tts_global_config_for_url_resolution() -> impl Strategy<Value = TTSGlobalConfig> {
+        proptest::option::of("http://[a-z]{3,8}:[0-9]{4}/global")
+            .prop_map(|irodori_base_url| TTSGlobalConfig {
+                enabled: true,
+                voicepeak_path: None,
+                timeout_seconds: 60,
+                max_chunk_size: 140,
+                irodori_base_url,
+                irodori_caption_base_url: None,
+                irodori_reference_audio_base_url: None,
+            })
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(20))]
+
+        /// IrodoriTTSベースURL解決の優先順位が常に守られることを検証
+        /// 優先順位: モード別URL > キャラクター個別共通URL > グローバル設定URL > None
+        #[test]
+        fn prop_irodori_base_url_resolution_priority(
+            char_config in arb_tts_config_for_url_resolution(),
+            global_config in arb_tts_global_config_for_url_resolution(),
+        ) {
+            let result = resolve_irodori_base_url(&char_config, &global_config);
+
+            // 1. モード別URLが存在する場合はそれを返す
+            let mode_url = match char_config.irodori_mode {
+                Some(IrodoriMode::Caption) => char_config.caption_base_url.clone(),
+                Some(IrodoriMode::ReferenceAudio) => char_config.reference_audio_base_url.clone(),
+                None => None,
+            };
+
+            if mode_url.is_some() {
+                prop_assert_eq!(
+                    result, mode_url,
+                    "When mode-specific URL is set, it must be returned. \
+                     mode={:?}, caption_base_url={:?}, reference_audio_base_url={:?}",
+                    char_config.irodori_mode, char_config.caption_base_url, char_config.reference_audio_base_url
+                );
+            }
+            // 2. モード別URLがNoneで、base_urlが存在する場合はそれを返す
+            else if char_config.base_url.is_some() {
+                prop_assert_eq!(
+                    result, char_config.base_url,
+                    "When mode URL is None and base_url is set, base_url must be returned"
+                );
+            }
+            // 3. base_urlもNoneで、グローバル設定が存在する場合はそれを返す
+            else if global_config.irodori_base_url.is_some() {
+                prop_assert_eq!(
+                    result, global_config.irodori_base_url,
+                    "When char URLs are None and global irodori_base_url is set, global must be returned"
+                );
+            }
+            // 4. すべてNoneの場合はNoneを返す
+            else {
+                prop_assert_eq!(
+                    result, None,
+                    "When all URLs are None, result must be None"
+                );
+            }
         }
     }
 }

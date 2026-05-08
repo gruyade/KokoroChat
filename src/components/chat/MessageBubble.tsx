@@ -120,65 +120,51 @@ export function MessageBubble({ message, onRegenerate, onDelete }: MessageBubble
     setEditingMessage(null);
   };
 
-  // システムメッセージ: ユーザーメッセージと同じ右寄せバブルスタイルで表示
+  // システムメッセージ: 右寄せバッジスタイルで表示（ホバーアクションは通常メッセージと同じ下部配置）
   if (isSystemMessage) {
+    if (isEditing) {
+      return (
+        <div className="flex justify-end px-4 py-1">
+          <EditableMessage
+            originalContent={message.content}
+            onConfirm={handleEditConfirm}
+            onCancel={handleEditCancel}
+          />
+        </div>
+      );
+    }
+
     return (
       <div
         className="group relative flex justify-end px-4 py-1 will-change-transform"
         onMouseEnter={() => setShowMenu(true)}
         onMouseLeave={() => requestAnimationFrame(() => setShowMenu(false))}
       >
-        <div className="flex items-start gap-2 max-w-[70%] flex-row-reverse">
-          <div className="flex flex-col gap-1">
-            <span className="text-xs text-muted-foreground flex items-center gap-1 justify-end">
-              <Info className="h-3 w-3" />
-              SYSTEM
-            </span>
-            {isEditing ? (
-              <EditableMessage
-                originalContent={message.content}
-                onConfirm={handleEditConfirm}
-                onCancel={handleEditCancel}
-              />
-            ) : (
-              <>
-                <div className="rounded-lg px-3 py-2 text-sm bg-primary text-primary-foreground">
-                  <MarkdownRenderer
-                    content={displayContent}
-                    className="prose prose-sm max-w-none prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-ol:my-1 prose-pre:my-2 prose-code:text-xs prose-p:text-primary-foreground prose-headings:text-primary-foreground prose-strong:text-primary-foreground prose-code:text-primary-foreground prose-li:text-primary-foreground text-primary-foreground"
-                  />
-                </div>
-
-                {/* Action buttons — ホバーで編集・削除を表示 */}
-                <div className="flex items-center gap-0.5 h-6 overflow-visible justify-end">
-                  <div className={`flex items-center gap-0.5 transition-opacity pointer-events-auto ${showMenu ? 'opacity-100' : 'opacity-0 invisible'}`}>
-                    <button
-                      onClick={handleCopy}
-                      className="p-1 rounded text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
-                      title={copied ? 'コピー済み' : 'コピー'}
-                    >
-                      <Copy className="h-3.5 w-3.5" />
-                    </button>
-                    <button
-                      onClick={handleEdit}
-                      className="p-1 rounded text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
-                      title="編集"
-                    >
-                      <Pencil className="h-3.5 w-3.5" />
-                    </button>
-                    {onDelete && (
-                      <button
-                        onClick={handleDelete}
-                        className="p-1 rounded text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
-                        title="削除"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
-                    )}
-                  </div>
-                </div>
-              </>
-            )}
+        <div className="flex flex-col gap-1">
+          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-muted text-muted-foreground text-xs">
+            <Info className="h-3 w-3" />
+            <span>{displayContent}</span>
+          </div>
+          {/* Action buttons — 通常メッセージと同じ下部配置 */}
+          <div className="flex items-center gap-0.5 h-6 overflow-visible justify-end">
+            <div className={`flex items-center gap-0.5 transition-opacity pointer-events-auto ${showMenu ? 'opacity-100' : 'opacity-0 invisible'}`}>
+              <button
+                onClick={handleEdit}
+                className="p-1 rounded text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                title="編集"
+              >
+                <Pencil className="h-3.5 w-3.5" />
+              </button>
+              {onDelete && (
+                <button
+                  onClick={handleDelete}
+                  className="p-1 rounded text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
+                  title="削除"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -214,16 +200,19 @@ export function MessageBubble({ message, onRegenerate, onDelete }: MessageBubble
             />
           ) : (
             <>
-              <div className={`rounded-lg px-3 py-2 text-sm ${config.bubble}`}>
-                <MarkdownRenderer
-                  content={displayContent}
-                  className={`prose prose-sm max-w-none prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-ol:my-1 prose-pre:my-2 prose-code:text-xs ${
-                    message.role === 'user'
-                      ? 'prose-p:text-primary-foreground prose-headings:text-primary-foreground prose-strong:text-primary-foreground prose-code:text-primary-foreground prose-li:text-primary-foreground text-primary-foreground'
-                      : 'prose-invert'
-                  }`}
-                />
-              </div>
+              {/* 添付ファイルのみの場合はテキストバブルを非表示 */}
+              {!(message.content === '(添付ファイル)' && message.role === 'user' && message.attachments && message.attachments.length > 0) && (
+                <div className={`rounded-lg px-3 py-2 text-sm ${config.bubble}`}>
+                  <MarkdownRenderer
+                    content={displayContent}
+                    className={`prose prose-sm max-w-none prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-ol:my-1 prose-pre:my-2 prose-code:text-xs ${
+                      message.role === 'user'
+                        ? 'prose-p:text-primary-foreground prose-headings:text-primary-foreground prose-strong:text-primary-foreground prose-code:text-primary-foreground prose-li:text-primary-foreground text-primary-foreground'
+                        : 'prose-invert'
+                    }`}
+                  />
+                </div>
+              )}
 
               {/* Action buttons — 常にスペース確保、ホバーで表示 */}
               <div className={`flex items-center gap-0.5 h-6 overflow-visible ${message.role === 'user' ? 'justify-end' : ''}`}>
@@ -279,14 +268,23 @@ export function MessageBubble({ message, onRegenerate, onDelete }: MessageBubble
 
           {/* Attachments */}
           {message.attachments && message.attachments.length > 0 && (
-            <div className="flex flex-wrap gap-1 mt-1">
+            <div className="flex flex-col gap-1 mt-1">
               {message.attachments.map((att, i) => (
-                <span
-                  key={i}
-                  className="inline-flex items-center gap-1 rounded bg-muted px-2 py-0.5 text-xs text-muted-foreground"
-                >
-                  📎 {att.file_name}
-                </span>
+                att.attachment_type === 'image' && att.base64_data ? (
+                  <img
+                    key={i}
+                    src={`data:image/png;base64,${att.base64_data}`}
+                    alt={att.file_name}
+                    className="max-w-[240px] max-h-[180px] rounded-md border border-border object-contain"
+                  />
+                ) : (
+                  <span
+                    key={i}
+                    className="inline-flex items-center gap-1 rounded bg-muted px-2 py-0.5 text-xs text-muted-foreground"
+                  >
+                    📎 {att.file_name}
+                  </span>
+                )
               ))}
             </div>
           )}

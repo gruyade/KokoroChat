@@ -4,7 +4,7 @@ use tauri::State;
 
 use crate::error::AppError;
 use crate::llm::client::LLMClientConfig;
-use crate::models::config::{AppConfig, ModelSettings};
+use crate::models::config::{AppConfig, LLMProvider, ModelSettings};
 use crate::state::AppState;
 
 /// OpenAI互換 /models エンドポイントのレスポンス構造
@@ -44,6 +44,7 @@ pub async fn test_llm_connection(
         model: settings.model,
         api_key: settings.api_key,
         temperature: settings.temperature,
+        provider: settings.provider,
     };
 
     state.llm_client.test_connection(&config).await
@@ -51,21 +52,38 @@ pub async fn test_llm_connection(
 
 /// 利用可能なモデル一覧を取得
 ///
-/// OpenAI互換APIの /models エンドポイントにGETリクエストを送信し、
-/// レスポンスの data[].id を Vec<String> として返却する。
+/// プロバイダーに応じたモデル一覧エンドポイントにGETリクエストを送信し、
+/// モデルIDの一覧を返却する。
+/// - OpenAI/Google/OpenAI互換: {base_url}/models (Authorization: Bearer)
+/// - Anthropic: https://api.anthropic.com/v1/models (x-api-key + anthropic-version)
 #[tauri::command]
 pub async fn fetch_available_models(
     base_url: String,
     api_key: Option<String>,
+    provider: Option<LLMProvider>,
 ) -> Result<Vec<String>, AppError> {
-    let url = format!("{}/models", base_url.trim_end_matches('/'));
-
     let client = reqwest::Client::new();
+
+    let is_anthropic = matches!(provider, Some(LLMProvider::Anthropic));
+
+    // Anthropicの場合: base_urlに関係なく公式エンドポイントを使用
+    let url = if is_anthropic {
+        "https://api.anthropic.com/v1/models".to_string()
+    } else {
+        format!("{}/models", base_url.trim_end_matches('/'))
+    };
+
     let mut request = client.get(&url);
 
     if let Some(key) = &api_key {
         if !key.is_empty() {
-            request = request.header("Authorization", format!("Bearer {}", key));
+            if is_anthropic {
+                request = request
+                    .header("x-api-key", key.as_str())
+                    .header("anthropic-version", "2023-06-01");
+            } else {
+                request = request.header("Authorization", format!("Bearer {}", key));
+            }
         }
     }
 

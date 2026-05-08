@@ -35,11 +35,13 @@ impl EmotionGenerator {
                 role: MessageRole::System,
                 content: system_prompt,
                 tool_call_id: None,
+                images: None,
             },
             ChatMessage {
                 role: MessageRole::User,
                 content: user_prompt,
                 tool_call_id: None,
+                images: None,
             },
         ];
 

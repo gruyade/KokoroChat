@@ -86,6 +86,7 @@ impl DefaultSpontaneousSpeaker {
             role: MessageRole::System,
             content: system_prompt.to_string(),
             tool_call_id: None,
+            images: None,
         });
 
         // 直近の会話コンテキスト
@@ -99,6 +100,7 @@ impl DefaultSpontaneousSpeaker {
                 role,
                 content: msg.content.clone(),
                 tool_call_id: None,
+                images: None,
             });
         }
 
@@ -112,6 +114,7 @@ impl DefaultSpontaneousSpeaker {
             )
             .to_string(),
             tool_call_id: None,
+            images: None,
         });
 
         messages

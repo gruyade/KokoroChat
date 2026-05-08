@@ -120,12 +120,14 @@ impl DefaultChatEngine {
                 model: s.model,
                 api_key: s.api_key,
                 temperature: s.temperature,
+                provider: s.provider,
             })
             .unwrap_or(LLMClientConfig {
                 base_url: String::new(),
                 model: String::new(),
                 api_key: None,
                 temperature: 0.7,
+                provider: None,
             })
     }
 
@@ -186,6 +188,7 @@ impl DefaultChatEngine {
         history: &[ChatMessageRecord],
         user_content: &str,
         attachment_text: Option<&str>,
+        attachment_images: Option<Vec<String>>,
     ) -> Vec<ChatMessage> {
         let mut messages = Vec::new();
 
@@ -208,6 +211,7 @@ impl DefaultChatEngine {
             role: MessageRole::System,
             content: system_content,
             tool_call_id: None,
+            images: None,
         });
 
         // 2. Memory context（システムメッセージとして挿入）
@@ -216,6 +220,7 @@ impl DefaultChatEngine {
                 role: MessageRole::System,
                 content: format!("[Memory] {}", memory.content),
                 tool_call_id: None,
+                images: None,
             });
         }
 
@@ -231,6 +236,7 @@ impl DefaultChatEngine {
                 role,
                 content: msg.content.clone(),
                 tool_call_id: msg.tool_call_id.clone(),
+                images: None,
             });
         }
 
@@ -243,6 +249,7 @@ impl DefaultChatEngine {
             role: MessageRole::User,
             content: final_content,
             tool_call_id: None,
+            images: attachment_images,
         });
 
         messages
@@ -263,6 +270,20 @@ impl DefaultChatEngine {
             None
         } else {
             Some(texts.join("\n\n"))
+        }
+    }
+
+    /// 添付ファイルから画像のbase64データを抽出
+    pub(crate) fn extract_attachment_images(attachments: &[Attachment]) -> Option<Vec<String>> {
+        let images: Vec<String> = attachments
+            .iter()
+            .filter_map(|a| a.base64_data.clone())
+            .collect();
+
+        if images.is_empty() {
+            None
+        } else {
+            Some(images)
         }
     }
 
@@ -325,6 +346,9 @@ impl ChatEngine for DefaultChatEngine {
         let attachment_text = attachments
             .as_ref()
             .and_then(|a| Self::extract_attachment_text(a));
+        let attachment_images = attachments
+            .as_ref()
+            .and_then(|a| Self::extract_attachment_images(a));
         let message_attachments = attachments
             .as_ref()
             .map(|a| Self::to_message_attachments(a));
@@ -402,6 +426,7 @@ impl ChatEngine for DefaultChatEngine {
             &history,
             content,
             attachment_text.as_deref(),
+            attachment_images,
         );
 
         let session_id_owned = session_id.to_string();
@@ -665,6 +690,7 @@ impl ChatEngine for DefaultChatEngine {
             &history_without_last_user,
             &user_content,
             None,
+            None,
         );
 
         // 3. TTS有効判定
@@ -920,6 +946,7 @@ impl ChatEngine for DefaultChatEngine {
             &history_without_last_user,
             new_content,
             None,
+            None,
         );
 
         // 3. TTS有効判定
@@ -1085,6 +1112,9 @@ impl DefaultChatEngine {
         let attachment_text = attachments
             .as_ref()
             .and_then(|a| Self::extract_attachment_text(a));
+        let attachment_images = attachments
+            .as_ref()
+            .and_then(|a| Self::extract_attachment_images(a));
         let message_attachments = attachments
             .as_ref()
             .map(|a| Self::to_message_attachments(a));
@@ -1143,6 +1173,7 @@ impl DefaultChatEngine {
             &history,
             content,
             attachment_text.as_deref(),
+            attachment_images,
         );
 
         // 非ストリーミング呼び出し（tool_call検出可能）— ロック取得

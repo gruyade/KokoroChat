@@ -185,12 +185,14 @@ pub async fn improve_system_prompt(
             model: s.model,
             api_key: s.api_key,
             temperature: s.temperature,
+            provider: s.provider,
         })
         .unwrap_or_else(|| LLMClientConfig {
             base_url: String::new(),
             model: String::new(),
             api_key: None,
             temperature: 0.7,
+            provider: None,
         });
 
     let direction_text = match &direction {
@@ -219,6 +221,7 @@ pub async fn improve_system_prompt(
             name, description, current_prompt, direction_text
         ),
         tool_call_id: None,
+        images: None,
     }];
 
     let response = state.llm_client.chat(&messages, &llm_config, None).await?;

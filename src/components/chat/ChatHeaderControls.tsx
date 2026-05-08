@@ -30,6 +30,7 @@ export function ChatHeaderControls() {
   const [error, setError] = useState<string | null>(null);
   const [memoryGenerating, setMemoryGenerating] = useState(false);
 
+  const ttsEnabled = config?.tts?.enabled ?? false;
   const thoughtEnabled = config?.thought?.enabled ?? false;
   const spontaneousEnabled = config?.spontaneous?.enabled ?? false;
 
@@ -83,26 +84,28 @@ export function ChatHeaderControls() {
 
   return (
     <div className="flex items-center gap-1">
-      {/* ボリュームコントロール */}
-      <div className="flex items-center gap-1 mr-2">
-        <button
-          onClick={() => setVolume(volume > 0 ? 0 : 1)}
-          title={volume > 0 ? 'ミュート' : 'ミュート解除'}
-          className="p-1.5 rounded-md transition-colors text-foreground hover:bg-muted/50"
-        >
-          {volume > 0 ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
-        </button>
-        <input
-          type="range"
-          min={0}
-          max={1}
-          step={0.05}
-          value={volume}
-          onChange={(e) => setVolume(parseFloat(e.target.value))}
-          className="w-16 h-1.5 rounded-lg appearance-none bg-muted cursor-pointer"
-          title={`音量: ${Math.round(volume * 100)}%`}
-        />
-      </div>
+      {/* ボリュームコントロール — TTS有効時のみ表示 */}
+      {ttsEnabled && (
+        <div className="flex items-center gap-1 mr-2">
+          <button
+            onClick={() => setVolume(volume > 0 ? 0 : 1)}
+            title={volume > 0 ? 'ミュート' : 'ミュート解除'}
+            className="p-1.5 rounded-md transition-colors text-foreground hover:bg-muted/50"
+          >
+            {volume > 0 ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
+          </button>
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.05}
+            value={volume}
+            onChange={(e) => setVolume(parseFloat(e.target.value))}
+            className="w-16 h-1.5 rounded-lg appearance-none bg-muted cursor-pointer"
+            title={`音量: ${Math.round(volume * 100)}%`}
+          />
+        </div>
+      )}
 
       {/* メモリ生成ボタン */}
       <button

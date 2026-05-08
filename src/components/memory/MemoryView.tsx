@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { Brain, Trash2, Loader2 } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { useCharacterStore } from '../../stores';
 import { useOperationQueue } from '../../hooks/useOperationQueue';
 import type { Memory } from '../../types';
@@ -35,6 +36,21 @@ export function MemoryView() {
   useEffect(() => {
     if (!selectedCharacterId) return;
     loadMemories();
+  }, [selectedCharacterId, loadMemories]);
+
+  // memory:generated イベントをリッスンし、該当キャラクターの記憶を即時反映
+  useEffect(() => {
+    if (!selectedCharacterId) return;
+
+    const unlisten = listen<{ character_id: string }>('memory:generated', (event) => {
+      if (event.payload.character_id === selectedCharacterId) {
+        loadMemories();
+      }
+    });
+
+    return () => {
+      unlisten.then((fn) => fn());
+    };
   }, [selectedCharacterId, loadMemories]);
 
   const handleDelete = (id: string) => {
