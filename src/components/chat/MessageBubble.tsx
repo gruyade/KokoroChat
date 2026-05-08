@@ -174,12 +174,12 @@ export function MessageBubble({ message, onRegenerate, onDelete }: MessageBubble
         className={`flex items-start gap-2 max-w-[70%] ${message.role === 'user' ? 'flex-row-reverse' : ''}`}
       >
         {config.showIcon && (
-          <div className="shrink-0 mt-1 p-1 rounded-full bg-muted">
+          <div className="shrink-0 mt-1 w-7 h-7 rounded-full bg-muted flex items-center justify-center overflow-hidden">
             {selectedCharacter?.avatar_path ? (
               <AvatarImage
                 avatarPath={selectedCharacter.avatar_path}
                 alt={selectedCharacter.name}
-                className="h-5 w-5 rounded-full object-cover"
+                className="w-full h-full object-cover"
               />
             ) : (
               <config.icon className="h-4 w-4 text-muted-foreground" />
