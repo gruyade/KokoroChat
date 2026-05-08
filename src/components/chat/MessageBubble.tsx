@@ -53,7 +53,6 @@ function getRoleConfig(role: ChatMessageRecord['role']) {
 
 export function MessageBubble({ message, onRegenerate, onDelete }: MessageBubbleProps) {
   const config = getRoleConfig(message.role);
-  const [showMenu, setShowMenu] = useState(false);
   const [copied, setCopied] = useState(false);
   const [ttsLoading, setTtsLoading] = useState(false);
   const { editingMessageId, setEditingMessage, editAndResend } = useChatStore();
@@ -77,17 +76,14 @@ export function MessageBubble({ message, onRegenerate, onDelete }: MessageBubble
 
   const handleRegenerate = () => {
     onRegenerate?.(message.id);
-    setShowMenu(false);
   };
 
   const handleDelete = () => {
     onDelete?.(message.id);
-    setShowMenu(false);
   };
 
   const handleEdit = () => {
     setEditingMessage(message.id);
-    setShowMenu(false);
   };
 
   const handleEditConfirm = (newContent: string) => {
@@ -97,7 +93,6 @@ export function MessageBubble({ message, onRegenerate, onDelete }: MessageBubble
   const handleGenerateSpeech = async () => {
     if (!selectedCharacterId || ttsLoading) return;
     setTtsLoading(true);
-    setShowMenu(false);
     try {
       const audioBase64 = await invoke<string>('generate_speech_for_message', {
         text: message.content,
@@ -137,8 +132,6 @@ export function MessageBubble({ message, onRegenerate, onDelete }: MessageBubble
     return (
       <div
         className="group relative flex justify-end px-4 py-1 will-change-transform"
-        onMouseEnter={() => setShowMenu(true)}
-        onMouseLeave={() => requestAnimationFrame(() => setShowMenu(false))}
       >
         <div className="flex flex-col gap-1">
           <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-muted text-muted-foreground text-xs">
@@ -147,7 +140,7 @@ export function MessageBubble({ message, onRegenerate, onDelete }: MessageBubble
           </div>
           {/* Action buttons — 通常メッセージと同じ下部配置 */}
           <div className="flex items-center gap-0.5 h-6 overflow-visible justify-end">
-            <div className={`flex items-center gap-0.5 transition-opacity pointer-events-auto ${showMenu ? 'opacity-100' : 'opacity-0 invisible'}`}>
+            <div className="flex items-center gap-0.5 transition-all pointer-events-auto opacity-0 invisible group-hover:opacity-100 group-hover:visible">
               <button
                 onClick={handleEdit}
                 className="p-1 rounded text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
@@ -174,8 +167,6 @@ export function MessageBubble({ message, onRegenerate, onDelete }: MessageBubble
   return (
     <div
       className={`group relative flex ${config.align} px-4 py-1 will-change-transform`}
-      onMouseEnter={() => setShowMenu(true)}
-      onMouseLeave={() => requestAnimationFrame(() => setShowMenu(false))}
     >
       <div
         className={`flex items-start gap-2 max-w-[70%] ${message.role === 'user' ? 'flex-row-reverse' : ''}`}
@@ -216,7 +207,7 @@ export function MessageBubble({ message, onRegenerate, onDelete }: MessageBubble
 
               {/* Action buttons — 常にスペース確保、ホバーで表示 */}
               <div className={`flex items-center gap-0.5 h-6 overflow-visible ${message.role === 'user' ? 'justify-end' : ''}`}>
-                <div className={`flex items-center gap-0.5 transition-opacity pointer-events-auto ${showMenu ? 'opacity-100' : 'opacity-0 invisible'}`}>
+                <div className="flex items-center gap-0.5 transition-all pointer-events-auto opacity-0 invisible group-hover:opacity-100 group-hover:visible">
                   <button
                     onClick={handleCopy}
                     className="p-1 rounded text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
