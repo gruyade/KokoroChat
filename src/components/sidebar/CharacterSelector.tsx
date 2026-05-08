@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { useCharacterStore } from '../../stores';
+import { AvatarImage } from '../common/AvatarImage';
 
 export function CharacterSelector() {
   const { characters, selectedCharacterId, selectCharacter } = useCharacterStore();
@@ -46,8 +47,12 @@ export function CharacterSelector() {
         onClick={() => setOpen(!open)}
         className="w-full flex items-center gap-2 p-2 rounded-lg bg-muted cursor-pointer hover:bg-accent transition-colors"
       >
-        <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center text-primary text-sm font-bold shrink-0">
-          {selectedCharacter ? getInitial(selectedCharacter.name) : '?'}
+        <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center text-primary text-sm font-bold shrink-0 overflow-hidden">
+          {selectedCharacter?.avatar_path ? (
+            <AvatarImage avatarPath={selectedCharacter.avatar_path} alt={selectedCharacter.name} className="w-full h-full object-cover" />
+          ) : (
+            selectedCharacter ? getInitial(selectedCharacter.name) : '?'
+          )}
         </div>
         <div className="flex-1 min-w-0 text-left">
           <div className="text-sm font-medium truncate text-foreground">
@@ -77,8 +82,12 @@ export function CharacterSelector() {
                   : 'hover:bg-muted text-foreground'
               }`}
             >
-              <div className="w-7 h-7 rounded-full bg-primary/20 flex items-center justify-center text-primary text-xs font-bold shrink-0">
-                {getInitial(character.name)}
+              <div className="w-7 h-7 rounded-full bg-primary/20 flex items-center justify-center text-primary text-xs font-bold shrink-0 overflow-hidden">
+                {character.avatar_path ? (
+                  <AvatarImage avatarPath={character.avatar_path} alt={character.name} className="w-full h-full object-cover" />
+                ) : (
+                  getInitial(character.name)
+                )}
               </div>
               <div className="flex-1 min-w-0">
                 <div className="text-sm font-medium truncate">{character.name}</div>

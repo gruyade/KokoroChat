@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { User, Trash2, Edit, Download } from 'lucide-react';
 import type { Character } from '../../types';
 import { ExportDialog } from './ExportDialog';
+import { AvatarImage } from '../common/AvatarImage';
 
 interface CharacterCardProps {
   character: Character;
@@ -32,10 +33,10 @@ export function CharacterCard({
       >
         <div className="flex items-start gap-3">
           {/* Avatar */}
-          <div className="w-10 h-10 rounded-full bg-muted flex items-center justify-center flex-shrink-0">
+          <div className="w-10 h-10 rounded-full bg-muted flex items-center justify-center flex-shrink-0 overflow-hidden">
             {character.avatar_path ? (
-              <img
-                src={character.avatar_path}
+              <AvatarImage
+                avatarPath={character.avatar_path}
                 alt={character.name}
                 className="w-10 h-10 rounded-full object-cover"
               />
