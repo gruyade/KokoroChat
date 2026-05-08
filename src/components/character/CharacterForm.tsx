@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Save, X, Wand2, Sparkles, Loader2 } from 'lucide-react';
-import { invoke } from '@tauri-apps/api/core';
+import { Save, X, Wand2, Sparkles, Loader2, Camera } from 'lucide-react';
+import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import type { Character, TTSConfig, TTSProvider, EmotionParams, IrodoriMode } from '../../types';
+import { AvatarCropDialog } from './AvatarCropDialog';
 
 /** TTS設定セクションのローカルステート */
 interface TTSFormState {
@@ -44,6 +45,7 @@ interface CharacterFormProps {
     name: string;
     description: string;
     system_prompt: string;
+    avatar_path?: string;
     tts_config?: TTSConfig;
   }) => void;
   onCancel: () => void;
@@ -54,6 +56,8 @@ export function CharacterForm({ character, onSave, onCancel, loading }: Characte
   const [name, setName] = useState('');
   const [description, setDescription] = useState('');
   const [systemPrompt, setSystemPrompt] = useState('');
+  const [avatarPath, setAvatarPath] = useState<string | null>(null);
+  const [cropImage, setCropImage] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
   const [improving, setImproving] = useState(false);
   const [improveDirection, setImproveDirection] = useState('');
@@ -66,10 +70,12 @@ export function CharacterForm({ character, onSave, onCancel, loading }: Characte
       setName(character.name);
       setDescription(character.description);
       setSystemPrompt(character.system_prompt);
+      setAvatarPath(character.avatar_path ?? null);
     } else {
       setName('');
       setDescription('');
       setSystemPrompt('');
+      setAvatarPath(null);
     }
   }, [character]);
 
@@ -134,6 +140,26 @@ export function CharacterForm({ character, onSave, onCancel, loading }: Characte
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [character]);
 
+  const handleAvatarSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => setCropImage(reader.result as string);
+    reader.readAsDataURL(file);
+    // Reset input so same file can be re-selected
+    e.target.value = '';
+  };
+
+  const handleAvatarCrop = async (base64: string) => {
+    setCropImage(null);
+    try {
+      const path = await invoke<string>('save_avatar', { base64Data: base64 });
+      setAvatarPath(path);
+    } catch (e) {
+      console.error('Avatar save failed:', e);
+    }
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim()) return;
@@ -170,6 +196,7 @@ export function CharacterForm({ character, onSave, onCancel, loading }: Characte
       name: name.trim(),
       description: description.trim(),
       system_prompt: systemPrompt,
+      avatar_path: avatarPath ?? undefined,
       tts_config,
     });
   };
@@ -226,6 +253,42 @@ export function CharacterForm({ character, onSave, onCancel, loading }: Characte
           <X className="w-5 h-5" />
         </button>
       </div>
+
+      {/* Avatar */}
+      <div className="flex items-center gap-4">
+        <label className="relative cursor-pointer group">
+          <input
+            type="file"
+            accept="image/*"
+            onChange={handleAvatarSelect}
+            className="hidden"
+          />
+          <div className="w-16 h-16 rounded-full bg-muted border border-border flex items-center justify-center overflow-hidden group-hover:ring-2 group-hover:ring-primary transition-all">
+            {avatarPath ? (
+              <img
+                src={convertFileSrc(avatarPath)}
+                alt="アバター"
+                className="w-full h-full object-cover"
+              />
+            ) : (
+              <Camera className="w-6 h-6 text-muted-foreground" />
+            )}
+          </div>
+          <span className="absolute -bottom-1 -right-1 p-0.5 rounded-full bg-primary text-primary-foreground opacity-0 group-hover:opacity-100 transition-opacity">
+            <Camera className="w-3 h-3" />
+          </span>
+        </label>
+        <p className="text-xs text-muted-foreground">クリックしてアバター画像を選択</p>
+      </div>
+
+      {/* Crop Dialog */}
+      {cropImage && (
+        <AvatarCropDialog
+          imageSrc={cropImage}
+          onConfirm={handleAvatarCrop}
+          onCancel={() => setCropImage(null)}
+        />
+      )}
 
       {/* Name */}
       <div>

@@ -362,6 +362,36 @@ pub async fn export_character(
     })
 }
 
+/// アバター画像を保存
+/// Base64エンコードされた画像データを受け取り、appDataDir/avatars/ に保存
+#[tauri::command]
+pub async fn save_avatar(
+    base64_data: String,
+    app_handle: tauri::AppHandle,
+) -> Result<String, AppError> {
+    use tauri::Manager;
+
+    let app_data_dir = app_handle.path().app_data_dir()
+        .map_err(|e| AppError::Io(format!("Failed to get app data dir: {}", e)))?;
+    let avatars_dir = app_data_dir.join("avatars");
+    std::fs::create_dir_all(&avatars_dir)
+        .map_err(|e| AppError::Io(format!("Failed to create avatars dir: {}", e)))?;
+
+    let file_name = format!("{}.png", uuid::Uuid::new_v4());
+    let file_path = avatars_dir.join(&file_name);
+
+    // Base64デコード
+    use base64::Engine;
+    let data = base64::engine::general_purpose::STANDARD
+        .decode(&base64_data)
+        .map_err(|e| AppError::Io(format!("Failed to decode base64: {}", e)))?;
+
+    std::fs::write(&file_path, &data)
+        .map_err(|e| AppError::Io(format!("Failed to write avatar file: {}", e)))?;
+
+    Ok(file_path.to_string_lossy().to_string())
+}
+
 /// キャラクターデータのインポート
 ///
 /// エクスポートされたJSONデータからキャラクターを新規作成する。

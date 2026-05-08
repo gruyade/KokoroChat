@@ -1,4 +1,5 @@
 import { Plus, User } from 'lucide-react';
+import { convertFileSrc } from '@tauri-apps/api/core';
 import { useCharacterStore } from '../../stores';
 
 export function CharacterList() {
@@ -24,7 +25,15 @@ export function CharacterList() {
                 : 'text-muted-foreground hover:bg-accent/50 hover:text-accent-foreground'
             }`}
           >
-            <User className="h-4 w-4 shrink-0" />
+            {character.avatar_path ? (
+              <img
+                src={convertFileSrc(character.avatar_path)}
+                alt={character.name}
+                className="h-5 w-5 rounded-full object-cover shrink-0"
+              />
+            ) : (
+              <User className="h-4 w-4 shrink-0" />
+            )}
             <div className="flex flex-col min-w-0">
               <span className="truncate font-medium">{character.name}</span>
               {character.description && (

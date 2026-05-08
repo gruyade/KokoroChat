@@ -42,7 +42,7 @@ export function CharacterView() {
     await deleteCharacter(id);
   };
 
-  const handleSave = async (data: { name: string; description: string; system_prompt: string; tts_config?: import('../../types').TTSConfig }) => {
+  const handleSave = async (data: { name: string; description: string; system_prompt: string; avatar_path?: string; tts_config?: import('../../types').TTSConfig }) => {
     const { showToast } = useUIStore.getState();
     try {
       if (editingCharacter) {
@@ -50,13 +50,17 @@ export function CharacterView() {
           name: data.name,
           description: data.description,
           system_prompt: data.system_prompt,
+          avatar_path: data.avatar_path,
           tts_config: data.tts_config,
         });
       } else {
         const created = await createCharacter(data.name, data.description, data.system_prompt || undefined);
-        // 新規作成後にTTS設定がある場合は更新で追加
-        if (data.tts_config) {
-          await updateCharacter(created.id, { tts_config: data.tts_config });
+        // 新規作成後にTTS設定やアバターがある場合は更新で追加
+        const postUpdates: import('../../types').CharacterUpdate = {};
+        if (data.tts_config) postUpdates.tts_config = data.tts_config;
+        if (data.avatar_path) postUpdates.avatar_path = data.avatar_path;
+        if (Object.keys(postUpdates).length > 0) {
+          await updateCharacter(created.id, postUpdates);
         }
       }
       setShowForm(false);

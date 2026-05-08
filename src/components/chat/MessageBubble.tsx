@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Bot, User, Sparkles, Wrench, Copy, RefreshCw, Trash2, Info, Pencil, Volume2 } from 'lucide-react';
-import { invoke } from '@tauri-apps/api/core';
+import { invoke, convertFileSrc } from '@tauri-apps/api/core';
 import type { ChatMessageRecord } from '../../types';
 import { ToolCallIndicator } from './ToolCallIndicator';
 import { EditableMessage } from './EditableMessage';
@@ -56,9 +56,10 @@ export function MessageBubble({ message, onRegenerate, onDelete }: MessageBubble
   const [copied, setCopied] = useState(false);
   const [ttsLoading, setTtsLoading] = useState(false);
   const { editingMessageId, setEditingMessage, editAndResend } = useChatStore();
-  const { selectedCharacterId } = useCharacterStore();
+  const { selectedCharacterId, characters } = useCharacterStore();
   const { config: appConfig } = useConfigStore();
   const ttsEnabled = appConfig?.tts?.enabled ?? false;
+  const selectedCharacter = characters.find((c) => c.id === selectedCharacterId);
 
   const isEditing = editingMessageId === message.id;
 
@@ -173,7 +174,15 @@ export function MessageBubble({ message, onRegenerate, onDelete }: MessageBubble
       >
         {config.showIcon && (
           <div className="shrink-0 mt-1 p-1 rounded-full bg-muted">
-            <config.icon className="h-4 w-4 text-muted-foreground" />
+            {selectedCharacter?.avatar_path ? (
+              <img
+                src={convertFileSrc(selectedCharacter.avatar_path)}
+                alt={selectedCharacter.name}
+                className="h-5 w-5 rounded-full object-cover"
+              />
+            ) : (
+              <config.icon className="h-4 w-4 text-muted-foreground" />
+            )}
           </div>
         )}
         <div className="flex flex-col gap-1">

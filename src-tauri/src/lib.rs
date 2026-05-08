@@ -177,6 +177,7 @@ pub fn run() {
             commands::character::improve_system_prompt,
             commands::character::export_character,
             commands::character::import_character,
+            commands::character::save_avatar,
             commands::chat::create_session,
             commands::chat::send_message,
             commands::chat::get_history,
