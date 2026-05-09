@@ -1,6 +1,6 @@
 {
   "productName": "KokoroChat",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "identifier": "com.kokoro-chat.app",
   "build": {
     "frontendDist": "../dist",
