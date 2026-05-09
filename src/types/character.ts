@@ -23,4 +23,8 @@ export interface CharacterUpdate {
   system_prompt?: string;
   avatar_path?: string;
   tts_config?: TTSConfig;
+  /** trueの場合、avatar_pathをNULLに更新する */
+  clear_avatar?: boolean;
+  /** trueの場合、tts_configをNULLに更新する */
+  clear_tts?: boolean;
 }

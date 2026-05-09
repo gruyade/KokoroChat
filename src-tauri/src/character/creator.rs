@@ -378,6 +378,8 @@ mod tests {
             system_prompt: Some("新しいプロンプト".to_string()),
             avatar_path: None,
             tts_config: None,
+            clear_avatar: None,
+            clear_tts: None,
         };
 
         creator.update_character(&id, updates).await.unwrap();
