@@ -1,13 +1,13 @@
 [package]
-name = "ai-character-chat"
+name = "kokoro-chat"
 version = "0.1.0"
-description = "AI Character Chat Desktop Application"
-authors = ["AI Character Chat Contributors"]
+description = "KokoroChat Desktop Application"
+authors = ["KokoroChat Contributors"]
 edition = "2021"
 rust-version = "1.75"
 
 [lib]
-name = "ai_character_chat_lib"
+name = "kokoro_chat_lib"
 crate-type = ["lib", "cdylib", "staticlib"]
 
 [build-dependencies]

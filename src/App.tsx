@@ -11,7 +11,7 @@ import { SettingsView } from './components/settings/SettingsView';
 import { DebugPanel } from './components/debug/DebugPanel';
 import { ToastContainer } from './components/toast/Toast';
 
-const STORAGE_KEY = 'ai-character-chat-last-state';
+const STORAGE_KEY = 'kokoro-chat-last-state';
 
 interface SavedState {
   characterId: string | null;

@@ -25,7 +25,7 @@ export function Sidebar() {
         className="p-4 border-b border-border cursor-pointer hover:bg-muted/50 transition-colors"
         onClick={handleBackToChat}
       >
-        <h1 className="text-lg font-semibold text-primary">AI Character Chat</h1>
+        <h1 className="text-lg font-semibold text-primary">KokoroChat</h1>
       </div>
 
       {/* Character Selector */}
