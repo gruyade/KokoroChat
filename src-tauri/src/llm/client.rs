@@ -341,7 +341,17 @@ impl OpenAICompatibleClient {
 
     /// APIエンドポイントURLを構築
     fn build_url(config: &LLMClientConfig) -> String {
-        let base = config.base_url.trim_end_matches('/');
+        let base = if config.base_url.is_empty() {
+            match config.provider {
+                Some(LLMProvider::Google) => {
+                    "https://generativelanguage.googleapis.com/v1beta/openai"
+                }
+                Some(LLMProvider::Openai) => "https://api.openai.com/v1",
+                _ => "",
+            }
+        } else {
+            config.base_url.trim_end_matches('/')
+        };
         format!("{}/chat/completions", base)
     }
 
@@ -953,6 +963,36 @@ mod tests {
         assert_eq!(
             OpenAICompatibleClient::build_url(&config2),
             "http://localhost:8080/v1/chat/completions"
+        );
+    }
+
+    #[test]
+    fn test_build_url_empty_base_url_google() {
+        let config = LLMClientConfig {
+            base_url: "".to_string(),
+            model: "gemini-2.0-flash".to_string(),
+            api_key: None,
+            temperature: 0.7,
+            provider: Some(LLMProvider::Google),
+        };
+        assert_eq!(
+            OpenAICompatibleClient::build_url(&config),
+            "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+        );
+    }
+
+    #[test]
+    fn test_build_url_empty_base_url_openai() {
+        let config = LLMClientConfig {
+            base_url: "".to_string(),
+            model: "gpt-4".to_string(),
+            api_key: None,
+            temperature: 0.7,
+            provider: Some(LLMProvider::Openai),
+        };
+        assert_eq!(
+            OpenAICompatibleClient::build_url(&config),
+            "https://api.openai.com/v1/chat/completions"
         );
     }
 
