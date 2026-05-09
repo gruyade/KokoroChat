@@ -46,8 +46,9 @@ mod tests {
             &self,
             _messages: &[ChatMessage],
             _config: &LLMClientConfig,
+            _tools: Option<&[ToolDefinition]>,
             callback: Box<dyn Fn(String) + Send>,
-        ) -> Result<String, AppError> {
+        ) -> Result<LLMResponse, AppError> {
             // チャンクごとにコールバック呼び出しをシミュレート
             let chunks: Vec<&str> = self.response_text.split(' ').collect();
             let mut full = String::new();
@@ -60,7 +61,7 @@ mod tests {
                 full.push_str(&text);
                 callback(text);
             }
-            Ok(full)
+            Ok(LLMResponse::Text(full))
         }
 
         async fn test_connection(&self, _config: &LLMClientConfig) -> Result<(), AppError> {
@@ -90,9 +91,10 @@ mod tests {
             &self,
             _messages: &[ChatMessage],
             _config: &LLMClientConfig,
+            _tools: Option<&[ToolDefinition]>,
             _callback: Box<dyn Fn(String) + Send>,
-        ) -> Result<String, AppError> {
-            Ok(String::new())
+        ) -> Result<LLMResponse, AppError> {
+            Ok(LLMResponse::Text(String::new()))
         }
 
         async fn test_connection(&self, _config: &LLMClientConfig) -> Result<(), AppError> {
@@ -134,12 +136,13 @@ mod tests {
             &self,
             messages: &[ChatMessage],
             _config: &LLMClientConfig,
+            _tools: Option<&[ToolDefinition]>,
             callback: Box<dyn Fn(String) + Send>,
-        ) -> Result<String, AppError> {
+        ) -> Result<LLMResponse, AppError> {
             let mut cap = self.captured.lock().unwrap();
             *cap = messages.to_vec();
             callback("OK".to_string());
-            Ok("OK".to_string())
+            Ok(LLMResponse::Text("OK".to_string()))
         }
 
         async fn test_connection(&self, _config: &LLMClientConfig) -> Result<(), AppError> {
@@ -264,6 +267,7 @@ mod tests {
             test_llm_lock(),
             test_tts_connector(),
             None,
+            None,
         );
 
         let session_id = engine.create_session("char-001").await.unwrap();
@@ -291,6 +295,7 @@ mod tests {
             test_llm_lock(),
             test_tts_connector(),
             None,
+            None,
         );
 
         // 存在しないキャラクターでもセッション作成自体は成功
@@ -310,6 +315,7 @@ mod tests {
             test_config(),
             test_llm_lock(),
             test_tts_connector(),
+            None,
             None,
         );
 
@@ -331,6 +337,7 @@ mod tests {
             test_llm_lock(),
             test_tts_connector(),
             None,
+            None,
         );
 
         let sessions = engine.list_sessions("char-001").await.unwrap();
@@ -347,6 +354,7 @@ mod tests {
             test_config(),
             test_llm_lock(),
             test_tts_connector(),
+            None,
             None,
         );
 
@@ -369,6 +377,7 @@ mod tests {
             test_llm_lock(),
             test_tts_connector(),
             None,
+            None,
         );
 
         let session_id = engine.create_session("char-001").await.unwrap();
@@ -386,6 +395,7 @@ mod tests {
             test_config(),
             test_llm_lock(),
             test_tts_connector(),
+            None,
             None,
         );
 
@@ -416,6 +426,7 @@ mod tests {
             test_config(),
             test_llm_lock(),
             test_tts_connector(),
+            None,
             None,
         );
 
@@ -466,6 +477,7 @@ mod tests {
             test_config(),
             test_llm_lock(),
             test_tts_connector(),
+            None,
             None,
         );
 
@@ -522,6 +534,7 @@ mod tests {
             test_config(),
             test_llm_lock(),
             test_tts_connector(),
+            None,
             None,
         );
 
@@ -634,6 +647,7 @@ mod tests {
             test_llm_lock(),
             test_tts_connector(),
             None,
+            None,
         );
 
         let memories = vec![Memory {
@@ -690,6 +704,7 @@ mod tests {
             test_config(),
             test_llm_lock(),
             test_tts_connector(),
+            None,
             None,
         );
 
@@ -848,5 +863,527 @@ mod tests {
             pitch: Some(0.0),
             irodori_mode: None,
         }
+    }
+
+    // =========================================================================
+    // Tool Execution Loop Tests
+    //
+    // send_message のツール実行ループを検証するテスト群。
+    // DefaultChatEngine::send_message_for_test を使用（AppHandle不要のテスト専用メソッド）。
+    // =========================================================================
+
+    use crate::models::plugin::ToolResult;
+    use crate::plugin::system::PluginSystem;
+
+    /// 連続呼び出しで異なるレスポンスを返すMockLLMClient
+    struct SequentialMockLLMClient {
+        responses: Arc<Mutex<Vec<LLMResponse>>>,
+        call_count: Arc<Mutex<usize>>,
+    }
+
+    impl SequentialMockLLMClient {
+        fn new(responses: Vec<LLMResponse>) -> Self {
+            Self {
+                responses: Arc::new(Mutex::new(responses)),
+                call_count: Arc::new(Mutex::new(0)),
+            }
+        }
+
+        fn get_call_count(&self) -> usize {
+            *self.call_count.lock().unwrap()
+        }
+    }
+
+    #[async_trait]
+    impl LLMClient for SequentialMockLLMClient {
+        async fn chat(
+            &self,
+            _messages: &[ChatMessage],
+            _config: &LLMClientConfig,
+            _tools: Option<&[ToolDefinition]>,
+        ) -> Result<LLMResponse, AppError> {
+            let mut count = self.call_count.lock().unwrap();
+            let responses = self.responses.lock().unwrap();
+            let idx = *count;
+            *count += 1;
+            if idx < responses.len() {
+                Ok(responses[idx].clone())
+            } else {
+                Ok(responses.last().cloned().unwrap_or(LLMResponse::Text("done".to_string())))
+            }
+        }
+
+        async fn chat_stream(
+            &self,
+            _messages: &[ChatMessage],
+            _config: &LLMClientConfig,
+            _tools: Option<&[ToolDefinition]>,
+            callback: Box<dyn Fn(String) + Send>,
+        ) -> Result<LLMResponse, AppError> {
+            let mut count = self.call_count.lock().unwrap();
+            let responses = self.responses.lock().unwrap();
+            let idx = *count;
+            *count += 1;
+            let response = if idx < responses.len() {
+                responses[idx].clone()
+            } else {
+                responses.last().cloned().unwrap_or(LLMResponse::Text("done".to_string()))
+            };
+
+            match &response {
+                LLMResponse::Text(text) => {
+                    callback(text.clone());
+                }
+                LLMResponse::ToolCalls(_) => {
+                    // ToolCallsの場合はコールバックを呼ばない
+                }
+            }
+            Ok(response)
+        }
+
+        async fn test_connection(&self, _config: &LLMClientConfig) -> Result<(), AppError> {
+            Ok(())
+        }
+    }
+
+    /// テスト用MockPluginSystem
+    struct MockPluginSystem {
+        tool_definitions: Vec<ToolDefinition>,
+    }
+
+    impl MockPluginSystem {
+        fn new() -> Self {
+            Self {
+                tool_definitions: vec![ToolDefinition {
+                    name: "calculator".to_string(),
+                    description: "Calculate math expressions".to_string(),
+                    parameters: serde_json::json!({
+                        "type": "object",
+                        "properties": {
+                            "expression": { "type": "string" }
+                        }
+                    }),
+                }],
+            }
+        }
+    }
+
+    #[async_trait]
+    impl PluginSystem for MockPluginSystem {
+        async fn handle_tool_calls(
+            &self,
+            tool_calls: &[crate::models::ToolCall],
+        ) -> Result<Vec<ToolResult>, AppError> {
+            let results = tool_calls
+                .iter()
+                .map(|tc| ToolResult {
+                    tool_call_id: tc.id.clone(),
+                    content: format!("Result for {}: 4", tc.name),
+                    is_error: false,
+                })
+                .collect();
+            Ok(results)
+        }
+
+        fn get_enabled_tools(&self) -> Vec<ToolDefinition> {
+            self.tool_definitions.clone()
+        }
+    }
+
+    /// Test 1: ToolCall → ToolResult → 最終テキスト応答
+    /// LLMが最初にToolCallsを返し、次にTextを返すシナリオ
+    #[tokio::test]
+    async fn test_tool_loop_single_tool_call_then_text() {
+        let db = setup_db_with_character();
+        let llm = Arc::new(SequentialMockLLMClient::new(vec![
+            // 1回目: ToolCallsを返す
+            LLMResponse::ToolCalls(vec![ToolCall {
+                id: "call_001".to_string(),
+                name: "calculator".to_string(),
+                arguments: serde_json::json!({"expression": "2+2"}),
+            }]),
+            // 2回目: テキストを返す
+            LLMResponse::Text("The answer is 4.".to_string()),
+        ]));
+        let plugin_system: Arc<dyn PluginSystem> = Arc::new(MockPluginSystem::new());
+        let engine = DefaultChatEngine::new(
+            db.clone(),
+            llm.clone(),
+            test_config(),
+            test_llm_lock(),
+            test_tts_connector(),
+            None,
+            Some(plugin_system),
+        );
+
+        let session_id = engine.create_session("char-001").await.unwrap();
+
+        engine
+            .send_message_for_test(&session_id, "What is 2+2?", None)
+            .await
+            .unwrap();
+
+        // LLMが2回呼ばれたことを確認
+        assert_eq!(llm.get_call_count(), 2);
+
+        // DB内のメッセージを確認
+        let messages = {
+            let db_lock = db.lock().unwrap();
+            chat_repo::get_messages(db_lock.connection(), &session_id).unwrap()
+        };
+
+        // 期待: user, assistant(tool_calls), tool(result), assistant(final text)
+        assert_eq!(messages.len(), 4);
+
+        // 1. ユーザーメッセージ
+        assert_eq!(messages[0].role, ChatRole::User);
+        assert_eq!(messages[0].content, "What is 2+2?");
+
+        // 2. アシスタント（tool_calls含む）
+        assert_eq!(messages[1].role, ChatRole::Assistant);
+        assert!(messages[1].tool_calls.is_some());
+        let tool_calls = messages[1].tool_calls.as_ref().unwrap();
+        assert_eq!(tool_calls.len(), 1);
+        assert_eq!(tool_calls[0].name, "calculator");
+
+        // 3. ツール結果
+        assert_eq!(messages[2].role, ChatRole::Tool);
+        assert_eq!(messages[2].tool_call_id, Some("call_001".to_string()));
+        assert!(messages[2].content.contains("Result for calculator"));
+
+        // 4. 最終アシスタント応答
+        assert_eq!(messages[3].role, ChatRole::Assistant);
+        assert_eq!(messages[3].content, "The answer is 4.");
+    }
+
+    /// Test 2: MAX_TOOL_ITERATIONS制限テスト
+    /// LLMが常にToolCallsを返す場合、10回で停止することを確認
+    #[tokio::test]
+    async fn test_tool_loop_max_iterations_limit() {
+        let db = setup_db_with_character();
+
+        // 常にToolCallsを返すレスポンスを15個用意（10回ループ + 安全マージン）
+        let responses: Vec<LLMResponse> = (0..15)
+            .map(|i| {
+                LLMResponse::ToolCalls(vec![ToolCall {
+                    id: format!("call_{:03}", i + 1),
+                    name: "calculator".to_string(),
+                    arguments: serde_json::json!({"expression": "loop"}),
+                }])
+            })
+            .collect();
+
+        let llm = Arc::new(SequentialMockLLMClient::new(responses));
+        let plugin_system: Arc<dyn PluginSystem> = Arc::new(MockPluginSystem::new());
+        let engine = DefaultChatEngine::new(
+            db.clone(),
+            llm.clone(),
+            test_config(),
+            test_llm_lock(),
+            test_tts_connector(),
+            None,
+            Some(plugin_system),
+        );
+
+        let session_id = engine.create_session("char-001").await.unwrap();
+
+        engine
+            .send_message_for_test(&session_id, "infinite loop test", None)
+            .await
+            .unwrap();
+
+        // LLMが10回呼ばれたことを確認（MAX_TOOL_ITERATIONS = 10）
+        assert_eq!(llm.get_call_count(), 10);
+
+        // DB内のメッセージを確認
+        let messages = {
+            let db_lock = db.lock().unwrap();
+            chat_repo::get_messages(db_lock.connection(), &session_id).unwrap()
+        };
+
+        // 最後のメッセージがフォールバックメッセージであることを確認
+        let last_msg = messages.last().unwrap();
+        assert_eq!(last_msg.role, ChatRole::Assistant);
+        assert!(last_msg.content.contains("Tool execution limit reached"));
+    }
+
+    /// Test 3: PluginSystem未設定時のエラー結果生成テスト
+    /// plugin_system=None の場合、ToolCallに対してエラー結果が生成されることを確認
+    #[tokio::test]
+    async fn test_tool_loop_plugin_system_unavailable() {
+        let db = setup_db_with_character();
+        let llm = Arc::new(SequentialMockLLMClient::new(vec![
+            // 1回目: ToolCallsを返す
+            LLMResponse::ToolCalls(vec![ToolCall {
+                id: "call_001".to_string(),
+                name: "calculator".to_string(),
+                arguments: serde_json::json!({"expression": "2+2"}),
+            }]),
+            // 2回目: テキストを返す（エラー結果を受けてLLMが応答）
+            LLMResponse::Text("Sorry, the tool is not available.".to_string()),
+        ]));
+
+        // plugin_system = None で作成
+        let engine = DefaultChatEngine::new(
+            db.clone(),
+            llm.clone(),
+            test_config(),
+            test_llm_lock(),
+            test_tts_connector(),
+            None,
+            None, // PluginSystem未設定
+        );
+
+        let session_id = engine.create_session("char-001").await.unwrap();
+
+        engine
+            .send_message_for_test(&session_id, "Calculate 2+2", None)
+            .await
+            .unwrap();
+
+        // LLMが2回呼ばれたことを確認
+        assert_eq!(llm.get_call_count(), 2);
+
+        // DB内のメッセージを確認
+        let messages = {
+            let db_lock = db.lock().unwrap();
+            chat_repo::get_messages(db_lock.connection(), &session_id).unwrap()
+        };
+
+        // 期待: user, assistant(tool_calls), tool(error result), assistant(final text)
+        assert_eq!(messages.len(), 4);
+
+        // ツール結果がエラーメッセージを含むことを確認
+        assert_eq!(messages[2].role, ChatRole::Tool);
+        assert!(messages[2].content.contains("Plugin system is not available"));
+
+        // 最終応答
+        assert_eq!(messages[3].role, ChatRole::Assistant);
+        assert_eq!(messages[3].content, "Sorry, the tool is not available.");
+    }
+
+    // =========================================================================
+    // E2E Integration Test: Real Calculator Plugin
+    //
+    // 実際の CalculatorPlugin + DefaultPluginRegistry + DefaultPluginSystem を使い、
+    // LLM → ToolCall検出 → PluginSystemディスパッチ → Calculator実行 → 結果DB保存
+    // → LLM再呼び出し の完全フローを検証する。
+    // =========================================================================
+
+    use crate::plugin::builtin::CalculatorPlugin;
+    use crate::plugin::registry::{DefaultPluginRegistry, PluginRegistry};
+    use crate::plugin::system::DefaultPluginSystem;
+
+    /// E2E Test: 実際のCalculatorPluginを使ったツール実行フロー
+    /// SequentialMockLLMClient が最初に ToolCall("calculate", {"expression": "3 + 5 * 2"}) を返し、
+    /// 次にテキスト応答を返す。Calculator が実際に数式を評価し、結果 "13" がDBに保存されることを確認。
+    #[tokio::test]
+    async fn test_e2e_real_calculator_plugin_execution() {
+        let db = setup_db_with_character();
+
+        // 実際の PluginRegistry + CalculatorPlugin を構築
+        let registry = Arc::new(DefaultPluginRegistry::new());
+        registry
+            .register(Box::new(CalculatorPlugin::new()))
+            .unwrap();
+
+        let plugin_system: Arc<dyn PluginSystem> =
+            Arc::new(DefaultPluginSystem::new(registry));
+
+        // LLMモック: 1回目=ToolCall, 2回目=テキスト応答
+        let llm = Arc::new(SequentialMockLLMClient::new(vec![
+            LLMResponse::ToolCalls(vec![ToolCall {
+                id: "call_calc_001".to_string(),
+                name: "calculate".to_string(),
+                arguments: serde_json::json!({"expression": "3 + 5 * 2"}),
+            }]),
+            LLMResponse::Text("The result of 3 + 5 * 2 is 13.".to_string()),
+        ]));
+
+        let engine = DefaultChatEngine::new(
+            db.clone(),
+            llm.clone(),
+            test_config(),
+            test_llm_lock(),
+            test_tts_connector(),
+            None,
+            Some(plugin_system),
+        );
+
+        let session_id = engine.create_session("char-001").await.unwrap();
+
+        engine
+            .send_message_for_test(&session_id, "What is 3 + 5 * 2?", None)
+            .await
+            .unwrap();
+
+        // LLMが2回呼ばれたことを確認（ToolCall応答 → テキスト応答）
+        assert_eq!(llm.get_call_count(), 2);
+
+        // DB内のメッセージを検証
+        let messages = {
+            let db_lock = db.lock().unwrap();
+            chat_repo::get_messages(db_lock.connection(), &session_id).unwrap()
+        };
+
+        // 期待: user, assistant(tool_calls), tool(result), assistant(final text) = 4件
+        assert_eq!(messages.len(), 4);
+
+        // 1. ユーザーメッセージ
+        assert_eq!(messages[0].role, ChatRole::User);
+        assert_eq!(messages[0].content, "What is 3 + 5 * 2?");
+
+        // 2. アシスタント（tool_calls含む）
+        assert_eq!(messages[1].role, ChatRole::Assistant);
+        assert!(messages[1].tool_calls.is_some());
+        let tool_calls = messages[1].tool_calls.as_ref().unwrap();
+        assert_eq!(tool_calls.len(), 1);
+        assert_eq!(tool_calls[0].name, "calculate");
+        assert_eq!(tool_calls[0].id, "call_calc_001");
+
+        // 3. ツール実行結果 — 実際のCalculatorPluginが "3 + 5 * 2" を評価した結果
+        assert_eq!(messages[2].role, ChatRole::Tool);
+        assert_eq!(messages[2].tool_call_id, Some("call_calc_001".to_string()));
+        // Calculator は 3 + 5 * 2 = 13 を返す（演算子優先順位を正しく処理）
+        assert_eq!(messages[2].content, "13");
+
+        // 4. 最終アシスタント応答
+        assert_eq!(messages[3].role, ChatRole::Assistant);
+        assert_eq!(messages[3].content, "The result of 3 + 5 * 2 is 13.");
+    }
+
+    /// E2E Test: Calculatorプラグインでエラーが発生するケース（ゼロ除算）
+    /// ツール実行結果が is_error=true でもフローが正常に継続することを確認。
+    #[tokio::test]
+    async fn test_e2e_real_calculator_plugin_error_case() {
+        let db = setup_db_with_character();
+
+        let registry = Arc::new(DefaultPluginRegistry::new());
+        registry
+            .register(Box::new(CalculatorPlugin::new()))
+            .unwrap();
+
+        let plugin_system: Arc<dyn PluginSystem> =
+            Arc::new(DefaultPluginSystem::new(registry));
+
+        // LLMモック: 1回目=ゼロ除算のToolCall, 2回目=エラーを受けたテキスト応答
+        let llm = Arc::new(SequentialMockLLMClient::new(vec![
+            LLMResponse::ToolCalls(vec![ToolCall {
+                id: "call_div_zero".to_string(),
+                name: "calculate".to_string(),
+                arguments: serde_json::json!({"expression": "10 / 0"}),
+            }]),
+            LLMResponse::Text(
+                "I'm sorry, division by zero is not allowed.".to_string(),
+            ),
+        ]));
+
+        let engine = DefaultChatEngine::new(
+            db.clone(),
+            llm.clone(),
+            test_config(),
+            test_llm_lock(),
+            test_tts_connector(),
+            None,
+            Some(plugin_system),
+        );
+
+        let session_id = engine.create_session("char-001").await.unwrap();
+
+        engine
+            .send_message_for_test(&session_id, "What is 10 / 0?", None)
+            .await
+            .unwrap();
+
+        assert_eq!(llm.get_call_count(), 2);
+
+        let messages = {
+            let db_lock = db.lock().unwrap();
+            chat_repo::get_messages(db_lock.connection(), &session_id).unwrap()
+        };
+
+        assert_eq!(messages.len(), 4);
+
+        // ツール結果がエラーを含むことを確認
+        assert_eq!(messages[2].role, ChatRole::Tool);
+        assert_eq!(messages[2].tool_call_id, Some("call_div_zero".to_string()));
+        assert!(messages[2].content.contains("計算エラー"));
+        assert!(messages[2].content.contains("ゼロ除算"));
+
+        // 最終応答
+        assert_eq!(messages[3].role, ChatRole::Assistant);
+        assert!(messages[3].content.contains("division by zero"));
+    }
+
+    /// E2E Test: 複数回のツール呼び出しを含むフロー
+    /// LLMが2回連続でToolCallを返し、3回目でテキストを返すシナリオ。
+    #[tokio::test]
+    async fn test_e2e_real_calculator_multiple_tool_calls() {
+        let db = setup_db_with_character();
+
+        let registry = Arc::new(DefaultPluginRegistry::new());
+        registry
+            .register(Box::new(CalculatorPlugin::new()))
+            .unwrap();
+
+        let plugin_system: Arc<dyn PluginSystem> =
+            Arc::new(DefaultPluginSystem::new(registry));
+
+        // LLMモック: 1回目=ToolCall(2+3), 2回目=ToolCall(5*4), 3回目=テキスト
+        let llm = Arc::new(SequentialMockLLMClient::new(vec![
+            LLMResponse::ToolCalls(vec![ToolCall {
+                id: "call_step1".to_string(),
+                name: "calculate".to_string(),
+                arguments: serde_json::json!({"expression": "2 + 3"}),
+            }]),
+            LLMResponse::ToolCalls(vec![ToolCall {
+                id: "call_step2".to_string(),
+                name: "calculate".to_string(),
+                arguments: serde_json::json!({"expression": "5 * 4"}),
+            }]),
+            LLMResponse::Text("First: 5, Second: 20. Total: 25.".to_string()),
+        ]));
+
+        let engine = DefaultChatEngine::new(
+            db.clone(),
+            llm.clone(),
+            test_config(),
+            test_llm_lock(),
+            test_tts_connector(),
+            None,
+            Some(plugin_system),
+        );
+
+        let session_id = engine.create_session("char-001").await.unwrap();
+
+        engine
+            .send_message_for_test(&session_id, "Calculate 2+3 then 5*4", None)
+            .await
+            .unwrap();
+
+        // LLMが3回呼ばれたことを確認
+        assert_eq!(llm.get_call_count(), 3);
+
+        let messages = {
+            let db_lock = db.lock().unwrap();
+            chat_repo::get_messages(db_lock.connection(), &session_id).unwrap()
+        };
+
+        // 期待: user, assistant(tc1), tool(r1), assistant(tc2), tool(r2), assistant(final) = 6件
+        assert_eq!(messages.len(), 6);
+
+        // 1回目のツール結果: 2+3=5
+        assert_eq!(messages[2].role, ChatRole::Tool);
+        assert_eq!(messages[2].content, "5");
+        assert_eq!(messages[2].tool_call_id, Some("call_step1".to_string()));
+
+        // 2回目のツール結果: 5*4=20
+        assert_eq!(messages[4].role, ChatRole::Tool);
+        assert_eq!(messages[4].content, "20");
+        assert_eq!(messages[4].tool_call_id, Some("call_step2".to_string()));
+
+        // 最終応答
+        assert_eq!(messages[5].role, ChatRole::Assistant);
+        assert_eq!(messages[5].content, "First: 5, Second: 20. Total: 25.");
     }
 }

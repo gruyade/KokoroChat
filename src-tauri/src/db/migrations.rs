@@ -74,6 +74,26 @@ CREATE TABLE IF NOT EXISTS attachments (
   extracted_text TEXT,
   created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS chat_tool_permissions (
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+  tool_name TEXT NOT NULL,
+  is_enabled INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL,
+  UNIQUE(session_id, tool_name)
+);
+
+CREATE TABLE IF NOT EXISTS custom_tools (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL UNIQUE,
+  tool_type TEXT NOT NULL CHECK(tool_type IN ('http', 'cli')),
+  description TEXT NOT NULL,
+  parameters_schema TEXT NOT NULL,
+  config_json TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL
+);
 "#
 }
 
@@ -86,6 +106,8 @@ CREATE INDEX IF NOT EXISTS idx_chat_messages_session ON chat_messages(session_id
 CREATE INDEX IF NOT EXISTS idx_memories_character ON memories(character_id);
 CREATE INDEX IF NOT EXISTS idx_thoughts_character ON thoughts(character_id);
 CREATE INDEX IF NOT EXISTS idx_attachments_message ON attachments(message_id);
+CREATE INDEX IF NOT EXISTS idx_chat_tool_permissions_session ON chat_tool_permissions(session_id);
+CREATE INDEX IF NOT EXISTS idx_custom_tools_name ON custom_tools(name);
 "#
 }
 
@@ -104,6 +126,8 @@ mod tests {
         assert!(sql.contains("CREATE TABLE IF NOT EXISTS thoughts"));
         assert!(sql.contains("CREATE TABLE IF NOT EXISTS plugins"));
         assert!(sql.contains("CREATE TABLE IF NOT EXISTS attachments"));
+        assert!(sql.contains("CREATE TABLE IF NOT EXISTS chat_tool_permissions"));
+        assert!(sql.contains("CREATE TABLE IF NOT EXISTS custom_tools"));
     }
 
     #[test]
@@ -115,6 +139,8 @@ mod tests {
         assert!(sql.contains("idx_memories_character"));
         assert!(sql.contains("idx_thoughts_character"));
         assert!(sql.contains("idx_attachments_message"));
+        assert!(sql.contains("idx_chat_tool_permissions_session"));
+        assert!(sql.contains("idx_custom_tools_name"));
     }
 
     #[test]

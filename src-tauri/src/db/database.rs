@@ -115,6 +115,7 @@ mod tests {
         assert!(tables.contains(&"characters".to_string()));
         assert!(tables.contains(&"chat_sessions".to_string()));
         assert!(tables.contains(&"chat_messages".to_string()));
+        assert!(tables.contains(&"chat_tool_permissions".to_string()));
         assert!(tables.contains(&"memories".to_string()));
         assert!(tables.contains(&"thoughts".to_string()));
         assert!(tables.contains(&"plugins".to_string()));
@@ -135,6 +136,7 @@ mod tests {
 
         assert!(indexes.contains(&"idx_chat_sessions_character".to_string()));
         assert!(indexes.contains(&"idx_chat_messages_session".to_string()));
+        assert!(indexes.contains(&"idx_chat_tool_permissions_session".to_string()));
         assert!(indexes.contains(&"idx_memories_character".to_string()));
         assert!(indexes.contains(&"idx_thoughts_character".to_string()));
         assert!(indexes.contains(&"idx_attachments_message".to_string()));

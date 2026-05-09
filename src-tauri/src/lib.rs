@@ -28,6 +28,7 @@ use llm::client::OpenAICompatibleClient;
 use memory::manager::DefaultMemoryManager;
 use plugin::builtin::{CalculatorPlugin, FileOpsPlugin, WebSearchPlugin};
 use plugin::registry::{DefaultPluginRegistry, PluginRegistry};
+use plugin::system::DefaultPluginSystem;
 use state::AppState;
 use thought::engine::DefaultThoughtEngine;
 use tts::connector::DefaultTTSConnector;
@@ -95,6 +96,24 @@ pub fn run() {
                 config_manager.clone(),
             ));
 
+            // プラグインレジストリ初期化・組み込みプラグイン登録
+            let plugin_registry: Arc<dyn PluginRegistry> = Arc::new(DefaultPluginRegistry::new());
+            plugin_registry
+                .register(Box::new(CalculatorPlugin::new()))
+                .ok();
+            plugin_registry
+                .register(Box::new(WebSearchPlugin::new()))
+                .ok();
+            plugin_registry
+                .register(Box::new(FileOpsPlugin::new(
+                    app_data_dir.join("plugin_files"),
+                )))
+                .ok();
+
+            // プラグインシステム初期化（レジストリをラップ）
+            let plugin_system: Arc<dyn plugin::system::PluginSystem> =
+                Arc::new(DefaultPluginSystem::new(plugin_registry.clone()));
+
             let chat_engine: Arc<dyn chat::engine::ChatEngine> = Arc::new(DefaultChatEngine::new(
                 db_for_chat.clone(),
                 llm_client.clone(),
@@ -102,6 +121,7 @@ pub fn run() {
                 llm_lock.clone(),
                 tts_connector.clone(),
                 Some(tts_flow_controller),
+                Some(plugin_system.clone()),
             ));
 
             let memory_manager: Arc<dyn memory::manager::MemoryManager> =
@@ -115,20 +135,6 @@ pub fn run() {
 
             let attachment_processor: Arc<dyn attachment::processor::AttachmentProcessor> =
                 Arc::new(DefaultAttachmentProcessor::new());
-
-            // プラグインレジストリ初期化・組み込みプラグイン登録
-            let plugin_registry = Arc::new(DefaultPluginRegistry::new());
-            plugin_registry
-                .register(Box::new(CalculatorPlugin::new()))
-                .ok();
-            plugin_registry
-                .register(Box::new(WebSearchPlugin::new()))
-                .ok();
-            plugin_registry
-                .register(Box::new(FileOpsPlugin::new(
-                    app_data_dir.join("plugin_files"),
-                )))
-                .ok();
 
             // AppState構築
             let db_for_thought = Arc::new(std::sync::Mutex::new(
@@ -151,6 +157,7 @@ pub fn run() {
                 llm_client,
                 attachment_processor,
                 plugin_registry,
+                plugin_system,
                 thought_engine,
                 llm_lock,
                 db: db_for_chat.clone(),

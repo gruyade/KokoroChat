@@ -12,6 +12,7 @@ interface ChatState {
   error: string | null;
   editingMessageId: string | null;
   isTTSGenerating: boolean;
+  executingToolName: string | null;
   fetchSessions: (characterId: string) => Promise<void>;
   createSession: (characterId: string) => Promise<string>;
   selectSession: (sessionId: string | null) => void;
@@ -26,6 +27,7 @@ interface ChatState {
   stopGeneration: () => Promise<void>;
   setEditingMessage: (id: string | null) => void;
   editAndResend: (messageId: string, newContent: string) => Promise<void>;
+  setExecutingTool: (toolName: string | null) => void;
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -38,6 +40,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   error: null,
   editingMessageId: null,
   isTTSGenerating: false,
+  executingToolName: null,
 
   fetchSessions: async (characterId: string) => {
     set({ error: null });
@@ -144,6 +147,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set((state) => ({
       streamingContent: state.streamingContent + chunk,
       isStreaming: true,
+      executingToolName: null,
     }));
   },
 
@@ -161,6 +165,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       isStreaming: false,
       isAbortable: false,
       streamingContent: '',
+      executingToolName: null,
     });
   },
 
@@ -262,5 +267,9 @@ export const useChatStore = create<ChatState>((set, get) => ({
       // 失敗時はメッセージをロールバック
       set({ messages: previousMessages, error: String(e), isStreaming: false, isAbortable: false });
     }
+  },
+
+  setExecutingTool: (toolName: string | null) => {
+    set({ executingToolName: toolName });
   },
 }));

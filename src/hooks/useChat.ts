@@ -76,7 +76,14 @@ export function useChat() {
       if (cancelled) { unlistenSpontaneous(); return; }
       unlisteners.push(unlistenSpontaneous);
 
-      const unlistenTool = await listen<ToolExecutingEvent>('tool:executing', () => {});
+      const unlistenTool = await listen<ToolExecutingEvent>('tool:executing', (event) => {
+        if (cancelled) return;
+        const { session_id, tool_name } = event.payload;
+        const { currentSessionId } = useChatStore.getState();
+        if (currentSessionId && session_id === currentSessionId) {
+          useChatStore.getState().setExecutingTool(tool_name);
+        }
+      });
       if (cancelled) { unlistenTool(); return; }
       unlisteners.push(unlistenTool);
 

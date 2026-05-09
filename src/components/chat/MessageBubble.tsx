@@ -1,10 +1,11 @@
 import { useState } from 'react';
-import { Bot, User, Sparkles, Wrench, Copy, RefreshCw, Trash2, Info, Pencil, Volume2 } from 'lucide-react';
+import { Bot, User, Sparkles, Wrench, Copy, RefreshCw, Trash2, Info, Pencil, Volume2, ChevronRight, ChevronDown } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import type { ChatMessageRecord } from '../../types';
-import { ToolCallIndicator } from './ToolCallIndicator';
+import type { ToolCall } from '../../types/plugin';
 import { EditableMessage } from './EditableMessage';
 import { MarkdownRenderer } from './MarkdownRenderer';
+import { ToolResultRenderer } from './ToolResultRenderer';
 import { useChatStore, useCharacterStore, useConfigStore } from '../../stores';
 import { useAudioStore } from '../../hooks/useAudio';
 import { AvatarImage } from '../common/AvatarImage';
@@ -52,6 +53,67 @@ function getRoleConfig(role: ChatMessageRecord['role']) {
   }
 }
 
+/** 折り畳み可能なツール呼び出し表示（アシスタントメッセージ内） */
+function CollapsibleToolCall({ toolCall }: { toolCall: ToolCall }) {
+  const [expanded, setExpanded] = useState(false);
+  const argsStr = JSON.stringify(toolCall.arguments, null, 2);
+
+  return (
+    <div className="rounded-md border border-border bg-muted/30 text-xs">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="flex items-center gap-1.5 w-full px-2.5 py-1.5 text-left text-muted-foreground hover:bg-muted/50 transition-colors rounded-md"
+      >
+        {expanded ? <ChevronDown className="h-3 w-3 shrink-0" /> : <ChevronRight className="h-3 w-3 shrink-0" />}
+        <Wrench className="h-3 w-3 shrink-0" />
+        <span className="truncate">{toolCall.name} を呼び出し</span>
+      </button>
+      {expanded && (
+        <div className="px-2.5 pb-2 pt-0.5 border-t border-border/50">
+          <pre className="text-[11px] text-muted-foreground whitespace-pre-wrap break-all font-mono bg-muted/40 rounded p-1.5 overflow-x-auto">
+            {argsStr}
+          </pre>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** 折り畳み可能なツール実行結果表示（role=tool メッセージ） */
+function CollapsibleToolResult({ message }: { message: ChatMessageRecord }) {
+  const [expanded, setExpanded] = useState(false);
+  // tool_call_id からツール名を推測（IDの形式: "call_xxx" など）
+  const summary = message.content.length > 80
+    ? message.content.slice(0, 80) + '…'
+    : message.content;
+
+  return (
+    <div className="flex justify-start px-4 py-0.5">
+      <div className="flex items-start gap-2 max-w-[70%]">
+        <div className="shrink-0 mt-1 w-6 h-6 rounded-full bg-muted/60 flex items-center justify-center">
+          <Wrench className="h-3 w-3 text-muted-foreground" />
+        </div>
+        <div className="flex flex-col gap-0.5">
+          <div className="rounded-md border border-border/60 bg-muted/20 text-xs">
+            <button
+              onClick={() => setExpanded(!expanded)}
+              className="flex items-center gap-1.5 w-full px-2.5 py-1.5 text-left text-muted-foreground hover:bg-muted/30 transition-colors rounded-md"
+            >
+              {expanded ? <ChevronDown className="h-3 w-3 shrink-0" /> : <ChevronRight className="h-3 w-3 shrink-0" />}
+              <span className="truncate">🔧 ツール結果{!expanded && `: ${summary}`}</span>
+            </button>
+            {expanded && (
+              <div className="px-2.5 pb-2 pt-0.5 border-t border-border/50">
+                <ToolResultRenderer content={message.content} />
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function MessageBubble({ message, onRegenerate, onDelete }: MessageBubbleProps) {
   const config = getRoleConfig(message.role);
   const [copied, setCopied] = useState(false);
@@ -66,6 +128,12 @@ export function MessageBubble({ message, onRegenerate, onDelete }: MessageBubble
 
   // [SYSTEM]プレフィックス付きメッセージはシステムメッセージとして表示
   const isSystemMessage = message.role === 'user' && message.content.startsWith('[SYSTEM] ');
+
+  // role=tool かつ tool_call_id を持つメッセージは折り畳みツール結果として表示
+  if (message.role === 'tool' && message.tool_call_id) {
+    return <CollapsibleToolResult message={message} />;
+  }
+
   const rawContent = isSystemMessage ? message.content.slice(9) : message.content;
   // 《》で囲まれた地の文マーカーを除去して表示（イタリック表示に変換）
   const displayContent = rawContent.replace(/《([^》]*)》/g, '*$1*');
@@ -239,11 +307,11 @@ export function MessageBubble({ message, onRegenerate, onDelete }: MessageBubble
               ))}
             </div>
           )}
-          {/* Tool calls */}
+          {/* Tool calls (collapsible) */}
           {message.tool_calls && message.tool_calls.length > 0 && (
             <div className="flex flex-col gap-1 mt-1">
               {message.tool_calls.map((tc) => (
-                <ToolCallIndicator key={tc.id} toolName={tc.name} />
+                <CollapsibleToolCall key={tc.id} toolCall={tc} />
               ))}
             </div>
           )}

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { MessageSquare, UploadCloud } from 'lucide-react';
+import { MessageSquare, UploadCloud, Wrench } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { useChatStore, useCharacterStore } from '../../stores';
@@ -7,6 +7,8 @@ import { MessageBubble } from './MessageBubble';
 import { MessageInput, type MessageInputRef } from './MessageInput';
 import { StreamingIndicator } from './StreamingIndicator';
 import { ChatHeaderControls } from './ChatHeaderControls';
+import { ToolManagementPane } from './ToolManagementPane';
+import { ToolCallIndicator } from './ToolCallIndicator';
 
 /**
  * オートスクロール判定: 底から200px以内ならtrue
@@ -16,7 +18,7 @@ export function shouldAutoScroll(scrollHeight: number, scrollTop: number, client
 }
 
 export function ChatView() {
-  const { currentSessionId, messages, isStreaming, isAbortable, streamingContent, error, isTTSGenerating, sendMessage, createSession, fetchHistory, stopGeneration } =
+  const { currentSessionId, messages, isStreaming, isAbortable, streamingContent, error, isTTSGenerating, executingToolName, sendMessage, createSession, fetchHistory, stopGeneration } =
     useChatStore();
   const { selectedCharacterId, characters } = useCharacterStore();
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -28,6 +30,7 @@ export function ChatView() {
   const lastSmoothScrollTimeRef = useRef(0);
 
   const [isDragOver, setIsDragOver] = useState(false);
+  const [toolPaneOpen, setToolPaneOpen] = useState(false);
 
   // Tauri drag-drop イベント: ファイルパスを直接取得
   useEffect(() => {
@@ -266,67 +269,92 @@ export function ChatView() {
   };
 
   return (
-    <div className="relative flex-1 flex flex-col overflow-hidden">
-      {/* Drag-drop overlay */}
-      {isDragOver && (
-        <div className="absolute inset-0 bg-background/80 backdrop-blur-sm z-50 flex items-center justify-center pointer-events-none">
-          <div className="flex flex-col items-center gap-2 text-muted-foreground">
-            <UploadCloud className="h-12 w-12" />
-            <span className="text-sm font-medium">ファイルをドロップして添付</span>
-          </div>
-        </div>
-      )}
-
-      {/* Header controls */}
-      <div className="flex items-center justify-end px-3 py-1.5 border-b border-border/50">
-        <ChatHeaderControls />
-      </div>
-
-      {/* Messages area */}
-      <div ref={scrollContainerRef} className="flex-1 overflow-y-auto overflow-x-visible py-4">
-        {messages.length === 0 && !isStreaming && (
-          <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
-            メッセージを送信して会話を始めましょう
-          </div>
-        )}
-        {messages.map((msg) => (
-          <MessageBubble
-            key={msg.id}
-            message={msg}
-            onRegenerate={handleRegenerateMessage}
-            onDelete={handleDeleteMessage}
-          />
-        ))}
-        {isStreaming && <StreamingIndicator content={streamingContent} />}
-        {isTTSGenerating && (
-          <div className="px-4 py-3 flex items-center gap-2 text-muted-foreground text-sm">
-            <div className="flex gap-1">
-              <span className="w-2 h-2 bg-primary rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-              <span className="w-2 h-2 bg-primary rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-              <span className="w-2 h-2 bg-primary rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+    <div className="relative flex-1 flex overflow-hidden">
+      {/* Main chat area */}
+      <div className="flex-1 flex flex-col overflow-hidden">
+        {/* Drag-drop overlay */}
+        {isDragOver && (
+          <div className="absolute inset-0 bg-background/80 backdrop-blur-sm z-50 flex items-center justify-center pointer-events-none">
+            <div className="flex flex-col items-center gap-2 text-muted-foreground">
+              <UploadCloud className="h-12 w-12" />
+              <span className="text-sm font-medium">ファイルをドロップして添付</span>
             </div>
-            <span>音声を生成中...</span>
           </div>
         )}
+
+        {/* Header controls */}
+        <div className="flex items-center justify-end px-3 py-1.5 border-b border-border/50">
+          <ChatHeaderControls />
+          <button
+            onClick={() => setToolPaneOpen((v) => !v)}
+            title={toolPaneOpen ? 'ツール管理を閉じる' : 'ツール管理を開く'}
+            className={`p-1.5 rounded-md transition-colors ml-1 ${
+              toolPaneOpen
+                ? 'text-primary bg-primary/10'
+                : 'text-foreground hover:bg-muted/50'
+            }`}
+            aria-label="ツール管理パネルの切り替え"
+          >
+            <Wrench className="h-4 w-4" />
+          </button>
+        </div>
+
+        {/* Messages area */}
+        <div ref={scrollContainerRef} className="flex-1 overflow-y-auto overflow-x-visible py-4">
+          {messages.length === 0 && !isStreaming && (
+            <div className="flex items-center justify-center h-full text-muted-foreground text-sm">
+              メッセージを送信して会話を始めましょう
+            </div>
+          )}
+          {messages.map((msg) => (
+            <MessageBubble
+              key={msg.id}
+              message={msg}
+              onRegenerate={handleRegenerateMessage}
+              onDelete={handleDeleteMessage}
+            />
+          ))}
+          {isStreaming && <StreamingIndicator content={streamingContent} />}
+          {executingToolName && (
+            <div className="px-4 py-2">
+              <ToolCallIndicator toolName={executingToolName} />
+            </div>
+          )}
+          {isTTSGenerating && (
+            <div className="px-4 py-3 flex items-center gap-2 text-muted-foreground text-sm">
+              <div className="flex gap-1">
+                <span className="w-2 h-2 bg-primary rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                <span className="w-2 h-2 bg-primary rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                <span className="w-2 h-2 bg-primary rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+              </div>
+              <span>音声を生成中...</span>
+            </div>
+          )}
+        </div>
+
+        {/* Error display */}
+        {error && (
+          <div className="px-4 py-2 bg-destructive/10 border-t border-destructive/20 text-destructive text-sm">
+            {error}
+          </div>
+        )}
+
+        {/* Input area */}
+        <MessageInput
+          ref={messageInputRef}
+          onSend={handleSend}
+          disabled={isStreaming || isTTSGenerating}
+          isStreaming={isStreaming}
+          isAbortable={isAbortable}
+          onStop={stopGeneration}
+          isDragOver={isDragOver}
+        />
       </div>
 
-      {/* Error display */}
-      {error && (
-        <div className="px-4 py-2 bg-destructive/10 border-t border-destructive/20 text-destructive text-sm">
-          {error}
-        </div>
+      {/* Tool management pane (right side) */}
+      {toolPaneOpen && (
+        <ToolManagementPane onClose={() => setToolPaneOpen(false)} />
       )}
-
-      {/* Input area */}
-      <MessageInput
-        ref={messageInputRef}
-        onSend={handleSend}
-        disabled={isStreaming || isTTSGenerating}
-        isStreaming={isStreaming}
-        isAbortable={isAbortable}
-        onStop={stopGeneration}
-        isDragOver={isDragOver}
-      />
     </div>
   );
 }

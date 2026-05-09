@@ -50,9 +50,10 @@ mod tests {
             &self,
             _messages: &[ChatMessage],
             _config: &LLMClientConfig,
+            _tools: Option<&[ToolDefinition]>,
             _callback: Box<dyn Fn(String) + Send>,
-        ) -> Result<String, AppError> {
-            Ok(self.response.clone())
+        ) -> Result<LLMResponse, AppError> {
+            Ok(LLMResponse::Text(self.response.clone()))
         }
 
         async fn test_connection(&self, _config: &LLMClientConfig) -> Result<(), AppError> {
