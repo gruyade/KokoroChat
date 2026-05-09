@@ -101,13 +101,13 @@ pub fn insert_message(conn: &Connection, message: &ChatMessageRecord) -> Result<
     let attachments_json = message
         .attachments
         .as_ref()
-        .map(|a| serde_json::to_string(a))
+        .map(serde_json::to_string)
         .transpose()?;
 
     let tool_calls_json = message
         .tool_calls
         .as_ref()
-        .map(|t| serde_json::to_string(t))
+        .map(serde_json::to_string)
         .transpose()?;
 
     conn.execute(

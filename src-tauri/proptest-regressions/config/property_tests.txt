@@ -19,3 +19,8 @@ cc 81a2c802b9b2ed1bc5caa6ae97b9980b928c7d330364147cdc2609601434cffc # shrinks to
 cc 079e30e209ba6f87574382ba6783a28a7e625bf764bcc5903e793b9d83b679df # shrinks to env_model = "bkavokmv-7b"
 cc 1ce53b882dfe2fc1845a9925a55a3fcbd4d3bfd538184802d53832b613930e19 # shrinks to env_api_key = "sk-lfBHyxw4UC2uHS"
 cc dc1a2e0921d660b42fe746730ecf2b0c005dfca6d09f717e7c20f425b67b1249 # shrinks to env_base_url = "http://wdf:5946/v4", env_model = "sdzybgzt-9b", env_api_key = "sk-OMnHKzMp9GC0"
+cc 47acf5dc93b83824b71d904c884bdc5ebc2bbadfb215a9a6120c20c07973a15f # shrinks to env_base_url = "http://jdoel:2419/v6", env_model = "rrcrsx-96b", env_api_key = "sk-37A3VxVQXKwuU1"
+cc 28b81c1f359af1cbd6cf116ca1738f65eeb0c2274692e59097eb950b494c5c6f # shrinks to env_api_key = "sk-OQQ30nw9RTFKn3"
+cc 14dd9aa9ba34aa5ee14eae58b3e3997e2f744bf1e45f254241c7cdbc35877f60 # shrinks to env_model = "jagmt-4b"
+cc 9acc63f9a5b4e31b1bd4bd1a83397c2784fb00300f4d8d1f55e8893654b7e904 # shrinks to env_model = "uii-76b"
+cc f4e0644bd56c99729ca1c6a8a2039b8499454a69b0bd7837089cde6cad5ae8da # shrinks to env_api_key = "sk-swgN96l83J4NON0"

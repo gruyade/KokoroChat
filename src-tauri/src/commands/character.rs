@@ -260,7 +260,7 @@ pub async fn export_character(
     let tts_config_value = character
         .tts_config
         .as_ref()
-        .map(|c| serde_json::to_value(c))
+        .map(serde_json::to_value)
         .transpose()?;
 
     let exported_character = ExportedCharacter {
@@ -288,11 +288,11 @@ pub async fn export_character(
                     };
                     let attachments_value = msg
                         .attachments
-                        .map(|a| serde_json::to_value(a))
+                        .map(serde_json::to_value)
                         .transpose()?;
                     let tool_calls_value = msg
                         .tool_calls
-                        .map(|t| serde_json::to_value(t))
+                        .map(serde_json::to_value)
                         .transpose()?;
 
                     Ok(ExportedMessage {

@@ -118,17 +118,14 @@ fn default_max_chunk_size() -> usize {
 /// メッセージ送信キー設定
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
+#[derive(Default)]
 pub enum SendKey {
+    #[default]
     Enter,
     CtrlEnter,
     ShiftEnter,
 }
 
-impl Default for SendKey {
-    fn default() -> Self {
-        SendKey::Enter
-    }
-}
 
 /// UI設定
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -8,6 +8,12 @@ use crate::models::tts::{EmotionParams, TTSConfig};
 /// VoicePeak CLIハンドラ
 pub struct VoicePeakHandler;
 
+impl Default for VoicePeakHandler {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl VoicePeakHandler {
     pub fn new() -> Self {
         Self
@@ -15,15 +21,12 @@ impl VoicePeakHandler {
 
     /// TTSConfigからCLI引数を構築（純粋関数）
     pub fn build_cli_args(text: &str, output_path: &Path, config: &TTSConfig) -> Vec<String> {
-        let mut args = Vec::new();
-
-        // --say は常に含まれる（必須）
-        args.push("--say".to_string());
-        args.push(text.to_string());
-
-        // --out は常に含まれる（必須）
-        args.push("--out".to_string());
-        args.push(output_path.to_string_lossy().to_string());
+        let mut args = vec![
+            "--say".to_string(),
+            text.to_string(),
+            "--out".to_string(),
+            output_path.to_string_lossy().to_string(),
+        ];
 
         // --narrator は config.narrator が Some の場合のみ
         if let Some(ref narrator) = config.narrator {
@@ -175,7 +178,7 @@ impl VoicePeakHandler {
     ) -> Result<Vec<String>, AppError> {
         let executable = executable_path.unwrap_or("voicepeak");
         let output = tokio::process::Command::new(executable)
-            .args(&["--list-emotion", narrator])
+            .args(["--list-emotion", narrator])
             .output()
             .await
             .map_err(|e| AppError::Tts(format!("VoicePeak executable not found: {}", e)))?;

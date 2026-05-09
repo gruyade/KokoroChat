@@ -17,7 +17,7 @@ pub async fn debug_compress_memory(
 
     // セッションのメッセージを取得
     let (messages_text, character_id, first_id, last_id) = {
-        let db = state.chat_engine_db().map_err(|e| AppError::Database(e))?;
+        let db = state.chat_engine_db().map_err(AppError::Database)?;
         let conn = db.connection();
 
         let session = chat_repo::get_session(conn, &session_id)?
@@ -102,7 +102,7 @@ pub async fn debug_compress_memory(
     };
 
     {
-        let db = state.chat_engine_db().map_err(|e| AppError::Database(e))?;
+        let db = state.chat_engine_db().map_err(AppError::Database)?;
         let conn = db.connection();
         crate::db::repositories::memory::insert_memory(conn, &memory)?;
     }
@@ -131,7 +131,7 @@ pub async fn debug_trigger_spontaneous(
 
     // セッション情報取得
     let (system_prompt, recent_messages) = {
-        let db = state.chat_engine_db().map_err(|e| AppError::Database(e))?;
+        let db = state.chat_engine_db().map_err(AppError::Database)?;
         let conn = db.connection();
 
         let session = chat_repo::get_session(conn, &session_id)?
@@ -223,7 +223,7 @@ pub async fn debug_trigger_spontaneous(
     };
 
     {
-        let db = state.chat_engine_db().map_err(|e| AppError::Database(e))?;
+        let db = state.chat_engine_db().map_err(AppError::Database)?;
         let conn = db.connection();
         chat_repo::insert_message(conn, &msg)?;
     }

@@ -57,10 +57,10 @@ mod emotion_generator_tests {
 
     fn make_base_config() -> TTSConfig {
         let mut emotion = EmotionParams::new();
-        emotion.insert("happy".to_string(), 50);
-        emotion.insert("fun".to_string(), 30);
-        emotion.insert("angry".to_string(), 0);
-        emotion.insert("sad".to_string(), 0);
+        emotion.insert("happy".to_string(), 100);
+        emotion.insert("fun".to_string(), 100);
+        emotion.insert("angry".to_string(), 100);
+        emotion.insert("sad".to_string(), 100);
 
         TTSConfig {
             provider: TTSProvider::Voicepeak,

@@ -12,6 +12,12 @@ use crate::plugin::system::PluginHandler;
 /// 実際のAPI連携は将来実装。現在はプレースホルダーレスポンスを返す。
 pub struct WebSearchPlugin;
 
+impl Default for WebSearchPlugin {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl WebSearchPlugin {
     pub fn new() -> Self {
         Self
