@@ -65,6 +65,9 @@ export const MessageInput = forwardRef<MessageInputRef, MessageInputProps>(funct
     (e: KeyboardEvent<HTMLTextAreaElement>) => {
       if (e.key !== 'Enter') return;
 
+      // IME確定エンターを無視（日本語入力中の誤送信防止）
+      if (e.nativeEvent.isComposing) return;
+
       const isSendTrigger =
         (sendKey === 'enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey) ||
         (sendKey === 'ctrl_enter' && (e.ctrlKey || e.metaKey) && !e.shiftKey) ||

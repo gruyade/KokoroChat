@@ -186,6 +186,32 @@ impl DefaultChatEngine {
         }
     }
 
+    /// 圧縮済みメッセージを履歴から除外するフィルタ
+    /// memoriesから現在のセッションに対応する最新のMemoryを探し、
+    /// そのsource_message_to以前のメッセージを除外する
+    pub(crate) fn filter_compressed_history(
+        history: &[ChatMessageRecord],
+        memories: &[crate::models::Memory],
+        session_id: &str,
+    ) -> Vec<ChatMessageRecord> {
+        // memoriesはDESC順なので、最初にマッチしたものが最新
+        let last_compressed_message_id = memories
+            .iter()
+            .filter(|m| m.source_session_id.as_deref() == Some(session_id))
+            .filter_map(|m| m.source_message_to.as_deref())
+            .next();
+
+        if let Some(last_id) = last_compressed_message_id {
+            if let Some(pos) = history.iter().position(|m| m.id == last_id) {
+                // pos+1以降のメッセージのみ返す（圧縮済み範囲を除外）
+                return history[pos + 1..].to_vec();
+            }
+        }
+
+        // フィルタ不要（圧縮Memoryなし or 該当メッセージが見つからない）
+        history.to_vec()
+    }
+
     /// コンテキストメッセージ配列を組み立て
     /// [system_prompt, ...thought_context, ...memory_context, ...chat_history, user_message]
     #[allow(clippy::too_many_arguments)]
@@ -428,6 +454,20 @@ impl ChatEngine for DefaultChatEngine {
         };
 
         // 2. コンテキスト組み立て
+        // 履歴から圧縮済みメッセージを除外
+        let filtered_history = Self::filter_compressed_history(&history, &memories, session_id);
+
+        // 履歴末尾のuserメッセージを除外（build_contextが末尾にuser_contentを追加するため）
+        let history_without_last_user: Vec<_> = {
+            let mut h = filtered_history;
+            if let Some(last) = h.last() {
+                if last.role == ChatRole::User {
+                    h.pop();
+                }
+            }
+            h
+        };
+
         // TTS有効判定: グローバル設定 AND キャラクター個別TTS設定あり
         let tts_enabled = self.config_manager.get_config().tts.enabled && tts_config.is_some();
 
@@ -442,7 +482,7 @@ impl ChatEngine for DefaultChatEngine {
             &effective_system_prompt,
             &memories,
             &thoughts,
-            &history,
+            &history_without_last_user,
             content,
             attachment_text.as_deref(),
             attachment_images,
@@ -728,14 +768,12 @@ impl ChatEngine for DefaultChatEngine {
             )
         };
 
-        // コンテキスト組み立て（履歴の最後のuserメッセージを除外して、user_contentを末尾に配置）
-        // 注: historyには既にuserメッセージが含まれているので、build_contextのuser_contentは空にし、
-        // 履歴末尾のuserメッセージがそのまま使われる形にする
-        // ただし build_context は常に末尾にuser_contentを追加するため、
-        // 履歴からuserメッセージを除外してuser_contentとして渡す
+        // 履歴から圧縮済みメッセージを除外
+        let filtered_history = Self::filter_compressed_history(&history, &memories, session_id);
+
+        // 履歴末尾のuserメッセージを除外（build_contextが末尾にuser_contentを追加するため）
         let history_without_last_user: Vec<_> = {
-            let mut h = history.clone();
-            // 末尾のuserメッセージを除去（regenerateの場合、直前のuserメッセージが末尾にあるはず）
+            let mut h = filtered_history;
             if let Some(last) = h.last() {
                 if last.role == ChatRole::User {
                     h.pop();
@@ -1016,9 +1054,12 @@ impl ChatEngine for DefaultChatEngine {
             )
         };
 
-        // コンテキスト組み立て: 履歴末尾のuserメッセージ（編集済み）を除外し、user_contentとして渡す
+        // 履歴から圧縮済みメッセージを除外
+        let filtered_history = Self::filter_compressed_history(&history, &memories, session_id);
+
+        // 履歴末尾のuserメッセージ（編集済み）を除外し、user_contentとして渡す
         let history_without_last_user: Vec<_> = {
-            let mut h = history.clone();
+            let mut h = filtered_history;
             if let Some(last) = h.last() {
                 if last.role == ChatRole::User {
                     h.pop();
@@ -1268,11 +1309,25 @@ impl DefaultChatEngine {
             (character.system_prompt, memories, thoughts, history)
         };
 
+        // 履歴から圧縮済みメッセージを除外
+        let filtered_history = Self::filter_compressed_history(&history, &memories, session_id);
+
+        // 履歴末尾のuserメッセージを除外（build_contextが末尾にuser_contentを追加するため）
+        let history_without_last_user: Vec<_> = {
+            let mut h = filtered_history;
+            if let Some(last) = h.last() {
+                if last.role == ChatRole::User {
+                    h.pop();
+                }
+            }
+            h
+        };
+
         let llm_messages = self.build_context(
             &system_prompt,
             &memories,
             &thoughts,
-            &history,
+            &history_without_last_user,
             content,
             attachment_text.as_deref(),
             attachment_images,
