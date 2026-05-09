@@ -1,6 +1,6 @@
 [package]
 name = "kokoro-chat"
-version = "0.1.0"
+version = "0.1.1"
 description = "KokoroChat Desktop Application"
 authors = ["KokoroChat Contributors"]
 edition = "2021"
