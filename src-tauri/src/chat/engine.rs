@@ -90,7 +90,8 @@ pub struct DefaultChatEngine {
     config_manager: Arc<crate::config::model_config::ModelConfigManager>,
     /// LLMリクエスト直列化用ロック
     llm_lock: Arc<tokio::sync::Mutex<()>>,
-    /// TTS音声合成コネクタ
+    /// TTS音声合成コネクタ（将来のTTS直接呼び出し用に保持）
+    #[allow(dead_code)]
     tts_connector: Arc<dyn TTSConnector>,
     /// TTS Flow Controller（TTS有効時の音声生成オーケストレーター）
     tts_flow_controller: Option<Arc<TTSFlowController>>,
@@ -187,6 +188,7 @@ impl DefaultChatEngine {
 
     /// コンテキストメッセージ配列を組み立て
     /// [system_prompt, ...thought_context, ...memory_context, ...chat_history, user_message]
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn build_context(
         &self,
         system_prompt: &str,

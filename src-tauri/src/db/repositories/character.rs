@@ -10,7 +10,7 @@ pub fn insert_character(conn: &Connection, character: &Character) -> Result<(), 
     let tts_config_json = character
         .tts_config
         .as_ref()
-        .map(|c| serde_json::to_string(c))
+        .map(serde_json::to_string)
         .transpose()?;
 
     conn.execute(

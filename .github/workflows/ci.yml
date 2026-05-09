@@ -56,7 +56,7 @@ jobs:
 
       - name: Run tests
         working-directory: src-tauri
-        run: cargo test --lib
+        run: cargo test --lib -- --test-threads=1
 
   frontend:
     name: Frontend (TypeScript/React)

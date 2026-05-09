@@ -391,10 +391,7 @@ impl ThoughtEngine for DefaultThoughtEngine {
                             Vec::new()
                         };
 
-                        let memories = match memory_repo::list_memories(conn, &character_id) {
-                            Ok(m) => m,
-                            _ => Vec::new(),
-                        };
+                        let memories = memory_repo::list_memories(conn, &character_id).unwrap_or_default();
 
                         (character.system_prompt, recent_messages, memories)
                     };

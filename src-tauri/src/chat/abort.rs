@@ -11,6 +11,7 @@ use tokio::task::AbortHandle;
 /// 中断リクエスト時に部分コンテンツを返却する。
 pub struct StreamAbortManager {
     /// session_id → (AbortHandle, partial_content)
+    #[allow(clippy::type_complexity)]
     active: Mutex<HashMap<String, (AbortHandle, Arc<Mutex<String>>)>>,
 }
 

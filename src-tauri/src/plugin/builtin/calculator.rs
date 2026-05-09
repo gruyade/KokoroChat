@@ -10,6 +10,12 @@ use crate::plugin::system::PluginHandler;
 /// 計算プラグイン — 数式を計算する
 pub struct CalculatorPlugin;
 
+impl Default for CalculatorPlugin {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CalculatorPlugin {
     pub fn new() -> Self {
         Self
