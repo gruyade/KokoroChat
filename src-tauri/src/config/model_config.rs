@@ -7,7 +7,7 @@ use std::sync::Mutex;
 use crate::error::AppError;
 use crate::models::config::{
     AppConfig, AttachmentConfig, MemoryConfig, ModelPurpose, ModelSettings, PluginsConfig,
-    SpontaneousConfig, TTSGlobalConfig, Theme, ThoughtConfig, UIConfig,
+    SendKey, SpontaneousConfig, TTSGlobalConfig, Theme, ThoughtConfig, UIConfig,
 };
 
 /// モデル設定管理
@@ -136,6 +136,7 @@ impl ModelConfigManager {
         let mut models = HashMap::new();
 
         let default_settings = ModelSettings {
+            provider: None,
             base_url: String::new(),
             model: String::new(),
             api_key: None,
@@ -157,14 +158,16 @@ impl ModelConfigManager {
             thought: ThoughtConfig {
                 enabled: false,
                 interval_minutes: 5,
+                auto_delete_threshold_minutes: 1440,
             },
             memory: MemoryConfig {
                 compression_threshold: 50,
             },
-            tts: TTSGlobalConfig { enabled: false },
+            tts: TTSGlobalConfig { enabled: false, voicepeak_path: None, timeout_seconds: 60, max_chunk_size: 140, irodori_base_url: None, irodori_caption_base_url: None, irodori_reference_audio_base_url: None },
             ui: UIConfig {
                 theme: Theme::Dark,
                 language: "ja".to_string(),
+                send_key: SendKey::default(),
             },
             plugins: PluginsConfig {
                 enabled_plugins: vec![],
@@ -204,6 +207,7 @@ impl ModelConfigManager {
             .models
             .entry(purpose)
             .or_insert_with(|| ModelSettings {
+                provider: None,
                 base_url: String::new(),
                 model: String::new(),
                 api_key: None,

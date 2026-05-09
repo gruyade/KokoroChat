@@ -26,9 +26,14 @@ pub struct ThoughtEvent {
 pub trait ThoughtEngine: Send + Sync {
     async fn generate_thought(&self, character_id: &str) -> Result<Thought, AppError>;
     async fn get_thoughts(&self, character_id: &str, limit: Option<u32>) -> Result<Vec<Thought>, AppError>;
+    async fn delete_thought(&self, id: &str) -> Result<(), AppError>;
+    async fn cleanup_old_thoughts(&self, character_id: &str, threshold_minutes: u64) -> Result<u32, AppError>;
     fn set_frequency(&self, character_id: &str, interval_minutes: u64);
     fn start(&self, character_id: &str, app_handle: AppHandle);
     fn stop(&self);
+    fn pause(&self);
+    fn resume(&self);
+    fn is_paused(&self) -> bool;
 }
 
 /// 内部状態（Mutex保護）
@@ -45,6 +50,7 @@ pub struct DefaultThoughtEngine {
     config_manager: Arc<crate::config::model_config::ModelConfigManager>,
     llm_lock: Arc<tokio::sync::Mutex<()>>,
     pub(crate) running: Arc<AtomicBool>,
+    pub(crate) paused: Arc<AtomicBool>,
     pub(crate) state: Arc<Mutex<EngineState>>,
 }
 
@@ -61,6 +67,7 @@ impl DefaultThoughtEngine {
             config_manager,
             llm_lock,
             running: Arc::new(AtomicBool::new(false)),
+            paused: Arc::new(AtomicBool::new(false)),
             state: Arc::new(Mutex::new(EngineState {
                 character_id: None,
                 interval_minutes: 5,
@@ -78,12 +85,14 @@ impl DefaultThoughtEngine {
                 model: s.model,
                 api_key: s.api_key,
                 temperature: s.temperature,
+                provider: s.provider,
             })
             .unwrap_or(LLMClientConfig {
                 base_url: String::new(),
                 model: String::new(),
                 api_key: None,
                 temperature: 0.7,
+                provider: None,
             })
     }
 
@@ -100,6 +109,7 @@ impl DefaultThoughtEngine {
             role: MessageRole::System,
             content: system_prompt.to_string(),
             tool_call_id: None,
+            images: None,
         });
 
         // 記憶コンテキスト
@@ -116,6 +126,7 @@ impl DefaultThoughtEngine {
                     memory_text
                 ),
                 tool_call_id: None,
+                images: None,
             });
         }
 
@@ -130,6 +141,7 @@ impl DefaultThoughtEngine {
                 role,
                 content: msg.content.clone(),
                 tool_call_id: None,
+                images: None,
             });
         }
 
@@ -145,6 +157,7 @@ impl DefaultThoughtEngine {
             )
             .to_string(),
             tool_call_id: None,
+            images: None,
         });
 
         messages
@@ -233,6 +246,12 @@ impl ThoughtEngine for DefaultThoughtEngine {
             thought_repo::insert_thought(conn, &thought)?;
         }
 
+        // 自動クリーンアップ（閾値超過の古い思考を削除）
+        let threshold = self.config_manager.get_config().thought.auto_delete_threshold_minutes;
+        if let Err(e) = self.cleanup_old_thoughts(character_id, threshold).await {
+            println!("[thought] cleanup error (non-fatal): {}", e);
+        }
+
         Ok(thought)
     }
 
@@ -240,6 +259,30 @@ impl ThoughtEngine for DefaultThoughtEngine {
         let db_guard = self.db.lock().unwrap();
         let conn = db_guard.connection();
         thought_repo::get_thoughts(conn, character_id, limit)
+    }
+
+    async fn delete_thought(&self, id: &str) -> Result<(), AppError> {
+        let db_guard = self.db.lock().unwrap();
+        let conn = db_guard.connection();
+        let deleted = thought_repo::delete_thought(conn, id)?;
+        if !deleted {
+            return Err(AppError::NotFound(format!("thought {}", id)));
+        }
+        Ok(())
+    }
+
+    async fn cleanup_old_thoughts(&self, character_id: &str, threshold_minutes: u64) -> Result<u32, AppError> {
+        // threshold=0 は全保持（クリーンアップスキップ）
+        if threshold_minutes == 0 {
+            return Ok(0);
+        }
+
+        let cutoff = chrono::Utc::now() - chrono::Duration::minutes(threshold_minutes as i64);
+        let cutoff_str = cutoff.to_rfc3339();
+
+        let db_guard = self.db.lock().unwrap();
+        let conn = db_guard.connection();
+        thought_repo::delete_thoughts_older_than(conn, character_id, &cutoff_str)
     }
 
     fn set_frequency(&self, character_id: &str, interval_minutes: u64) {
@@ -260,6 +303,7 @@ impl ThoughtEngine for DefaultThoughtEngine {
         }
 
         let running = Arc::clone(&self.running);
+        let paused = Arc::clone(&self.paused);
         let state = Arc::clone(&self.state);
         let db = Arc::clone(&self.db);
         let llm_client = Arc::clone(&self.llm_client);
@@ -281,6 +325,11 @@ impl ThoughtEngine for DefaultThoughtEngine {
                 // 停止フラグチェック
                 if !running.load(Ordering::SeqCst) {
                     break;
+                }
+
+                // 一時停止フラグチェック
+                if paused.load(Ordering::SeqCst) {
+                    continue;
                 }
 
                 // 思考生成
@@ -335,8 +384,8 @@ impl ThoughtEngine for DefaultThoughtEngine {
                     let _llm_guard = llm_lock.lock().await;
                     let llm_config = config_manager
                         .get_model_settings(&crate::models::config::ModelPurpose::Thought)
-                        .map(|s| LLMClientConfig { base_url: s.base_url, model: s.model, api_key: s.api_key, temperature: s.temperature })
-                        .unwrap_or(LLMClientConfig { base_url: String::new(), model: String::new(), api_key: None, temperature: 0.7 });
+                        .map(|s| LLMClientConfig { base_url: s.base_url, model: s.model, api_key: s.api_key, temperature: s.temperature, provider: s.provider })
+                        .unwrap_or(LLMClientConfig { base_url: String::new(), model: String::new(), api_key: None, temperature: 0.7, provider: None });
 
                     let response = match llm_client.chat(&prompt_messages, &llm_config, None).await {
                         Ok(resp) => resp,
@@ -386,6 +435,18 @@ impl ThoughtEngine for DefaultThoughtEngine {
                         }
                     }
 
+                    // 自動クリーンアップ（閾値超過の古い思考を削除）
+                    let threshold = config_manager.get_config().thought.auto_delete_threshold_minutes;
+                    if threshold > 0 {
+                        let cutoff = chrono::Utc::now() - chrono::Duration::minutes(threshold as i64);
+                        let cutoff_str = cutoff.to_rfc3339();
+                        let db_guard = db.lock().unwrap();
+                        let conn = db_guard.connection();
+                        if let Err(e) = thought_repo::delete_thoughts_older_than(conn, &character_id, &cutoff_str) {
+                            println!("[thought] cleanup error (non-fatal): {}", e);
+                        }
+                    }
+
                     thought
                 };
 
@@ -413,5 +474,19 @@ impl ThoughtEngine for DefaultThoughtEngine {
             handle.abort();
         }
         s.character_id = None;
+    }
+
+    fn pause(&self) {
+        self.paused.store(true, Ordering::SeqCst);
+        println!("[thought] engine paused");
+    }
+
+    fn resume(&self) {
+        self.paused.store(false, Ordering::SeqCst);
+        println!("[thought] engine resumed");
+    }
+
+    fn is_paused(&self) -> bool {
+        self.paused.load(Ordering::SeqCst)
     }
 }

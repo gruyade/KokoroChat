@@ -4,8 +4,12 @@ export type ModelPurpose = 'chat' | 'memory' | 'thought' | 'character_generation
 /** テーマ */
 export type Theme = 'light' | 'dark';
 
+/** LLMプロバイダー種別 */
+export type LLMProvider = 'openai' | 'anthropic' | 'google' | 'openai_compatible';
+
 /** LLMモデル接続設定 */
 export interface ModelSettings {
+  provider?: LLMProvider;
   base_url: string;
   model: string;
   api_key?: string;
@@ -23,6 +27,7 @@ export interface SpontaneousConfig {
 export interface ThoughtConfig {
   enabled: boolean;
   interval_minutes: number;
+  auto_delete_threshold_minutes: number;
 }
 
 /** 記憶管理設定 */
@@ -34,12 +39,28 @@ export interface MemoryConfig {
 /** TTS全体設定 */
 export interface TTSGlobalConfig {
   enabled: boolean;
+  /** VoicePeak CLI実行ファイルパス */
+  voicepeak_path?: string;
+  /** TTS生成タイムアウト（秒）。デフォルト: 60 */
+  timeout_seconds?: number;
+  /** テキスト分割の最大チャンクサイズ（文字数）。デフォルト: 140 */
+  max_chunk_size?: number;
+  /** IrodoriTTSデフォルトベースURL（後方互換用、未使用） */
+  irodori_base_url?: string;
+  /** IrodoriTTS キャプションモード用ベースURL */
+  irodori_caption_base_url?: string;
+  /** IrodoriTTS 参照音源モード用ベースURL */
+  irodori_reference_audio_base_url?: string;
 }
+
+/** 送信キー設定 */
+export type SendKey = 'enter' | 'ctrl_enter' | 'shift_enter';
 
 /** UI設定 */
 export interface UIConfig {
   theme: Theme;
   language: string;
+  send_key: SendKey;
 }
 
 /** プラグイン設定 */

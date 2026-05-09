@@ -1,38 +1,61 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { Brain, Loader2, Trash2 } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { useCharacterStore } from '../../stores';
+import { useOperationQueue } from '../../hooks/useOperationQueue';
 import type { Memory } from '../../types';
 
 export function SidebarMemoryList() {
   const { selectedCharacterId } = useCharacterStore();
   const [memories, setMemories] = useState<Memory[]>([]);
   const [loading, setLoading] = useState(false);
+  const [deletedIds, setDeletedIds] = useState<Set<string>>(new Set());
+  const { processing, enqueue } = useOperationQueue();
 
-  useEffect(() => {
-    if (!selectedCharacterId) return;
-    loadMemories();
-  }, [selectedCharacterId]);
-
-  const loadMemories = () => {
+  const loadMemories = useCallback(() => {
     if (!selectedCharacterId) return;
     setLoading(true);
+    setDeletedIds(new Set());
     invoke<Memory[]>('list_memories', { characterId: selectedCharacterId })
       .then(setMemories)
       .catch(() => setMemories([]))
       .finally(() => setLoading(false));
+  }, [selectedCharacterId]);
+
+  useEffect(() => {
+    if (!selectedCharacterId) return;
+    loadMemories();
+
+    let cancelled = false;
+    let unlisten: (() => void) | null = null;
+
+    listen<{ character_id: string; memory_id: string }>('memory:generated', (event) => {
+      if (cancelled) return;
+      if (event.payload.character_id === selectedCharacterId) {
+        loadMemories();
+      }
+    }).then((fn) => {
+      if (cancelled) { fn(); return; }
+      unlisten = fn;
+    });
+
+    return () => {
+      cancelled = true;
+      if (unlisten) unlisten();
+    };
+  }, [selectedCharacterId, loadMemories]);
+
+  const handleDelete = (e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+    if (deletedIds.has(id)) return;
+    setDeletedIds((prev) => new Set(prev).add(id));
+    enqueue(async () => {
+      await invoke('delete_memory', { id }).catch(() => {});
+    });
   };
 
-  const handleDelete = async (e: React.MouseEvent, id: string) => {
-    e.stopPropagation();
-    if (!confirm('この記憶を削除してよいか？')) return;
-    try {
-      await invoke('delete_memory', { id });
-      setMemories((prev) => prev.filter((m) => m.id !== id));
-    } catch {
-      // ignore
-    }
-  };
+  const visibleMemories = memories.filter((m) => !deletedIds.has(m.id));
 
   if (!selectedCharacterId) {
     return <div className="p-3 text-xs text-muted-foreground">キャラクターを選択してください</div>;
@@ -46,18 +69,27 @@ export function SidebarMemoryList() {
     );
   }
 
-  if (memories.length === 0) {
+  if (visibleMemories.length === 0) {
     return (
       <div className="p-3 flex flex-col items-center gap-2 text-muted-foreground">
-        <Brain className="w-6 h-6" />
-        <span className="text-xs">記憶なし</span>
+        {processing ? (
+          <>
+            <Loader2 className="w-6 h-6 animate-spin" />
+            <span className="text-xs">処理中...</span>
+          </>
+        ) : (
+          <>
+            <Brain className="w-6 h-6" />
+            <span className="text-xs">記憶なし</span>
+          </>
+        )}
       </div>
     );
   }
 
   return (
     <div className="p-2 space-y-2">
-      {memories.map((memory) => (
+      {visibleMemories.map((memory) => (
         <div key={memory.id} className="group p-2.5 rounded-lg bg-muted/50 border border-border">
           <div className="flex items-start justify-between gap-1">
             <p className="text-xs leading-relaxed flex-1">{memory.content}</p>

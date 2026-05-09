@@ -1,14 +1,14 @@
 import { useEffect, useState } from 'react';
 import { Settings, Save, Loader2 } from 'lucide-react';
-import { useConfigStore } from '../../stores';
+import { useConfigStore, useUIStore } from '../../stores';
 import { ModelConfigForm } from './ModelConfigForm';
-import type { AppConfig, ModelPurpose, ModelSettings } from '../../types';
+import type { AppConfig, ModelPurpose, ModelSettings, SendKey } from '../../types';
 
 type SettingsTab = 'models' | 'tts' | 'spontaneous' | 'thought' | 'general';
 
-const TABS: { id: SettingsTab; label: string }[] = [
+const TABS: { id: SettingsTab; label: string; badge?: string }[] = [
   { id: 'models', label: 'モデル設定' },
-  { id: 'tts', label: 'TTS' },
+  { id: 'tts', label: 'TTS', badge: 'WIP' },
   { id: 'spontaneous', label: '自発的発話' },
   { id: 'thought', label: '思考' },
   { id: 'general', label: '一般' },
@@ -23,6 +23,7 @@ const MODEL_PURPOSES: { purpose: ModelPurpose; label: string }[] = [
 
 export function SettingsView() {
   const { config, loading, error, fetchConfig, updateConfig } = useConfigStore();
+  const { showToast } = useUIStore();
   const [activeTab, setActiveTab] = useState<SettingsTab>('models');
   const [draft, setDraft] = useState<AppConfig | null>(null);
   const [saving, setSaving] = useState(false);
@@ -42,6 +43,9 @@ export function SettingsView() {
     setSaving(true);
     try {
       await updateConfig(draft);
+      showToast('設定を保存した');
+    } catch {
+      showToast('設定の保存に失敗', 'error');
     } finally {
       setSaving(false);
     }
@@ -99,13 +103,18 @@ export function SettingsView() {
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
-            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors flex items-center ${
               activeTab === tab.id
                 ? 'border-primary text-primary'
                 : 'border-transparent text-muted-foreground hover:text-foreground'
             }`}
           >
             {tab.label}
+            {tab.badge && (
+              <span className="ml-1 px-1.5 py-0.5 text-[10px] rounded bg-yellow-500/20 text-yellow-600">
+                {tab.badge}
+              </span>
+            )}
           </button>
         ))}
       </div>
@@ -145,6 +154,104 @@ export function SettingsView() {
             <p className="text-xs text-muted-foreground">
               TTS設定はキャラクター個別に設定可能。ここではグローバルの有効/無効を切り替え。
             </p>
+            <div>
+              <label htmlFor="voicepeak-path" className="block text-xs text-muted-foreground mb-1">
+                VoicePeak 実行ファイルパス
+              </label>
+              <input
+                id="voicepeak-path"
+                type="text"
+                value={draft.tts.voicepeak_path ?? ''}
+                onChange={(e) =>
+                  setDraft({
+                    ...draft,
+                    tts: { ...draft.tts, voicepeak_path: e.target.value || undefined },
+                  })
+                }
+                placeholder="C:\Program Files\VOICEPEAK\voicepeak.exe"
+                className="w-full px-3 py-1.5 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+              />
+              <p className="mt-1 text-xs text-muted-foreground">
+                未指定時はPATHから「voicepeak」を検索
+              </p>
+            </div>
+            <div>
+              <label htmlFor="irodori-caption-base-url" className="block text-xs text-muted-foreground mb-1">
+                IrodoriTTS キャプションモード ベースURL
+              </label>
+              <input
+                id="irodori-caption-base-url"
+                type="text"
+                value={draft.tts.irodori_caption_base_url ?? ''}
+                onChange={(e) =>
+                  setDraft({
+                    ...draft,
+                    tts: { ...draft.tts, irodori_caption_base_url: e.target.value || undefined },
+                  })
+                }
+                placeholder="http://localhost:8080"
+                className="w-full px-3 py-1.5 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+              />
+            </div>
+            <div>
+              <label htmlFor="irodori-refaudio-base-url" className="block text-xs text-muted-foreground mb-1">
+                IrodoriTTS 参照音源モード ベースURL
+              </label>
+              <input
+                id="irodori-refaudio-base-url"
+                type="text"
+                value={draft.tts.irodori_reference_audio_base_url ?? ''}
+                onChange={(e) =>
+                  setDraft({
+                    ...draft,
+                    tts: { ...draft.tts, irodori_reference_audio_base_url: e.target.value || undefined },
+                  })
+                }
+                placeholder="http://localhost:8080"
+                className="w-full px-3 py-1.5 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+              />
+              <p className="mt-1 text-xs text-muted-foreground">
+                キャラクターのIrodoriTTSモード選択に応じて使い分けられる
+              </p>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label htmlFor="tts-max-chunk" className="block text-xs text-muted-foreground mb-1">
+                  分割文字数
+                </label>
+                <input
+                  id="tts-max-chunk"
+                  type="number"
+                  value={draft.tts.max_chunk_size ?? 140}
+                  onChange={(e) =>
+                    setDraft({
+                      ...draft,
+                      tts: { ...draft.tts, max_chunk_size: Number(e.target.value) || 140 },
+                    })
+                  }
+                  placeholder="140"
+                  className="w-full px-3 py-1.5 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                />
+              </div>
+              <div>
+                <label htmlFor="tts-timeout" className="block text-xs text-muted-foreground mb-1">
+                  タイムアウト（秒）
+                </label>
+                <input
+                  id="tts-timeout"
+                  type="number"
+                  value={draft.tts.timeout_seconds ?? 60}
+                  onChange={(e) =>
+                    setDraft({
+                      ...draft,
+                      tts: { ...draft.tts, timeout_seconds: Number(e.target.value) || 60 },
+                    })
+                  }
+                  placeholder="60"
+                  className="w-full px-3 py-1.5 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                />
+              </div>
+            </div>
           </div>
         )}
 
@@ -239,6 +346,64 @@ export function SettingsView() {
                 className="w-full px-3 py-1.5 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary"
               />
             </div>
+            <div>
+              <label
+                htmlFor="thought-auto-delete"
+                className="block text-xs text-muted-foreground mb-1"
+              >
+                自動削除閾値（分）: {draft.thought.auto_delete_threshold_minutes === 0 ? '無効（全保持）' : draft.thought.auto_delete_threshold_minutes}
+              </label>
+              <div className="flex gap-2 mb-2">
+                {[
+                  { label: '無効', value: 0 },
+                  { label: '1時間', value: 60 },
+                  { label: '6時間', value: 360 },
+                  { label: '24時間', value: 1440 },
+                  { label: '7日', value: 10080 },
+                ].map((preset) => (
+                  <button
+                    key={preset.value}
+                    type="button"
+                    onClick={() =>
+                      setDraft({
+                        ...draft,
+                        thought: {
+                          ...draft.thought,
+                          auto_delete_threshold_minutes: preset.value,
+                        },
+                      })
+                    }
+                    className={`px-2 py-1 text-xs rounded-md border transition-colors ${
+                      draft.thought.auto_delete_threshold_minutes === preset.value
+                        ? 'border-primary bg-primary/10 text-primary'
+                        : 'border-border text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    {preset.label}
+                  </button>
+                ))}
+              </div>
+              <input
+                id="thought-auto-delete"
+                type="number"
+                min={0}
+                max={43200}
+                value={draft.thought.auto_delete_threshold_minutes}
+                onChange={(e) =>
+                  setDraft({
+                    ...draft,
+                    thought: {
+                      ...draft.thought,
+                      auto_delete_threshold_minutes: parseInt(e.target.value) || 0,
+                    },
+                  })
+                }
+                className="w-full px-3 py-1.5 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+              />
+              <p className="mt-1 text-xs text-muted-foreground">
+                0 を設定すると自動削除を無効化（全思考を保持）
+              </p>
+            </div>
           </div>
         )}
 
@@ -301,6 +466,40 @@ export function SettingsView() {
                   }
                   className="w-full px-3 py-1.5 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary"
                 />
+              </div>
+            </div>
+
+            {/* Send Key Config */}
+            <div className="p-4 rounded-lg border border-border space-y-3">
+              <h3 className="text-sm font-medium">送信キー</h3>
+              <div>
+                <label
+                  htmlFor="send-key"
+                  className="block text-xs text-muted-foreground mb-1"
+                >
+                  メッセージ送信に使用するキー
+                </label>
+                <select
+                  id="send-key"
+                  value={draft.ui.send_key}
+                  onChange={(e) =>
+                    setDraft({
+                      ...draft,
+                      ui: {
+                        ...draft.ui,
+                        send_key: e.target.value as SendKey,
+                      },
+                    })
+                  }
+                  className="w-full px-3 py-1.5 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                >
+                  <option value="enter">Enter</option>
+                  <option value="ctrl_enter">Ctrl+Enter</option>
+                  <option value="shift_enter">Shift+Enter</option>
+                </select>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  選択したキー以外のEnter系コンビネーションは改行挿入になる
+                </p>
               </div>
             </div>
           </div>

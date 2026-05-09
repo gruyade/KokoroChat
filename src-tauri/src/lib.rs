@@ -20,6 +20,7 @@ use std::sync::Arc;
 
 use attachment::processor::DefaultAttachmentProcessor;
 use character::creator::DefaultCharacterCreator;
+use chat::abort::StreamAbortManager;
 use chat::engine::DefaultChatEngine;
 use config::model_config::ModelConfigManager;
 use db::database::Database;
@@ -30,6 +31,7 @@ use plugin::registry::{DefaultPluginRegistry, PluginRegistry};
 use state::AppState;
 use thought::engine::DefaultThoughtEngine;
 use tts::connector::DefaultTTSConnector;
+use tts::flow_controller::TTSFlowController;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -86,12 +88,23 @@ pub fn run() {
                     config_manager.clone(),
                 ));
 
+            let tts_connector: Arc<dyn tts::connector::TTSConnector> =
+                Arc::new(DefaultTTSConnector::new());
+
+            let tts_flow_controller = Arc::new(TTSFlowController::new(
+                tts_connector.clone(),
+                llm_client.clone(),
+                config_manager.clone(),
+            ));
+
             let chat_engine: Arc<dyn chat::engine::ChatEngine> =
                 Arc::new(DefaultChatEngine::new(
                     db_for_chat.clone(),
                     llm_client.clone(),
                     config_manager.clone(),
                     llm_lock.clone(),
+                    tts_connector.clone(),
+                    Some(tts_flow_controller),
                 ));
 
             let memory_manager: Arc<dyn memory::manager::MemoryManager> =
@@ -105,9 +118,6 @@ pub fn run() {
                         .compression_threshold,
                     llm_lock.clone(),
                 ));
-
-            let tts_connector: Arc<dyn tts::connector::TTSConnector> =
-                Arc::new(DefaultTTSConnector::new());
 
             let attachment_processor: Arc<dyn attachment::processor::AttachmentProcessor> =
                 Arc::new(DefaultAttachmentProcessor::new());
@@ -150,6 +160,8 @@ pub fn run() {
                 thought_engine,
                 llm_lock,
                 db: db_for_chat.clone(),
+                stream_abort_manager: Arc::new(StreamAbortManager::new()),
+                spontaneous_paused: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             };
 
             app.manage(app_state);
@@ -163,21 +175,32 @@ pub fn run() {
             commands::character::delete_character,
             commands::character::generate_system_prompt,
             commands::character::improve_system_prompt,
+            commands::character::export_character,
+            commands::character::import_character,
+            commands::character::save_avatar,
+            commands::character::read_avatar,
             commands::chat::create_session,
             commands::chat::send_message,
             commands::chat::get_history,
             commands::chat::list_sessions,
             commands::chat::delete_session,
             commands::chat::delete_message,
+            commands::chat::regenerate_message,
+            commands::chat::stop_generation,
             commands::chat::trigger_spontaneous_check,
+            commands::chat::edit_and_resend,
             commands::config::get_config,
             commands::config::set_config,
             commands::config::test_llm_connection,
+            commands::config::fetch_available_models,
             commands::memory::list_memories,
             commands::memory::update_memory,
             commands::memory::delete_memory,
+            commands::memory::generate_memory_manual,
             commands::tts::synthesize_speech,
             commands::tts::test_tts_connection,
+            commands::tts::list_voicepeak_emotions,
+            commands::tts::generate_speech_for_message,
             commands::attachment::process_attachment,
             commands::attachment::get_supported_extensions,
             commands::plugin::list_plugins,
@@ -188,6 +211,11 @@ pub fn run() {
             commands::thought::get_thoughts,
             commands::thought::start_thought_engine,
             commands::thought::stop_thought_engine,
+            commands::thought::delete_thought,
+            commands::thought::pause_thought_engine,
+            commands::thought::resume_thought_engine,
+            commands::thought::pause_spontaneous,
+            commands::thought::resume_spontaneous,
             commands::debug::debug_compress_memory,
             commands::debug::debug_generate_thought,
             commands::debug::debug_trigger_spontaneous,

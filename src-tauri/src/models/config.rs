@@ -13,9 +13,22 @@ pub enum ModelPurpose {
     CharacterGeneration,
 }
 
+/// LLMプロバイダー種別
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum LLMProvider {
+    Openai,
+    Anthropic,
+    Google,
+    OpenaiCompatible,
+}
+
 /// LLMモデル接続設定
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModelSettings {
+    /// プロバイダー種別（後方互換のためOption型）
+    #[serde(default)]
+    pub provider: Option<LLMProvider>,
     pub base_url: String,
     pub model: String,
     pub api_key: Option<String>,
@@ -54,6 +67,13 @@ fn default_spontaneous_probability() -> f32 {
 pub struct ThoughtConfig {
     pub enabled: bool,
     pub interval_minutes: u64,
+    /// 自動削除閾値（分）。0 = 無効（全保持）
+    #[serde(default = "default_thought_auto_delete_threshold")]
+    pub auto_delete_threshold_minutes: u64,
+}
+
+fn default_thought_auto_delete_threshold() -> u64 {
+    1440 // 24時間
 }
 
 /// 記憶管理設定
@@ -67,6 +87,47 @@ pub struct MemoryConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TTSGlobalConfig {
     pub enabled: bool,
+    /// VoicePeak CLI実行ファイルパス（例: "C:\\Program Files\\VOICEPEAK\\voicepeak.exe"）
+    #[serde(default)]
+    pub voicepeak_path: Option<String>,
+    /// TTS生成タイムアウト（秒）。デフォルト: 60
+    #[serde(default = "default_tts_timeout")]
+    pub timeout_seconds: u64,
+    /// テキスト分割の最大チャンクサイズ（文字数）。デフォルト: 140
+    #[serde(default = "default_max_chunk_size")]
+    pub max_chunk_size: usize,
+    /// IrodoriTTSデフォルトベースURL（後方互換用）
+    #[serde(default)]
+    pub irodori_base_url: Option<String>,
+    /// IrodoriTTS キャプションモード用ベースURL
+    #[serde(default)]
+    pub irodori_caption_base_url: Option<String>,
+    /// IrodoriTTS 参照音源モード用ベースURL
+    #[serde(default)]
+    pub irodori_reference_audio_base_url: Option<String>,
+}
+
+fn default_tts_timeout() -> u64 {
+    60
+}
+
+fn default_max_chunk_size() -> usize {
+    140
+}
+
+/// メッセージ送信キー設定
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum SendKey {
+    Enter,
+    CtrlEnter,
+    ShiftEnter,
+}
+
+impl Default for SendKey {
+    fn default() -> Self {
+        SendKey::Enter
+    }
 }
 
 /// UI設定
@@ -74,6 +135,9 @@ pub struct TTSGlobalConfig {
 pub struct UIConfig {
     pub theme: Theme,
     pub language: String,
+    /// メッセージ送信キー設定
+    #[serde(default)]
+    pub send_key: SendKey,
 }
 
 /// テーマ

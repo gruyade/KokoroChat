@@ -3,7 +3,7 @@
 use tauri::{AppHandle, State};
 
 use crate::error::AppError;
-use crate::models::{ChatMessageRecord, ChatSession};
+use crate::models::{Attachment, ChatMessageRecord, ChatRole, ChatSession};
 use crate::state::AppState;
 
 /// 新規チャットセッション作成
@@ -25,27 +25,78 @@ pub async fn create_session(
 pub async fn send_message(
     session_id: String,
     content: String,
-    attachments: Option<Vec<String>>,
+    attachments: Option<Vec<Attachment>>,
     app_handle: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
-    let _ = attachments;
-    state
-        .chat_engine
-        .send_message(&session_id, &content, None, &app_handle)
-        .await?;
+    // AbortHandle 統合: LLM呼び出しを tokio::spawn でラップ
+    let chat_engine = state.chat_engine.clone();
+    let stream_abort_manager = state.stream_abort_manager.clone();
+    let session_id_clone = session_id.clone();
+    let content_clone = content.clone();
+    let app_handle_clone = app_handle.clone();
 
-    // バックグラウンドで記憶圧縮チェック
-    // 直列化保証: chat_engine.send_message()内でllm_lockを取得→ストリーミング完了→解放済み。
-    // memory_manager.check_and_compress()内部でllm_lockを再取得するため、
-    // 他のLLMリクエストと競合しない（task 3.3, 3.4で導入済み）。
-    let memory_manager = state.memory_manager.clone();
-    let session_id_for_memory = session_id.clone();
-    tokio::spawn(async move {
-        let _ = memory_manager.check_and_compress(&session_id_for_memory).await;
+    // 部分コンテンツ蓄積用
+    let partial_content = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+    let partial_content_for_register = partial_content.clone();
+    let partial_content_for_engine = partial_content.clone();
+
+    let join_handle = tokio::spawn(async move {
+        chat_engine
+            .send_message(&session_id_clone, &content_clone, attachments, &app_handle_clone, Some(partial_content_for_engine))
+            .await
     });
 
-    // 自発的発話はフロントエンドのタイマーから trigger_spontaneous_check コマンドで呼ばれる
+    // AbortHandle を StreamAbortManager に登録
+    stream_abort_manager.register(
+        &session_id,
+        join_handle.abort_handle(),
+        partial_content_for_register,
+    );
+
+    // タスク完了を待機
+    let result = match join_handle.await {
+        Ok(inner_result) => {
+            // 正常完了: StreamAbortManager からクリーンアップ
+            stream_abort_manager.remove(&session_id);
+            inner_result
+        }
+        Err(join_err) => {
+            if join_err.is_cancelled() {
+                // 中断された場合: 部分コンテンツは stop_generation コマンド側で処理済み
+                return Ok(());
+            }
+            // パニック等の予期しないエラー
+            stream_abort_manager.remove(&session_id);
+            return Err(AppError::Io(format!("Task panicked: {}", join_err)));
+        }
+    };
+
+    result?;
+
+    // バックグラウンドで記憶圧縮チェック
+    let memory_manager = state.memory_manager.clone();
+    let session_id_for_memory = session_id.clone();
+    let app_handle_for_memory = app_handle.clone();
+    tokio::spawn(async move {
+        use tauri::Emitter;
+        use crate::commands::memory::MemoryGeneratedEvent;
+
+        match memory_manager.check_and_compress(&session_id_for_memory).await {
+            Ok(Some(memory)) => {
+                if let Err(e) = app_handle_for_memory.emit("memory:generated", MemoryGeneratedEvent {
+                    character_id: memory.character_id.clone(),
+                    memory_id: memory.id.clone(),
+                }) {
+                    println!("[memory] Failed to emit memory:generated event: {}", e);
+                }
+            }
+            Ok(None) => {}
+            Err(e) => {
+                println!("[memory] Memory compression failed: {}", e);
+            }
+        }
+    });
 
     Ok(())
 }
@@ -62,6 +113,13 @@ pub async fn trigger_spontaneous_check(
     use crate::llm::client::{ChatMessage, LLMResponse, MessageRole, LLMClientConfig};
     use crate::models::{ChatRole, ChatMessageRecord};
     use tauri::Emitter;
+    use std::sync::atomic::Ordering;
+
+    // 一時停止中はスキップ
+    if state.spontaneous_paused.load(Ordering::SeqCst) {
+        println!("[spontaneous] paused, skipping");
+        return Ok(false);
+    }
 
     let config = state.config_manager.get_config();
     if !config.spontaneous.enabled {
@@ -97,6 +155,7 @@ pub async fn trigger_spontaneous_check(
         role: MessageRole::System,
         content: system_prompt,
         tool_call_id: None,
+        images: None,
     }];
     for msg in &recent_messages {
         let role = match msg.role {
@@ -104,7 +163,7 @@ pub async fn trigger_spontaneous_check(
             ChatRole::Assistant | ChatRole::Spontaneous => MessageRole::Assistant,
             ChatRole::Tool => MessageRole::Tool,
         };
-        messages.push(ChatMessage { role, content: msg.content.clone(), tool_call_id: None });
+        messages.push(ChatMessage { role, content: msg.content.clone(), tool_call_id: None, images: None });
     }
 
     // 確率1.0の場合は必ず発話させる（デバッグ用途を想定）
@@ -118,13 +177,14 @@ pub async fn trigger_spontaneous_check(
         role: MessageRole::User,
         content: spontaneous_prompt,
         tool_call_id: None,
+        images: None,
     });
 
     // LLM呼び出し
     let llm_config = state.config_manager
         .get_model_settings(&crate::models::config::ModelPurpose::Chat)
-        .map(|s| LLMClientConfig { base_url: s.base_url, model: s.model, api_key: s.api_key, temperature: s.temperature })
-        .unwrap_or(LLMClientConfig { base_url: String::new(), model: String::new(), api_key: None, temperature: 0.9 });
+        .map(|s| LLMClientConfig { base_url: s.base_url, model: s.model, api_key: s.api_key, temperature: s.temperature, provider: s.provider })
+        .unwrap_or(LLMClientConfig { base_url: String::new(), model: String::new(), api_key: None, temperature: 0.9, provider: None });
 
     if llm_config.base_url.is_empty() {
         println!("[spontaneous] LLM base_url is empty, skipping");
@@ -207,6 +267,106 @@ pub async fn delete_session(
     state.chat_engine.delete_session(&session_id).await
 }
 
+/// メッセージ再生成
+///
+/// 対象のassistantメッセージを削除し、直前のuserメッセージ内容で再送信する。
+#[tauri::command]
+pub async fn regenerate_message(
+    session_id: String,
+    message_id: String,
+    app_handle: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    let chat_engine = state.chat_engine.clone();
+    let stream_abort_manager = state.stream_abort_manager.clone();
+    let session_id_clone = session_id.clone();
+    let message_id_clone = message_id.clone();
+    let app_handle_clone = app_handle.clone();
+
+    // 部分コンテンツ蓄積用
+    let partial_content = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+    let partial_content_for_register = partial_content.clone();
+    let partial_content_for_engine = partial_content.clone();
+
+    let join_handle = tokio::spawn(async move {
+        chat_engine
+            .regenerate(&session_id_clone, &message_id_clone, &app_handle_clone, Some(partial_content_for_engine))
+            .await
+    });
+
+    // AbortHandle を StreamAbortManager に登録
+    stream_abort_manager.register(
+        &session_id,
+        join_handle.abort_handle(),
+        partial_content_for_register,
+    );
+
+    // タスク完了を待機
+    match join_handle.await {
+        Ok(inner_result) => {
+            stream_abort_manager.remove(&session_id);
+            inner_result
+        }
+        Err(join_err) => {
+            if join_err.is_cancelled() {
+                // 中断された場合: stop_generation コマンド側で処理済み
+                Ok(())
+            } else {
+                stream_abort_manager.remove(&session_id);
+                Err(AppError::Io(format!("Task panicked: {}", join_err)))
+            }
+        }
+    }
+}
+
+/// 生成停止
+///
+/// アクティブなストリーミングを中断し、部分コンテンツをassistantメッセージとして保存する。
+/// アクティブなストリームがない場合は何もせず Ok(()) を返す。
+#[tauri::command]
+pub async fn stop_generation(
+    session_id: String,
+    app_handle: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    use crate::db::repositories::chat as chat_repo;
+    use tauri::Emitter;
+
+    let partial_content = state.stream_abort_manager.abort(&session_id);
+
+    if let Some(content) = partial_content {
+        // 部分コンテンツが空でなければ assistant メッセージとして DB 保存
+        if !content.is_empty() {
+            let now = chrono::Utc::now().to_rfc3339();
+            let msg = ChatMessageRecord {
+                id: uuid::Uuid::new_v4().to_string(),
+                session_id: session_id.clone(),
+                role: ChatRole::Assistant,
+                content: content.clone(),
+                attachments: None,
+                tool_calls: None,
+                tool_call_id: None,
+                created_at: now,
+            };
+
+            let db = state.db.lock().map_err(|e| AppError::Database(format!("{}", e)))?;
+            chat_repo::insert_message(db.connection(), &msg)?;
+        }
+
+        // done イベントを発火してフロントエンドに完了を通知
+        let _ = app_handle.emit(
+            "chat:stream",
+            crate::chat::engine::ChatStreamEvent {
+                session_id: session_id.clone(),
+                chunk: String::new(),
+                done: true,
+            },
+        );
+    }
+
+    Ok(())
+}
+
 /// メッセージ削除
 #[tauri::command]
 pub async fn delete_message(
@@ -219,4 +379,64 @@ pub async fn delete_message(
         rusqlite::params![id],
     )?;
     Ok(())
+}
+
+/// メッセージ編集＋再送信
+///
+/// 対象のuserメッセージ以降を削除し、内容を更新して再送信する。
+#[tauri::command]
+pub async fn edit_and_resend(
+    session_id: String,
+    message_id: String,
+    new_content: String,
+    app_handle: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), AppError> {
+    let chat_engine = state.chat_engine.clone();
+    let stream_abort_manager = state.stream_abort_manager.clone();
+    let session_id_clone = session_id.clone();
+    let message_id_clone = message_id.clone();
+    let new_content_clone = new_content.clone();
+    let app_handle_clone = app_handle.clone();
+
+    // 部分コンテンツ蓄積用
+    let partial_content = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+    let partial_content_for_register = partial_content.clone();
+    let partial_content_for_engine = partial_content.clone();
+
+    let join_handle = tokio::spawn(async move {
+        chat_engine
+            .edit_and_resend(
+                &session_id_clone,
+                &message_id_clone,
+                &new_content_clone,
+                &app_handle_clone,
+                Some(partial_content_for_engine),
+            )
+            .await
+    });
+
+    // AbortHandle を StreamAbortManager に登録
+    stream_abort_manager.register(
+        &session_id,
+        join_handle.abort_handle(),
+        partial_content_for_register,
+    );
+
+    // タスク完了を待機
+    match join_handle.await {
+        Ok(inner_result) => {
+            stream_abort_manager.remove(&session_id);
+            inner_result
+        }
+        Err(join_err) => {
+            if join_err.is_cancelled() {
+                // 中断された場合: stop_generation コマンド側で処理済み
+                Ok(())
+            } else {
+                stream_abort_manager.remove(&session_id);
+                Err(AppError::Io(format!("Task panicked: {}", join_err)))
+            }
+        }
+    }
 }

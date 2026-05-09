@@ -38,18 +38,16 @@ mod tests {
 
     /// EmotionParams のストラテジー
     fn arb_emotion_params() -> impl Strategy<Value = EmotionParams> {
-        (
-            proptest::option::of(0i32..100),
-            proptest::option::of(0i32..100),
-            proptest::option::of(0i32..100),
-            proptest::option::of(0i32..100),
+        proptest::collection::hash_map(
+            prop::sample::select(vec![
+                "happy".to_string(),
+                "fun".to_string(),
+                "angry".to_string(),
+                "sad".to_string(),
+            ]),
+            0i32..100,
+            0..=4,
         )
-            .prop_map(|(happy, fun, angry, sad)| EmotionParams {
-                happy,
-                fun,
-                angry,
-                sad,
-            })
     }
 
     /// TTSConfig のストラテジー
@@ -68,13 +66,16 @@ mod tests {
                 |(provider, base_url, ref_audio, caption, narrator, emotion, speed, pitch)| {
                     TTSConfig {
                         provider,
-                        base_url,
+                        base_url: Some(base_url),
+                        caption_base_url: None,
+                        reference_audio_base_url: None,
                         reference_audio_path: ref_audio,
                         caption,
                         narrator,
                         emotion,
                         speed,
                         pitch,
+                        irodori_mode: None,
                     }
                 },
             )
@@ -174,10 +175,10 @@ mod tests {
             prop_assert_eq!(&character.created_at, &deserialized.created_at);
             prop_assert_eq!(&character.updated_at, &deserialized.updated_at);
 
-            // TTSConfig比較（JSON round-trip）
-            let orig_tts_json = serde_json::to_string(&character.tts_config).unwrap();
-            let deser_tts_json = serde_json::to_string(&deserialized.tts_config).unwrap();
-            prop_assert_eq!(orig_tts_json, deser_tts_json);
+            // TTSConfig比較（Value round-trip — HashMapの順序非依存）
+            let orig_tts_value = serde_json::to_value(&character.tts_config).unwrap();
+            let deser_tts_value = serde_json::to_value(&deserialized.tts_config).unwrap();
+            prop_assert_eq!(orig_tts_value, deser_tts_value);
         }
     }
 

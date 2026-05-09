@@ -7,7 +7,7 @@ mod tests {
     use crate::config::model_config::ModelConfigManager;
     use crate::models::config::{
         AppConfig, AttachmentConfig, MemoryConfig, ModelPurpose, ModelSettings, PluginsConfig,
-        SpontaneousConfig, TTSGlobalConfig, Theme, ThoughtConfig, UIConfig,
+        SendKey, SpontaneousConfig, TTSGlobalConfig, Theme, ThoughtConfig, UIConfig,
     };
 
     #[test]
@@ -141,6 +141,7 @@ mod tests {
                 model: "gpt-4".to_string(),
                 api_key: Some("sk-test123".to_string()),
                 temperature: 0.9,
+                provider: None,
             },
         );
         models.insert(
@@ -150,6 +151,7 @@ mod tests {
                 model: "llama3".to_string(),
                 api_key: None,
                 temperature: 0.3,
+                provider: None,
             },
         );
         models.insert(
@@ -159,6 +161,7 @@ mod tests {
                 model: String::new(),
                 api_key: None,
                 temperature: 0.7,
+                provider: None,
             },
         );
         models.insert(
@@ -168,6 +171,7 @@ mod tests {
                 model: String::new(),
                 api_key: None,
                 temperature: 0.7,
+                provider: None,
             },
         );
 
@@ -181,14 +185,16 @@ mod tests {
             thought: ThoughtConfig {
                 enabled: true,
                 interval_minutes: 10,
+                auto_delete_threshold_minutes: 1440,
             },
             memory: MemoryConfig {
                 compression_threshold: 100,
             },
-            tts: TTSGlobalConfig { enabled: true },
+            tts: TTSGlobalConfig { enabled: true, voicepeak_path: None, timeout_seconds: 60, max_chunk_size: 140, irodori_base_url: None, irodori_caption_base_url: None, irodori_reference_audio_base_url: None },
             ui: UIConfig {
                 theme: Theme::Light,
                 language: "en".to_string(),
+                send_key: SendKey::default(),
             },
             plugins: PluginsConfig {
                 enabled_plugins: vec!["calculator".to_string()],

@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::error::AppError;
-use crate::models::{ToolCall, ToolDefinition};
+use crate::models::{LLMProvider, ToolCall, ToolDefinition};
 
 /// LLMクライアント接続設定
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -15,6 +15,191 @@ pub struct LLMClientConfig {
     pub model: String,
     pub api_key: Option<String>,
     pub temperature: f32,
+    /// プロバイダー種別（API形式判定に使用）
+    #[serde(default)]
+    pub provider: Option<LLMProvider>,
+}
+
+/// API通信戦略
+#[derive(Debug, Clone, PartialEq)]
+pub enum ApiStrategy {
+    OpenAI,
+    Gemini,
+    Anthropic,
+}
+
+/// プロバイダーとエンドポイント設定からAPI形式を決定
+pub fn resolve_api_strategy(config: &LLMClientConfig) -> ApiStrategy {
+    // Google: OpenAI互換エンドポイント(/v1beta/openai)を使用するためOpenAI形式
+    // Anthropic: ネイティブ Messages API を使用
+    match config.provider {
+        Some(LLMProvider::Anthropic) => {
+            ApiStrategy::Anthropic
+        }
+        Some(LLMProvider::Google) | Some(LLMProvider::Openai)
+        | Some(LLMProvider::OpenaiCompatible) | None => {
+            ApiStrategy::OpenAI
+        }
+    }
+}
+
+/// 指定プロバイダーのデフォルトエンドポイントかどうかを判定
+pub fn is_default_endpoint(base_url: &str, provider: LLMProvider) -> bool {
+    let url = base_url.trim_end_matches('/');
+    match provider {
+        LLMProvider::Google => {
+            url.is_empty() || url.contains("generativelanguage.googleapis.com")
+        }
+        LLMProvider::Anthropic => {
+            url.is_empty() || url.contains("api.anthropic.com")
+        }
+        _ => true,
+    }
+}
+
+/// Gemini APIリクエストボディを構築
+pub fn build_gemini_request(messages: &[ChatMessage], config: &LLMClientConfig) -> Value {
+    let contents: Vec<Value> = messages
+        .iter()
+        .filter(|m| m.role != MessageRole::System)
+        .map(|m| {
+            let role = match m.role {
+                MessageRole::User => "user",
+                MessageRole::Assistant => "model",
+                _ => "user",
+            };
+            serde_json::json!({
+                "role": role,
+                "parts": [{"text": m.content}]
+            })
+        })
+        .collect();
+
+    let system_instruction = messages
+        .iter()
+        .find(|m| m.role == MessageRole::System)
+        .map(|m| serde_json::json!({"parts": [{"text": m.content}]}));
+
+    let mut body = serde_json::json!({
+        "contents": contents,
+        "generationConfig": {
+            "temperature": config.temperature,
+        }
+    });
+
+    if let Some(si) = system_instruction {
+        body["systemInstruction"] = si;
+    }
+
+    body
+}
+
+/// Gemini用エンドポイントURL構築
+pub fn build_gemini_url(config: &LLMClientConfig) -> String {
+    let base = if config.base_url.is_empty() {
+        "https://generativelanguage.googleapis.com/v1beta"
+    } else {
+        config.base_url.trim_end_matches('/')
+    };
+    format!("{}/models/{}:generateContent", base, config.model)
+}
+
+/// Gemini用ストリーミングエンドポイントURL構築
+pub fn build_gemini_stream_url(config: &LLMClientConfig) -> String {
+    let base = if config.base_url.is_empty() {
+        "https://generativelanguage.googleapis.com/v1beta"
+    } else {
+        config.base_url.trim_end_matches('/')
+    };
+    format!(
+        "{}/models/{}:streamGenerateContent?alt=sse",
+        base, config.model
+    )
+}
+
+/// Anthropic Messages APIリクエストボディを構築
+pub fn build_anthropic_request(messages: &[ChatMessage], config: &LLMClientConfig) -> Value {
+    let system_text = messages
+        .iter()
+        .filter(|m| m.role == MessageRole::System)
+        .map(|m| m.content.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let api_messages: Vec<Value> = messages
+        .iter()
+        .filter(|m| m.role != MessageRole::System)
+        .map(|m| {
+            let role = match m.role {
+                MessageRole::User => "user",
+                MessageRole::Assistant => "assistant",
+                _ => "user",
+            };
+            serde_json::json!({
+                "role": role,
+                "content": m.content
+            })
+        })
+        .collect();
+
+    let mut body = serde_json::json!({
+        "model": config.model,
+        "messages": api_messages,
+        "temperature": config.temperature,
+        "max_tokens": 4096,
+    });
+
+    if !system_text.is_empty() {
+        body["system"] = Value::String(system_text);
+    }
+
+    body
+}
+
+/// Anthropic用エンドポイントURL構築
+pub fn build_anthropic_url(config: &LLMClientConfig) -> String {
+    let base = if config.base_url.is_empty() {
+        "https://api.anthropic.com/v1"
+    } else {
+        config.base_url.trim_end_matches('/')
+    };
+    format!("{}/messages", base)
+}
+
+/// Gemini APIレスポンスをパースしてLLMResponseを返す
+pub fn parse_gemini_response(body: &Value) -> Result<LLMResponse, AppError> {
+    let text = body["candidates"][0]["content"]["parts"][0]["text"]
+        .as_str()
+        .unwrap_or("")
+        .to_string();
+
+    if text.is_empty() {
+        // candidatesが空またはフィルタされた場合のチェック
+        if body["candidates"]
+            .as_array()
+            .map_or(true, |c| c.is_empty())
+        {
+            return Err(AppError::LlmApi(
+                "Gemini response has no candidates (possibly filtered by safety settings)"
+                    .to_string(),
+            ));
+        }
+    }
+
+    Ok(LLMResponse::Text(text))
+}
+
+/// Anthropic Messages APIレスポンスをパースしてLLMResponseを返す
+pub fn parse_anthropic_response(body: &Value) -> Result<LLMResponse, AppError> {
+    let content = body["content"].as_array().ok_or_else(|| {
+        AppError::LlmApi("Invalid Anthropic response: missing 'content' array".to_string())
+    })?;
+    let text = content
+        .iter()
+        .filter_map(|block| block["text"].as_str())
+        .collect::<Vec<_>>()
+        .join("");
+    Ok(LLMResponse::Text(text))
 }
 
 /// メッセージロール
@@ -34,6 +219,10 @@ pub struct ChatMessage {
     pub content: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tool_call_id: Option<String>,
+    /// 画像データ（base64エンコード）のリスト — Vision API用
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
+    pub images: Option<Vec<String>>,
 }
 
 /// LLMレスポンス — テキストまたはtool_call
@@ -89,10 +278,40 @@ impl OpenAICompatibleClient {
         let messages_json: Vec<Value> = messages
             .iter()
             .map(|msg| {
-                let mut obj = serde_json::json!({
-                    "role": msg.role,
-                    "content": msg.content,
-                });
+                let mut obj = if let Some(ref images) = msg.images {
+                    if !images.is_empty() {
+                        // Vision API形式: content を配列にする
+                        let mut content_parts: Vec<Value> = Vec::new();
+                        if !msg.content.is_empty() {
+                            content_parts.push(serde_json::json!({
+                                "type": "text",
+                                "text": msg.content,
+                            }));
+                        }
+                        for img_base64 in images {
+                            content_parts.push(serde_json::json!({
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": format!("data:image/png;base64,{}", img_base64),
+                                }
+                            }));
+                        }
+                        serde_json::json!({
+                            "role": msg.role,
+                            "content": content_parts,
+                        })
+                    } else {
+                        serde_json::json!({
+                            "role": msg.role,
+                            "content": msg.content,
+                        })
+                    }
+                } else {
+                    serde_json::json!({
+                        "role": msg.role,
+                        "content": msg.content,
+                    })
+                };
                 if let Some(ref tool_call_id) = msg.tool_call_id {
                     obj["tool_call_id"] = Value::String(tool_call_id.clone());
                 }
@@ -183,7 +402,7 @@ impl OpenAICompatibleClient {
         Ok(LLMResponse::Text(content))
     }
 
-    /// SSEストリームからテキストをパース
+    /// SSEストリームからテキストをパース（OpenAI形式）
     fn parse_sse_line(line: &str) -> Option<String> {
         let data = line.strip_prefix("data: ")?;
 
@@ -194,6 +413,30 @@ impl OpenAICompatibleClient {
         let json: Value = serde_json::from_str(data).ok()?;
         let delta = &json["choices"][0]["delta"];
         delta["content"].as_str().map(|s| s.to_string())
+    }
+
+    /// SSEストリームからテキストをパース（Gemini形式）
+    fn parse_gemini_sse_line(line: &str) -> Option<String> {
+        let data = line.strip_prefix("data: ")?;
+
+        let json: Value = serde_json::from_str(data).ok()?;
+        json["candidates"][0]["content"]["parts"][0]["text"]
+            .as_str()
+            .map(|s| s.to_string())
+    }
+
+    /// SSEストリームからテキストをパース（Anthropic形式）
+    fn parse_anthropic_sse_line(line: &str) -> Option<String> {
+        let data = line.strip_prefix("data: ")?;
+
+        let json: Value = serde_json::from_str(data).ok()?;
+
+        // content_block_deltaイベントのdelta.textを抽出
+        if json["type"].as_str() == Some("content_block_delta") {
+            return json["delta"]["text"].as_str().map(|s| s.to_string());
+        }
+
+        None
     }
 }
 
@@ -211,30 +454,84 @@ impl LLMClient for OpenAICompatibleClient {
         config: &LLMClientConfig,
         tools: Option<&[ToolDefinition]>,
     ) -> Result<LLMResponse, AppError> {
-        let url = Self::build_url(config);
-        let body = self.build_request_body(messages, config, tools, false);
+        let strategy = resolve_api_strategy(config);
 
-        let mut request = self.http_client.post(&url).json(&body);
+        match strategy {
+            ApiStrategy::Gemini => {
+                let url = build_gemini_url(config);
+                let body = build_gemini_request(messages, config);
 
-        if let Some(ref api_key) = config.api_key {
-            if !api_key.is_empty() {
-                request = request.header("Authorization", format!("Bearer {}", api_key));
+                let api_key = config.api_key.as_deref().unwrap_or("");
+                let url_with_key = format!("{}?key={}", url, api_key);
+
+                let response = self.http_client.post(&url_with_key).json(&body).send().await?;
+
+                if !response.status().is_success() {
+                    let status = response.status();
+                    let error_body = response.text().await.unwrap_or_default();
+                    return Err(AppError::LlmApi(format!(
+                        "Gemini API returned status {}: {}",
+                        status, error_body
+                    )));
+                }
+
+                let response_body: Value = response.json().await?;
+                parse_gemini_response(&response_body)
+            }
+            ApiStrategy::Anthropic => {
+                let url = build_anthropic_url(config);
+                let body = build_anthropic_request(messages, config);
+
+                let api_key = config.api_key.as_deref().unwrap_or("");
+                let response = self
+                    .http_client
+                    .post(&url)
+                    .header("x-api-key", api_key)
+                    .header("anthropic-version", "2023-06-01")
+                    .header("content-type", "application/json")
+                    .json(&body)
+                    .send()
+                    .await?;
+
+                if !response.status().is_success() {
+                    let status = response.status();
+                    let error_body = response.text().await.unwrap_or_default();
+                    return Err(AppError::LlmApi(format!(
+                        "Anthropic API returned status {}: {}",
+                        status, error_body
+                    )));
+                }
+
+                let response_body: Value = response.json().await?;
+                parse_anthropic_response(&response_body)
+            }
+            ApiStrategy::OpenAI => {
+                let url = Self::build_url(config);
+                let body = self.build_request_body(messages, config, tools, false);
+
+                let mut request = self.http_client.post(&url).json(&body);
+
+                if let Some(ref api_key) = config.api_key {
+                    if !api_key.is_empty() {
+                        request = request.header("Authorization", format!("Bearer {}", api_key));
+                    }
+                }
+
+                let response = request.send().await?;
+
+                if !response.status().is_success() {
+                    let status = response.status();
+                    let error_body = response.text().await.unwrap_or_default();
+                    return Err(AppError::LlmApi(format!(
+                        "API returned status {}: {}",
+                        status, error_body
+                    )));
+                }
+
+                let response_body: Value = response.json().await?;
+                Self::parse_response(&response_body)
             }
         }
-
-        let response = request.send().await?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let error_body = response.text().await.unwrap_or_default();
-            return Err(AppError::LlmApi(format!(
-                "API returned status {}: {}",
-                status, error_body
-            )));
-        }
-
-        let response_body: Value = response.json().await?;
-        Self::parse_response(&response_body)
     }
 
     async fn chat_stream(
@@ -243,93 +540,254 @@ impl LLMClient for OpenAICompatibleClient {
         config: &LLMClientConfig,
         callback: Box<dyn Fn(String) + Send>,
     ) -> Result<String, AppError> {
-        let url = Self::build_url(config);
-        let body = self.build_request_body(messages, config, None, true);
+        let strategy = resolve_api_strategy(config);
 
-        let mut request = self.http_client.post(&url).json(&body);
+        match strategy {
+            ApiStrategy::Gemini => {
+                let url = build_gemini_stream_url(config);
+                let body = build_gemini_request(messages, config);
 
-        if let Some(ref api_key) = config.api_key {
-            if !api_key.is_empty() {
-                request = request.header("Authorization", format!("Bearer {}", api_key));
+                let api_key = config.api_key.as_deref().unwrap_or("");
+                let url_with_key = format!("{}&key={}", url, api_key);
+
+                let response = self.http_client.post(&url_with_key).json(&body).send().await?;
+
+                if !response.status().is_success() {
+                    let status = response.status();
+                    let error_body = response.text().await.unwrap_or_default();
+                    return Err(AppError::LlmApi(format!(
+                        "Gemini streaming API returned status {}: {}",
+                        status, error_body
+                    )));
+                }
+
+                let mut full_text = String::new();
+                let bytes = response.bytes().await?;
+                let text = String::from_utf8_lossy(&bytes);
+
+                for line in text.lines() {
+                    let line = line.trim();
+                    if line.is_empty() {
+                        continue;
+                    }
+
+                    if let Some(chunk) = Self::parse_gemini_sse_line(line) {
+                        full_text.push_str(&chunk);
+                        callback(chunk);
+                    }
+                }
+
+                Ok(full_text)
+            }
+            ApiStrategy::Anthropic => {
+                let url = build_anthropic_url(config);
+                let mut body = build_anthropic_request(messages, config);
+                // ストリーミング有効化
+                body["stream"] = Value::Bool(true);
+
+                let api_key = config.api_key.as_deref().unwrap_or("");
+                let response = self
+                    .http_client
+                    .post(&url)
+                    .header("x-api-key", api_key)
+                    .header("anthropic-version", "2023-06-01")
+                    .header("content-type", "application/json")
+                    .json(&body)
+                    .send()
+                    .await?;
+
+                if !response.status().is_success() {
+                    let status = response.status();
+                    let error_body = response.text().await.unwrap_or_default();
+                    return Err(AppError::LlmApi(format!(
+                        "Anthropic streaming API returned status {}: {}",
+                        status, error_body
+                    )));
+                }
+
+                let mut full_text = String::new();
+                let bytes = response.bytes().await?;
+                let text = String::from_utf8_lossy(&bytes);
+
+                for line in text.lines() {
+                    let line = line.trim();
+                    if line.is_empty() {
+                        continue;
+                    }
+
+                    if let Some(chunk) = Self::parse_anthropic_sse_line(line) {
+                        full_text.push_str(&chunk);
+                        callback(chunk);
+                    }
+                }
+
+                Ok(full_text)
+            }
+            ApiStrategy::OpenAI => {
+                let url = Self::build_url(config);
+                let body = self.build_request_body(messages, config, None, true);
+
+                let mut request = self.http_client.post(&url).json(&body);
+
+                if let Some(ref api_key) = config.api_key {
+                    if !api_key.is_empty() {
+                        request = request.header("Authorization", format!("Bearer {}", api_key));
+                    }
+                }
+
+                let response = request.send().await?;
+
+                if !response.status().is_success() {
+                    let status = response.status();
+                    let error_body = response.text().await.unwrap_or_default();
+                    return Err(AppError::LlmApi(format!(
+                        "API returned status {}: {}",
+                        status, error_body
+                    )));
+                }
+
+                let mut full_text = String::new();
+                let mut buffer = String::new();
+
+                let bytes = response.bytes().await?;
+                let text = String::from_utf8_lossy(&bytes);
+
+                for line in text.lines() {
+                    let line = line.trim();
+                    if line.is_empty() {
+                        continue;
+                    }
+
+                    if let Some(chunk) = Self::parse_sse_line(line) {
+                        full_text.push_str(&chunk);
+                        buffer.push_str(&chunk);
+                        callback(buffer.clone());
+                        buffer.clear();
+                    }
+                }
+
+                Ok(full_text)
             }
         }
-
-        let response = request.send().await?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let error_body = response.text().await.unwrap_or_default();
-            return Err(AppError::LlmApi(format!(
-                "API returned status {}: {}",
-                status, error_body
-            )));
-        }
-
-        let mut full_text = String::new();
-        let mut buffer = String::new();
-
-        // バイトストリームとしてSSEを読み取り
-        let bytes = response.bytes().await?;
-        let text = String::from_utf8_lossy(&bytes);
-
-        for line in text.lines() {
-            let line = line.trim();
-            if line.is_empty() {
-                continue;
-            }
-
-            if let Some(chunk) = Self::parse_sse_line(line) {
-                full_text.push_str(&chunk);
-                buffer.push_str(&chunk);
-                callback(buffer.clone());
-                buffer.clear();
-            }
-        }
-
-        Ok(full_text)
     }
 
     async fn test_connection(&self, config: &LLMClientConfig) -> Result<(), AppError> {
-        let _messages = vec![ChatMessage {
-            role: MessageRole::User,
-            content: "Hi".to_string(),
-            tool_call_id: None,
-        }];
+        let strategy = resolve_api_strategy(config);
 
-        let url = Self::build_url(config);
-        let body = serde_json::json!({
-            "model": config.model,
-            "messages": [{"role": "user", "content": "Hi"}],
-            "temperature": config.temperature,
-            "stream": false,
-            "max_tokens": 1,
-        });
+        match strategy {
+            ApiStrategy::Gemini => {
+                let url = build_gemini_url(config);
+                let api_key = config.api_key.as_deref().unwrap_or("");
+                let url_with_key = format!("{}?key={}", url, api_key);
 
-        let mut request = self.http_client.post(&url).json(&body);
+                // 最小限のgenerateContentリクエスト
+                let body = serde_json::json!({
+                    "contents": [{"role": "user", "parts": [{"text": "Hi"}]}],
+                    "generationConfig": {
+                        "temperature": config.temperature,
+                        "maxOutputTokens": 1,
+                    }
+                });
 
-        if let Some(ref api_key) = config.api_key {
-            if !api_key.is_empty() {
-                request = request.header("Authorization", format!("Bearer {}", api_key));
+                let response = self.http_client.post(&url_with_key).json(&body).send().await?;
+
+                if !response.status().is_success() {
+                    let status = response.status();
+                    let error_body = response.text().await.unwrap_or_default();
+                    return Err(AppError::LlmApi(format!(
+                        "Gemini connection test failed (status {}): {}",
+                        status, error_body
+                    )));
+                }
+
+                let _: Value = response.json().await.map_err(|e| {
+                    AppError::LlmApi(format!(
+                        "Gemini connection test: invalid response format: {}",
+                        e
+                    ))
+                })?;
+
+                Ok(())
+            }
+            ApiStrategy::Anthropic => {
+                let url = build_anthropic_url(config);
+                let api_key = config.api_key.as_deref().unwrap_or("");
+
+                // 最小限のmessagesリクエスト
+                let body = serde_json::json!({
+                    "model": config.model,
+                    "messages": [{"role": "user", "content": "Hi"}],
+                    "temperature": config.temperature,
+                    "max_tokens": 1,
+                });
+
+                let response = self
+                    .http_client
+                    .post(&url)
+                    .header("x-api-key", api_key)
+                    .header("anthropic-version", "2023-06-01")
+                    .header("content-type", "application/json")
+                    .json(&body)
+                    .send()
+                    .await?;
+
+                if !response.status().is_success() {
+                    let status = response.status();
+                    let error_body = response.text().await.unwrap_or_default();
+                    return Err(AppError::LlmApi(format!(
+                        "Anthropic connection test failed (status {}): {}",
+                        status, error_body
+                    )));
+                }
+
+                let _: Value = response.json().await.map_err(|e| {
+                    AppError::LlmApi(format!(
+                        "Anthropic connection test: invalid response format: {}",
+                        e
+                    ))
+                })?;
+
+                Ok(())
+            }
+            ApiStrategy::OpenAI => {
+                let url = Self::build_url(config);
+                let body = serde_json::json!({
+                    "model": config.model,
+                    "messages": [{"role": "user", "content": "Hi"}],
+                    "temperature": config.temperature,
+                    "stream": false,
+                    "max_tokens": 1,
+                });
+
+                let mut request = self.http_client.post(&url).json(&body);
+
+                if let Some(ref api_key) = config.api_key {
+                    if !api_key.is_empty() {
+                        request = request.header("Authorization", format!("Bearer {}", api_key));
+                    }
+                }
+
+                let response = request.send().await?;
+
+                if !response.status().is_success() {
+                    let status = response.status();
+                    let error_body = response.text().await.unwrap_or_default();
+                    return Err(AppError::LlmApi(format!(
+                        "Connection test failed (status {}): {}",
+                        status, error_body
+                    )));
+                }
+
+                let _: Value = response.json().await.map_err(|e| {
+                    AppError::LlmApi(format!(
+                        "Connection test: invalid response format: {}",
+                        e
+                    ))
+                })?;
+
+                Ok(())
             }
         }
-
-        let response = request.send().await?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let error_body = response.text().await.unwrap_or_default();
-            return Err(AppError::LlmApi(format!(
-                "Connection test failed (status {}): {}",
-                status, error_body
-            )));
-        }
-
-        // レスポンスが正常に返ればOK（内容は問わない）
-        let _: Value = response.json().await.map_err(|e| {
-            AppError::LlmApi(format!("Connection test: invalid response format: {}", e))
-        })?;
-
-        Ok(())
     }
 }
 
@@ -346,11 +804,13 @@ mod tests {
                 role: MessageRole::System,
                 content: "You are a helpful assistant.".to_string(),
                 tool_call_id: None,
+                images: None,
             },
             ChatMessage {
                 role: MessageRole::User,
                 content: "Hello".to_string(),
                 tool_call_id: None,
+                images: None,
             },
         ];
         let config = LLMClientConfig {
@@ -358,6 +818,7 @@ mod tests {
             model: "gpt-4".to_string(),
             api_key: None,
             temperature: 0.7,
+            provider: None,
         };
 
         let body = client.build_request_body(&messages, &config, None, false);
@@ -385,12 +846,14 @@ mod tests {
             role: MessageRole::User,
             content: "What is 2+2?".to_string(),
             tool_call_id: None,
+            images: None,
         }];
         let config = LLMClientConfig {
             base_url: "http://localhost:8080/v1".to_string(),
             model: "gpt-4".to_string(),
             api_key: Some("sk-test".to_string()),
             temperature: 0.5,
+            provider: None,
         };
         let tools = vec![ToolDefinition {
             name: "calculator".to_string(),
@@ -424,12 +887,14 @@ mod tests {
             role: MessageRole::Tool,
             content: "4".to_string(),
             tool_call_id: Some("call_123".to_string()),
+            images: None,
         }];
         let config = LLMClientConfig {
             base_url: "http://localhost:8080/v1".to_string(),
             model: "gpt-4".to_string(),
             api_key: None,
             temperature: 0.7,
+            provider: None,
         };
 
         let body = client.build_request_body(&messages, &config, None, false);
@@ -447,12 +912,14 @@ mod tests {
             role: MessageRole::User,
             content: "Hello".to_string(),
             tool_call_id: None,
+            images: None,
         }];
         let config = LLMClientConfig {
             base_url: "http://localhost:8080/v1".to_string(),
             model: "gpt-4".to_string(),
             api_key: None,
             temperature: 0.7,
+            provider: None,
         };
 
         let body = client.build_request_body(&messages, &config, None, true);
@@ -466,6 +933,7 @@ mod tests {
             model: "gpt-4".to_string(),
             api_key: None,
             temperature: 0.7,
+            provider: None,
         };
         assert_eq!(
             OpenAICompatibleClient::build_url(&config),
@@ -478,6 +946,7 @@ mod tests {
             model: "gpt-4".to_string(),
             api_key: None,
             temperature: 0.7,
+            provider: None,
         };
         assert_eq!(
             OpenAICompatibleClient::build_url(&config2),
@@ -588,6 +1057,7 @@ mod tests {
             role: MessageRole::System,
             content: "test".to_string(),
             tool_call_id: None,
+            images: None,
         };
         let json = serde_json::to_string(&msg).unwrap();
         assert!(json.contains("\"role\":\"system\""));
@@ -596,6 +1066,7 @@ mod tests {
             role: MessageRole::Assistant,
             content: "test".to_string(),
             tool_call_id: None,
+            images: None,
         };
         let json = serde_json::to_string(&msg).unwrap();
         assert!(json.contains("\"role\":\"assistant\""));
@@ -607,6 +1078,7 @@ mod tests {
             role: MessageRole::User,
             content: "hello".to_string(),
             tool_call_id: None,
+            images: None,
         };
         let json = serde_json::to_string(&msg).unwrap();
         assert!(!json.contains("tool_call_id"));
@@ -618,6 +1090,7 @@ mod tests {
             role: MessageRole::Tool,
             content: "result".to_string(),
             tool_call_id: Some("call_123".to_string()),
+            images: None,
         };
         let json = serde_json::to_string(&msg).unwrap();
         assert!(json.contains("\"tool_call_id\":\"call_123\""));
@@ -630,6 +1103,7 @@ mod tests {
             model: "gpt-4".to_string(),
             api_key: Some("sk-test".to_string()),
             temperature: 0.7,
+            provider: None,
         };
         let json = serde_json::to_value(&config).unwrap();
         assert_eq!(json["base_url"], "http://localhost:8080/v1");
@@ -666,18 +1140,148 @@ mod tests {
             role: MessageRole::User,
             content: "Hello".to_string(),
             tool_call_id: None,
+            images: None,
         }];
         let config = LLMClientConfig {
             base_url: "http://localhost:8080/v1".to_string(),
             model: "gpt-4".to_string(),
             api_key: None,
             temperature: 0.7,
+            provider: None,
         };
         let tools: Vec<ToolDefinition> = vec![];
 
         // 空のtools配列を渡した場合、toolsフィールドは含まれない
         let body = client.build_request_body(&messages, &config, Some(&tools), false);
         assert!(body.get("tools").is_none());
+    }
+
+    #[test]
+    fn test_build_gemini_request_basic() {
+        let messages = vec![
+            ChatMessage {
+                role: MessageRole::System,
+                content: "You are a helpful assistant.".to_string(),
+                tool_call_id: None,
+                images: None,
+            },
+            ChatMessage {
+                role: MessageRole::User,
+                content: "Hello".to_string(),
+                tool_call_id: None,
+                images: None,
+            },
+            ChatMessage {
+                role: MessageRole::Assistant,
+                content: "Hi there!".to_string(),
+                tool_call_id: None,
+                images: None,
+            },
+        ];
+        let config = LLMClientConfig {
+            base_url: "".to_string(),
+            model: "gemini-pro".to_string(),
+            api_key: Some("test-key".to_string()),
+            temperature: 0.9,
+            provider: Some(LLMProvider::Google),
+        };
+
+        let body = build_gemini_request(&messages, &config);
+
+        // contentsにはSystemメッセージが含まれない
+        let contents = body["contents"].as_array().unwrap();
+        assert_eq!(contents.len(), 2);
+        assert_eq!(contents[0]["role"], "user");
+        assert_eq!(contents[0]["parts"][0]["text"], "Hello");
+        assert_eq!(contents[1]["role"], "model");
+        assert_eq!(contents[1]["parts"][0]["text"], "Hi there!");
+
+        // systemInstructionが設定される
+        assert_eq!(
+            body["systemInstruction"]["parts"][0]["text"],
+            "You are a helpful assistant."
+        );
+
+        // generationConfig.temperature
+        let temp = body["generationConfig"]["temperature"].as_f64().unwrap();
+        assert!((temp - 0.9f64).abs() < 1e-5);
+    }
+
+    #[test]
+    fn test_build_gemini_request_no_system_message() {
+        let messages = vec![ChatMessage {
+            role: MessageRole::User,
+            content: "Hello".to_string(),
+            tool_call_id: None,
+            images: None,
+        }];
+        let config = LLMClientConfig {
+            base_url: "".to_string(),
+            model: "gemini-pro".to_string(),
+            api_key: None,
+            temperature: 0.5,
+            provider: Some(LLMProvider::Google),
+        };
+
+        let body = build_gemini_request(&messages, &config);
+
+        let contents = body["contents"].as_array().unwrap();
+        assert_eq!(contents.len(), 1);
+        assert_eq!(contents[0]["role"], "user");
+
+        // systemInstructionは存在しない
+        assert!(body.get("systemInstruction").is_none());
+    }
+
+    #[test]
+    fn test_build_gemini_url_default_endpoint() {
+        let config = LLMClientConfig {
+            base_url: "".to_string(),
+            model: "gemini-1.5-pro".to_string(),
+            api_key: None,
+            temperature: 0.7,
+            provider: Some(LLMProvider::Google),
+        };
+
+        let url = build_gemini_url(&config);
+        assert_eq!(
+            url,
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent"
+        );
+    }
+
+    #[test]
+    fn test_build_gemini_url_custom_endpoint() {
+        let config = LLMClientConfig {
+            base_url: "https://custom-proxy.example.com/v1".to_string(),
+            model: "gemini-pro".to_string(),
+            api_key: None,
+            temperature: 0.7,
+            provider: Some(LLMProvider::Google),
+        };
+
+        let url = build_gemini_url(&config);
+        assert_eq!(
+            url,
+            "https://custom-proxy.example.com/v1/models/gemini-pro:generateContent"
+        );
+    }
+
+    #[test]
+    fn test_build_gemini_url_trailing_slash() {
+        let config = LLMClientConfig {
+            base_url: "https://custom-proxy.example.com/v1/".to_string(),
+            model: "gemini-pro".to_string(),
+            api_key: None,
+            temperature: 0.7,
+            provider: Some(LLMProvider::Google),
+        };
+
+        let url = build_gemini_url(&config);
+        assert_eq!(
+            url,
+            "https://custom-proxy.example.com/v1/models/gemini-pro:generateContent"
+        );
     }
 
     #[test]
@@ -718,5 +1322,424 @@ mod tests {
             }
             _ => panic!("Expected LLMResponse::ToolCalls"),
         }
+    }
+
+    #[test]
+    fn test_build_anthropic_request_basic() {
+        let messages = vec![
+            ChatMessage {
+                role: MessageRole::System,
+                content: "You are a helpful assistant.".to_string(),
+                tool_call_id: None,
+                images: None,
+            },
+            ChatMessage {
+                role: MessageRole::User,
+                content: "Hello".to_string(),
+                tool_call_id: None,
+                images: None,
+            },
+            ChatMessage {
+                role: MessageRole::Assistant,
+                content: "Hi there!".to_string(),
+                tool_call_id: None,
+                images: None,
+            },
+        ];
+        let config = LLMClientConfig {
+            base_url: "".to_string(),
+            model: "claude-3-5-sonnet-20241022".to_string(),
+            api_key: Some("sk-ant-test".to_string()),
+            temperature: 0.7,
+            provider: Some(LLMProvider::Anthropic),
+        };
+
+        let body = build_anthropic_request(&messages, &config);
+
+        // modelが設定される
+        assert_eq!(body["model"], "claude-3-5-sonnet-20241022");
+
+        // messagesにはSystemメッセージが含まれない
+        let msgs = body["messages"].as_array().unwrap();
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[0]["role"], "user");
+        assert_eq!(msgs[0]["content"], "Hello");
+        assert_eq!(msgs[1]["role"], "assistant");
+        assert_eq!(msgs[1]["content"], "Hi there!");
+
+        // systemフィールドにシステムメッセージが設定される
+        assert_eq!(body["system"], "You are a helpful assistant.");
+
+        // temperature
+        let temp = body["temperature"].as_f64().unwrap();
+        assert!((temp - 0.7f64).abs() < 1e-5);
+
+        // max_tokens
+        assert_eq!(body["max_tokens"], 4096);
+    }
+
+    #[test]
+    fn test_build_anthropic_request_no_system_message() {
+        let messages = vec![ChatMessage {
+            role: MessageRole::User,
+            content: "Hello".to_string(),
+            tool_call_id: None,
+            images: None,
+        }];
+        let config = LLMClientConfig {
+            base_url: "".to_string(),
+            model: "claude-3-haiku-20240307".to_string(),
+            api_key: None,
+            temperature: 0.5,
+            provider: Some(LLMProvider::Anthropic),
+        };
+
+        let body = build_anthropic_request(&messages, &config);
+
+        let msgs = body["messages"].as_array().unwrap();
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0]["role"], "user");
+
+        // systemフィールドは存在しない
+        assert!(body.get("system").is_none());
+    }
+
+    #[test]
+    fn test_build_anthropic_request_multiple_system_messages() {
+        let messages = vec![
+            ChatMessage {
+                role: MessageRole::System,
+                content: "First instruction.".to_string(),
+                tool_call_id: None,
+                images: None,
+            },
+            ChatMessage {
+                role: MessageRole::System,
+                content: "Second instruction.".to_string(),
+                tool_call_id: None,
+                images: None,
+            },
+            ChatMessage {
+                role: MessageRole::User,
+                content: "Hello".to_string(),
+                tool_call_id: None,
+                images: None,
+            },
+        ];
+        let config = LLMClientConfig {
+            base_url: "".to_string(),
+            model: "claude-3-5-sonnet-20241022".to_string(),
+            api_key: None,
+            temperature: 0.7,
+            provider: Some(LLMProvider::Anthropic),
+        };
+
+        let body = build_anthropic_request(&messages, &config);
+
+        // 複数のシステムメッセージが改行で結合される
+        assert_eq!(body["system"], "First instruction.\nSecond instruction.");
+
+        // messagesにはuser/assistantのみ
+        let msgs = body["messages"].as_array().unwrap();
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0]["role"], "user");
+    }
+
+    #[test]
+    fn test_build_anthropic_url_default_endpoint() {
+        let config = LLMClientConfig {
+            base_url: "".to_string(),
+            model: "claude-3-5-sonnet-20241022".to_string(),
+            api_key: None,
+            temperature: 0.7,
+            provider: Some(LLMProvider::Anthropic),
+        };
+
+        let url = build_anthropic_url(&config);
+        assert_eq!(url, "https://api.anthropic.com/v1/messages");
+    }
+
+    #[test]
+    fn test_build_anthropic_url_custom_endpoint() {
+        let config = LLMClientConfig {
+            base_url: "https://custom-proxy.example.com/v1".to_string(),
+            model: "claude-3-5-sonnet-20241022".to_string(),
+            api_key: None,
+            temperature: 0.7,
+            provider: Some(LLMProvider::Anthropic),
+        };
+
+        let url = build_anthropic_url(&config);
+        assert_eq!(
+            url,
+            "https://custom-proxy.example.com/v1/messages"
+        );
+    }
+
+    #[test]
+    fn test_build_anthropic_url_trailing_slash() {
+        let config = LLMClientConfig {
+            base_url: "https://custom-proxy.example.com/v1/".to_string(),
+            model: "claude-3-5-sonnet-20241022".to_string(),
+            api_key: None,
+            temperature: 0.7,
+            provider: Some(LLMProvider::Anthropic),
+        };
+
+        let url = build_anthropic_url(&config);
+        assert_eq!(
+            url,
+            "https://custom-proxy.example.com/v1/messages"
+        );
+    }
+
+    // --- parse_gemini_response tests ---
+
+    #[test]
+    fn test_parse_gemini_response_basic() {
+        let body = serde_json::json!({
+            "candidates": [{
+                "content": {
+                    "parts": [{"text": "Hello from Gemini!"}],
+                    "role": "model"
+                },
+                "finishReason": "STOP"
+            }]
+        });
+
+        let result = parse_gemini_response(&body).unwrap();
+        match result {
+            LLMResponse::Text(text) => assert_eq!(text, "Hello from Gemini!"),
+            _ => panic!("Expected LLMResponse::Text"),
+        }
+    }
+
+    #[test]
+    fn test_parse_gemini_response_empty_candidates() {
+        let body = serde_json::json!({
+            "candidates": []
+        });
+
+        let result = parse_gemini_response(&body);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("no candidates"));
+    }
+
+    #[test]
+    fn test_parse_gemini_response_missing_candidates() {
+        let body = serde_json::json!({
+            "promptFeedback": {
+                "blockReason": "SAFETY"
+            }
+        });
+
+        let result = parse_gemini_response(&body);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_gemini_response_empty_text_with_candidate() {
+        // candidatesは存在するがtextが空の場合 → 空テキストを返す（エラーではない）
+        let body = serde_json::json!({
+            "candidates": [{
+                "content": {
+                    "parts": [{"text": ""}],
+                    "role": "model"
+                },
+                "finishReason": "STOP"
+            }]
+        });
+
+        let result = parse_gemini_response(&body).unwrap();
+        match result {
+            LLMResponse::Text(text) => assert_eq!(text, ""),
+            _ => panic!("Expected LLMResponse::Text"),
+        }
+    }
+
+    // --- parse_anthropic_response tests ---
+
+    #[test]
+    fn test_parse_anthropic_response_basic() {
+        let body = serde_json::json!({
+            "id": "msg_123",
+            "type": "message",
+            "role": "assistant",
+            "content": [
+                {"type": "text", "text": "Hello from Claude!"}
+            ],
+            "stop_reason": "end_turn"
+        });
+
+        let result = parse_anthropic_response(&body).unwrap();
+        match result {
+            LLMResponse::Text(text) => assert_eq!(text, "Hello from Claude!"),
+            _ => panic!("Expected LLMResponse::Text"),
+        }
+    }
+
+    #[test]
+    fn test_parse_anthropic_response_multiple_text_blocks() {
+        let body = serde_json::json!({
+            "id": "msg_456",
+            "type": "message",
+            "role": "assistant",
+            "content": [
+                {"type": "text", "text": "First part. "},
+                {"type": "text", "text": "Second part."}
+            ],
+            "stop_reason": "end_turn"
+        });
+
+        let result = parse_anthropic_response(&body).unwrap();
+        match result {
+            LLMResponse::Text(text) => assert_eq!(text, "First part. Second part."),
+            _ => panic!("Expected LLMResponse::Text"),
+        }
+    }
+
+    #[test]
+    fn test_parse_anthropic_response_missing_content() {
+        let body = serde_json::json!({
+            "id": "msg_789",
+            "type": "error",
+            "error": {"type": "invalid_request_error", "message": "bad request"}
+        });
+
+        let result = parse_anthropic_response(&body);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("missing 'content' array"));
+    }
+
+    #[test]
+    fn test_parse_anthropic_response_empty_content() {
+        let body = serde_json::json!({
+            "id": "msg_000",
+            "type": "message",
+            "role": "assistant",
+            "content": [],
+            "stop_reason": "end_turn"
+        });
+
+        let result = parse_anthropic_response(&body).unwrap();
+        match result {
+            LLMResponse::Text(text) => assert_eq!(text, ""),
+            _ => panic!("Expected LLMResponse::Text"),
+        }
+    }
+
+    #[test]
+    fn test_parse_anthropic_response_mixed_content_types() {
+        // tool_useブロックが混在する場合、textブロックのみ抽出
+        let body = serde_json::json!({
+            "id": "msg_mixed",
+            "type": "message",
+            "role": "assistant",
+            "content": [
+                {"type": "text", "text": "Let me search for that. "},
+                {"type": "tool_use", "id": "toolu_123", "name": "search", "input": {"query": "test"}},
+                {"type": "text", "text": "Here are the results."}
+            ],
+            "stop_reason": "tool_use"
+        });
+
+        let result = parse_anthropic_response(&body).unwrap();
+        match result {
+            LLMResponse::Text(text) => {
+                assert_eq!(text, "Let me search for that. Here are the results.")
+            }
+            _ => panic!("Expected LLMResponse::Text"),
+        }
+    }
+
+    // --- build_gemini_stream_url tests ---
+
+    #[test]
+    fn test_build_gemini_stream_url_default_endpoint() {
+        let config = LLMClientConfig {
+            base_url: "".to_string(),
+            model: "gemini-1.5-pro".to_string(),
+            api_key: None,
+            temperature: 0.7,
+            provider: Some(LLMProvider::Google),
+        };
+
+        let url = build_gemini_stream_url(&config);
+        assert_eq!(
+            url,
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:streamGenerateContent?alt=sse"
+        );
+    }
+
+    #[test]
+    fn test_build_gemini_stream_url_custom_endpoint() {
+        let config = LLMClientConfig {
+            base_url: "https://custom-proxy.example.com/v1".to_string(),
+            model: "gemini-pro".to_string(),
+            api_key: None,
+            temperature: 0.7,
+            provider: Some(LLMProvider::Google),
+        };
+
+        let url = build_gemini_stream_url(&config);
+        assert_eq!(
+            url,
+            "https://custom-proxy.example.com/v1/models/gemini-pro:streamGenerateContent?alt=sse"
+        );
+    }
+
+    // --- parse_gemini_sse_line tests ---
+
+    #[test]
+    fn test_parse_gemini_sse_line_content() {
+        let line = r#"data: {"candidates":[{"content":{"parts":[{"text":"Hello"}],"role":"model"}}]}"#;
+        let result = OpenAICompatibleClient::parse_gemini_sse_line(line);
+        assert_eq!(result, Some("Hello".to_string()));
+    }
+
+    #[test]
+    fn test_parse_gemini_sse_line_no_data_prefix() {
+        let line = "event: message";
+        let result = OpenAICompatibleClient::parse_gemini_sse_line(line);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_parse_gemini_sse_line_empty_text() {
+        let line = r#"data: {"candidates":[{"content":{"parts":[{"text":""}],"role":"model"}}]}"#;
+        let result = OpenAICompatibleClient::parse_gemini_sse_line(line);
+        assert_eq!(result, Some("".to_string()));
+    }
+
+    // --- parse_anthropic_sse_line tests ---
+
+    #[test]
+    fn test_parse_anthropic_sse_line_content_block_delta() {
+        let line = r#"data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}"#;
+        let result = OpenAICompatibleClient::parse_anthropic_sse_line(line);
+        assert_eq!(result, Some("Hello".to_string()));
+    }
+
+    #[test]
+    fn test_parse_anthropic_sse_line_message_start() {
+        let line = r#"data: {"type":"message_start","message":{"id":"msg_123","type":"message","role":"assistant"}}"#;
+        let result = OpenAICompatibleClient::parse_anthropic_sse_line(line);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_parse_anthropic_sse_line_message_stop() {
+        let line = r#"data: {"type":"message_stop"}"#;
+        let result = OpenAICompatibleClient::parse_anthropic_sse_line(line);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_parse_anthropic_sse_line_no_data_prefix() {
+        let line = "event: content_block_delta";
+        let result = OpenAICompatibleClient::parse_anthropic_sse_line(line);
+        assert_eq!(result, None);
     }
 }

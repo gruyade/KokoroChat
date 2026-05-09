@@ -48,10 +48,10 @@ pub async fn debug_compress_memory(
     let config = state.config_manager
         .get_model_settings(&crate::models::config::ModelPurpose::Memory)
         .map(|s| crate::llm::client::LLMClientConfig {
-            base_url: s.base_url, model: s.model, api_key: s.api_key, temperature: s.temperature,
+            base_url: s.base_url, model: s.model, api_key: s.api_key, temperature: s.temperature, provider: s.provider,
         })
         .unwrap_or_else(|| crate::llm::client::LLMClientConfig {
-            base_url: String::new(), model: String::new(), api_key: None, temperature: 0.3,
+            base_url: String::new(), model: String::new(), api_key: None, temperature: 0.3, provider: None,
         });
 
     let llm_messages = vec![
@@ -59,11 +59,13 @@ pub async fn debug_compress_memory(
             role: MessageRole::System,
             content: "あなたは会話要約アシスタントです。以下の会話を分析し、重要な情報を簡潔に要約してください。\n\n以下の観点で要約してください：\n- ユーザーに関する重要な事実\n- 議論された主要なトピック\n- 表明された好みや意見\n- 行われた約束やコミットメント\n\n箇条書きで簡潔にまとめてください。".to_string(),
             tool_call_id: None,
+            images: None,
         },
         ChatMessage {
             role: MessageRole::User,
             content: format!("以下の会話を要約してください：\n\n{}", messages_text),
             tool_call_id: None,
+            images: None,
         },
     ];
 
@@ -136,6 +138,7 @@ pub async fn debug_trigger_spontaneous(
         role: MessageRole::System,
         content: system_prompt,
         tool_call_id: None,
+        images: None,
     }];
 
     for msg in &recent_messages {
@@ -144,13 +147,14 @@ pub async fn debug_trigger_spontaneous(
             ChatRole::Assistant | ChatRole::Spontaneous => MessageRole::Assistant,
             ChatRole::Tool => MessageRole::Tool,
         };
-        messages.push(ChatMessage { role, content: msg.content.clone(), tool_call_id: None });
+        messages.push(ChatMessage { role, content: msg.content.clone(), tool_call_id: None, images: None });
     }
 
     messages.push(ChatMessage {
         role: MessageRole::User,
         content: "あなたはキャラクターとして、直前の会話の流れや状況を踏まえて自然に一言話しかけてください。短く、キャラクターらしい口調で。必ず何か話してください。".to_string(),
         tool_call_id: None,
+        images: None,
     });
 
     // LLM呼び出し
@@ -161,12 +165,14 @@ pub async fn debug_trigger_spontaneous(
             model: s.model,
             api_key: s.api_key,
             temperature: s.temperature,
+            provider: s.provider,
         })
         .unwrap_or_else(|| crate::llm::client::LLMClientConfig {
             base_url: String::new(),
             model: String::new(),
             api_key: None,
             temperature: 0.7,
+            provider: None,
         });
 
     let response = state.llm_client.chat(&messages, &config, None).await?;

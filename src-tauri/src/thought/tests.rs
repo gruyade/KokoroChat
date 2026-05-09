@@ -141,6 +141,7 @@ fn default_llm_config() -> Arc<crate::config::model_config::ModelConfigManager> 
         model: "test-model".to_string(),
         api_key: None,
         temperature: 0.7,
+        provider: None,
     };
     models.insert(ModelPurpose::Chat, settings.clone());
     models.insert(ModelPurpose::Memory, settings.clone());
@@ -150,10 +151,10 @@ fn default_llm_config() -> Arc<crate::config::model_config::ModelConfigManager> 
     let config = AppConfig {
         models,
         spontaneous: SpontaneousConfig { enabled: false, min_interval_seconds: 60, probability: 0.3 },
-        thought: ThoughtConfig { enabled: false, interval_minutes: 5 },
+        thought: ThoughtConfig { enabled: false, interval_minutes: 5, auto_delete_threshold_minutes: 1440 },
         memory: MemoryConfig { compression_threshold: 50 },
-        tts: TTSGlobalConfig { enabled: false },
-        ui: UIConfig { theme: Theme::Dark, language: "ja".to_string() },
+        tts: TTSGlobalConfig { enabled: false, voicepeak_path: None, timeout_seconds: 60, max_chunk_size: 140, irodori_base_url: None, irodori_caption_base_url: None, irodori_reference_audio_base_url: None },
+        ui: UIConfig { theme: Theme::Dark, language: "ja".to_string(), send_key: SendKey::default() },
         plugins: PluginsConfig { enabled_plugins: vec![], plugin_settings: HashMap::new() },
         attachment: AttachmentConfig { max_file_size_bytes: 10 * 1024 * 1024, allowed_extensions: vec![] },
     };
@@ -442,4 +443,63 @@ fn test_thought_event_serialization() {
     assert!(json.contains("char-001"));
     assert!(json.contains("テスト思考"));
     assert!(json.contains("thought-001"));
+}
+
+#[test]
+fn test_pause_resume() {
+    let db = setup_db();
+    let db = Arc::new(Mutex::new(db));
+    let mock_llm = Arc::new(MockLLMClient::new("unused"));
+    let config = default_llm_config();
+
+    let engine = DefaultThoughtEngine::new(db.clone(), mock_llm, config, test_llm_lock());
+
+    // 初期状態: paused = false
+    assert!(!engine.is_paused());
+
+    // pause
+    engine.pause();
+    assert!(engine.is_paused());
+
+    // resume
+    engine.resume();
+    assert!(!engine.is_paused());
+}
+
+#[tokio::test]
+async fn test_delete_thought_removes_from_db() {
+    let db = setup_db();
+    let db = Arc::new(Mutex::new(db));
+    let mock_llm = Arc::new(MockLLMClient::new("削除テスト思考"));
+    let config = default_llm_config();
+
+    let engine = DefaultThoughtEngine::new(db.clone(), mock_llm, config, test_llm_lock());
+
+    // 思考を生成
+    let thought = engine.generate_thought("char-001").await.unwrap();
+
+    // 削除前: 存在する
+    let thoughts = engine.get_thoughts("char-001", None).await.unwrap();
+    assert_eq!(thoughts.len(), 1);
+
+    // 削除
+    engine.delete_thought(&thought.id).await.unwrap();
+
+    // 削除後: 存在しない
+    let thoughts = engine.get_thoughts("char-001", None).await.unwrap();
+    assert!(thoughts.is_empty());
+}
+
+#[tokio::test]
+async fn test_delete_thought_not_found() {
+    let db = setup_db();
+    let db = Arc::new(Mutex::new(db));
+    let mock_llm = Arc::new(MockLLMClient::new("unused"));
+    let config = default_llm_config();
+
+    let engine = DefaultThoughtEngine::new(db.clone(), mock_llm, config, test_llm_lock());
+
+    // 存在しないIDで削除 → NotFoundエラー
+    let result = engine.delete_thought("nonexistent-id").await;
+    assert!(result.is_err());
 }

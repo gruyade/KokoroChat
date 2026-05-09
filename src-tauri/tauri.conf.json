@@ -1,7 +1,7 @@
 {
-  "productName": "AI Character Chat",
+  "productName": "KokoroChat",
   "version": "0.1.0",
-  "identifier": "com.ai-character-chat.app",
+  "identifier": "com.kokoro-chat.app",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:5173?debug",
@@ -10,11 +10,15 @@
   },
   "app": {
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' http://localhost:* http://127.0.0.1:* https://localhost:* https://127.0.0.1:*; img-src 'self' data: blob:; media-src 'self' blob:"
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' http://localhost:* http://127.0.0.1:* https://localhost:* https://127.0.0.1:*; img-src 'self' data: blob: asset: https://asset.localhost; media-src 'self' blob:",
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["**"]
+      }
     },
     "windows": [
       {
-        "title": "AI Character Chat",
+        "title": "KokoroChat",
         "width": 1200,
         "height": 800,
         "minWidth": 800,
@@ -28,7 +32,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["nsis"],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

@@ -1,7 +1,13 @@
 import { useState } from 'react';
-import { Bot, User, Sparkles, Wrench, Copy, RefreshCw, Trash2, Info } from 'lucide-react';
+import { Bot, User, Sparkles, Wrench, Copy, RefreshCw, Trash2, Info, Pencil, Volume2 } from 'lucide-react';
+import { invoke } from '@tauri-apps/api/core';
 import type { ChatMessageRecord } from '../../types';
 import { ToolCallIndicator } from './ToolCallIndicator';
+import { EditableMessage } from './EditableMessage';
+import { MarkdownRenderer } from './MarkdownRenderer';
+import { useChatStore, useCharacterStore, useConfigStore } from '../../stores';
+import { useAudioStore } from '../../hooks/useAudio';
+import { AvatarImage } from '../common/AvatarImage';
 
 interface MessageBubbleProps {
   message: ChatMessageRecord;
@@ -48,12 +54,21 @@ function getRoleConfig(role: ChatMessageRecord['role']) {
 
 export function MessageBubble({ message, onRegenerate, onDelete }: MessageBubbleProps) {
   const config = getRoleConfig(message.role);
-  const [showMenu, setShowMenu] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [ttsLoading, setTtsLoading] = useState(false);
+  const { editingMessageId, setEditingMessage, editAndResend } = useChatStore();
+  const { selectedCharacterId, characters } = useCharacterStore();
+  const { config: appConfig } = useConfigStore();
+  const ttsEnabled = appConfig?.tts?.enabled ?? false;
+  const selectedCharacter = characters.find((c) => c.id === selectedCharacterId);
+
+  const isEditing = editingMessageId === message.id;
 
   // [SYSTEM]プレフィックス付きメッセージはシステムメッセージとして表示
   const isSystemMessage = message.role === 'user' && message.content.startsWith('[SYSTEM] ');
-  const displayContent = isSystemMessage ? message.content.slice(9) : message.content;
+  const rawContent = isSystemMessage ? message.content.slice(9) : message.content;
+  // 《》で囲まれた地の文マーカーを除去して表示（イタリック表示に変換）
+  const displayContent = rawContent.replace(/《([^》]*)》/g, '*$1*');
 
   const handleCopy = async () => {
     await navigator.clipboard.writeText(displayContent);
@@ -63,70 +78,78 @@ export function MessageBubble({ message, onRegenerate, onDelete }: MessageBubble
 
   const handleRegenerate = () => {
     onRegenerate?.(message.id);
-    setShowMenu(false);
   };
 
   const handleDelete = () => {
     onDelete?.(message.id);
-    setShowMenu(false);
   };
 
-  // システムメッセージの特別表示
+  const handleEdit = () => {
+    setEditingMessage(message.id);
+  };
+
+  const handleEditConfirm = (newContent: string) => {
+    editAndResend(message.id, newContent);
+  };
+
+  const handleGenerateSpeech = async () => {
+    if (!selectedCharacterId || ttsLoading) return;
+    setTtsLoading(true);
+    try {
+      const audioBase64 = await invoke<string>('generate_speech_for_message', {
+        text: message.content,
+        characterId: selectedCharacterId,
+      });
+      if (audioBase64) {
+        const playFn = useAudioStore.getState().playAudioFn;
+        if (playFn) {
+          playFn(audioBase64);
+        }
+      }
+    } catch (e) {
+      console.error('[TTS] generate_speech_for_message failed:', e);
+    } finally {
+      setTtsLoading(false);
+    }
+  };
+
+  const handleEditCancel = () => {
+    setEditingMessage(null);
+  };
+
+  // システムメッセージ: 右寄せバッジスタイルで表示（ホバーアクションは通常メッセージと同じ下部配置）
   if (isSystemMessage) {
-    return (
-      <div className="flex justify-center px-4 py-1">
-        <div className="flex items-center gap-2 max-w-[80%] rounded-md bg-muted/50 border border-border/50 px-3 py-1.5 text-xs text-muted-foreground">
-          <Info className="h-3 w-3 shrink-0" />
-          <span className="whitespace-pre-wrap">{displayContent}</span>
+    if (isEditing) {
+      return (
+        <div className="flex justify-end px-4 py-1">
+          <EditableMessage
+            originalContent={message.content}
+            onConfirm={handleEditConfirm}
+            onCancel={handleEditCancel}
+          />
         </div>
-      </div>
-    );
-  }
+      );
+    }
 
-  return (
-    <div
-      className={`group relative flex ${config.align} px-4 py-1`}
-      onMouseEnter={() => setShowMenu(true)}
-      onMouseLeave={() => setShowMenu(false)}
-    >
+    return (
       <div
-        className={`flex items-start gap-2 max-w-[70%] ${message.role === 'user' ? 'flex-row-reverse' : ''}`}
+        className="group relative flex justify-end px-4 py-1 will-change-transform"
       >
-        {config.showIcon && (
-          <div className="shrink-0 mt-1 p-1 rounded-full bg-muted">
-            <config.icon className="h-4 w-4 text-muted-foreground" />
-          </div>
-        )}
         <div className="flex flex-col gap-1">
-          {config.label && (
-            <span className="text-xs text-muted-foreground flex items-center gap-1">
-              <Sparkles className="h-3 w-3" />
-              {config.label}
-            </span>
-          )}
-          <div className={`rounded-lg px-3 py-2 text-sm whitespace-pre-wrap ${config.bubble}`}>
-            {displayContent}
+          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-muted text-muted-foreground text-xs">
+            <Info className="h-3 w-3" />
+            <span>{displayContent}</span>
           </div>
-
-          {/* Action buttons — 常にスペース確保、ホバーで表示 */}
-          <div className={`flex items-center gap-0.5 h-6 ${message.role === 'user' ? 'justify-end' : ''}`}>
-            <div className={`flex items-center gap-0.5 transition-opacity ${showMenu ? 'opacity-100' : 'opacity-0'}`}>
+          {/* Action buttons — 通常メッセージと同じ下部配置 */}
+          <div className="flex items-center gap-0.5 h-6 overflow-visible justify-end">
+            <div className="flex items-center gap-0.5 transition-all pointer-events-auto opacity-0 invisible group-hover:opacity-100 group-hover:visible">
               <button
-                onClick={handleCopy}
+                onClick={handleEdit}
                 className="p-1 rounded text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
-                title={copied ? 'コピー済み' : 'コピー'}
+                title="編集"
               >
-                <Copy className="h-3.5 w-3.5" />
+                <Pencil className="h-3.5 w-3.5" />
               </button>
-              {message.role === 'assistant' && onRegenerate && (
-                <button
-                  onClick={handleRegenerate}
-                  className="p-1 rounded text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
-                  title="再生成"
-                >
-                  <RefreshCw className="h-3.5 w-3.5" />
-                </button>
-              )}
               {onDelete && (
                 <button
                   onClick={handleDelete}
@@ -138,17 +161,81 @@ export function MessageBubble({ message, onRegenerate, onDelete }: MessageBubble
               )}
             </div>
           </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className={`group relative flex ${config.align} px-4 py-1 will-change-transform`}
+    >
+      <div
+        className={`flex items-start gap-2 max-w-[70%] ${message.role === 'user' ? 'flex-row-reverse' : ''}`}
+      >
+        {config.showIcon && (
+          <div className="shrink-0 mt-1 w-7 h-7 rounded-full bg-muted flex items-center justify-center overflow-hidden">
+            {selectedCharacter?.avatar_path ? (
+              <AvatarImage
+                avatarPath={selectedCharacter.avatar_path}
+                alt={selectedCharacter.name}
+                className="w-full h-full object-cover"
+              />
+            ) : (
+              <config.icon className="h-4 w-4 text-muted-foreground" />
+            )}
+          </div>
+        )}
+        <div className="flex flex-col gap-1">
+          {config.label && (
+            <span className="text-xs text-muted-foreground flex items-center gap-1">
+              <Sparkles className="h-3 w-3" />
+              {config.label}
+            </span>
+          )}
+          {isEditing ? (
+            <EditableMessage
+              originalContent={message.content}
+              onConfirm={handleEditConfirm}
+              onCancel={handleEditCancel}
+            />
+          ) : (
+            <>
+              {/* テキストが空でない場合のみバブルを表示 */}
+              {message.content.trim() !== '' && (
+                <div className={`rounded-lg px-3 py-2 text-sm ${config.bubble}`}>
+                  <MarkdownRenderer
+                    content={displayContent}
+                    className={`prose prose-sm max-w-none prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-ol:my-1 prose-pre:my-2 prose-code:text-xs ${
+                      message.role === 'user'
+                        ? 'prose-p:text-primary-foreground prose-headings:text-primary-foreground prose-strong:text-primary-foreground prose-code:text-primary-foreground prose-li:text-primary-foreground text-primary-foreground'
+                        : 'prose-invert'
+                    }`}
+                  />
+                </div>
+              )}
+            </>
+          )}
 
           {/* Attachments */}
           {message.attachments && message.attachments.length > 0 && (
-            <div className="flex flex-wrap gap-1 mt-1">
+            <div className="flex flex-col gap-1 mt-1">
               {message.attachments.map((att, i) => (
-                <span
-                  key={i}
-                  className="inline-flex items-center gap-1 rounded bg-muted px-2 py-0.5 text-xs text-muted-foreground"
-                >
-                  📎 {att.file_name}
-                </span>
+                att.attachment_type === 'image' && att.base64_data ? (
+                  <img
+                    key={i}
+                    src={`data:image/png;base64,${att.base64_data}`}
+                    alt={att.file_name}
+                    className="max-w-[240px] max-h-[180px] rounded-md border border-border object-contain"
+                  />
+                ) : (
+                  <span
+                    key={i}
+                    className="inline-flex items-center gap-1 rounded bg-muted px-2 py-0.5 text-xs text-muted-foreground"
+                  >
+                    📎 {att.file_name}
+                  </span>
+                )
               ))}
             </div>
           )}
@@ -158,6 +245,58 @@ export function MessageBubble({ message, onRegenerate, onDelete }: MessageBubble
               {message.tool_calls.map((tc) => (
                 <ToolCallIndicator key={tc.id} toolName={tc.name} />
               ))}
+            </div>
+          )}
+
+          {/* Action buttons — 全要素の下に配置、ホバーで表示 */}
+          {!isEditing && (
+            <div className={`flex items-center gap-0.5 h-6 overflow-visible ${message.role === 'user' ? 'justify-end' : ''}`}>
+              <div className="flex items-center gap-0.5 transition-all pointer-events-auto opacity-0 invisible group-hover:opacity-100 group-hover:visible">
+                <button
+                  onClick={handleCopy}
+                  className="p-1 rounded text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                  title={copied ? 'コピー済み' : 'コピー'}
+                >
+                  <Copy className="h-3.5 w-3.5" />
+                </button>
+                {message.role === 'user' && !isSystemMessage && (
+                  <button
+                    onClick={handleEdit}
+                    className="p-1 rounded text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                    title="編集"
+                  >
+                    <Pencil className="h-3.5 w-3.5" />
+                  </button>
+                )}
+                {message.role === 'assistant' && onRegenerate && (
+                  <button
+                    onClick={handleRegenerate}
+                    className="p-1 rounded text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
+                    title="再生成"
+                  >
+                    <RefreshCw className="h-3.5 w-3.5" />
+                  </button>
+                )}
+                {message.role === 'assistant' && ttsEnabled && (
+                  <button
+                    onClick={handleGenerateSpeech}
+                    disabled={ttsLoading}
+                    className="p-1 rounded text-muted-foreground hover:bg-muted hover:text-foreground transition-colors disabled:opacity-50"
+                    title="音声生成"
+                  >
+                    <Volume2 className={`h-3.5 w-3.5 ${ttsLoading ? 'animate-pulse' : ''}`} />
+                  </button>
+                )}
+                {onDelete && (
+                  <button
+                    onClick={handleDelete}
+                    className="p-1 rounded text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
+                    title="削除"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </div>
             </div>
           )}
         </div>

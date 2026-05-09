@@ -1,3 +1,4 @@
+pub mod abort;
 pub mod engine;
 
 #[cfg(test)]

@@ -14,6 +14,8 @@ export type { Thought } from './thought';
 export type {
   ModelPurpose,
   Theme,
+  SendKey,
+  LLMProvider,
   ModelSettings,
   SpontaneousConfig,
   ThoughtConfig,
@@ -26,7 +28,15 @@ export type {
 } from './config';
 
 // TTS types
-export type { TTSConfig, TTSProvider, EmotionParams } from './tts';
+export type {
+  TTSConfig,
+  TTSProvider,
+  EmotionParams,
+  IrodoriMode,
+  TTSCompleteEvent,
+  TTSGeneratingEvent,
+  TTSErrorEvent,
+} from './tts';
 
 // Attachment types
 export type { Attachment, AttachmentType } from './attachment';

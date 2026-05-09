@@ -1,7 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { Brain, Trash2, Loader2 } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { useCharacterStore } from '../../stores';
+import { useOperationQueue } from '../../hooks/useOperationQueue';
 import type { Memory } from '../../types';
 
 export function MemoryView() {
@@ -9,18 +11,16 @@ export function MemoryView() {
   const [memories, setMemories] = useState<Memory[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [deletedIds, setDeletedIds] = useState<Set<string>>(new Set());
+  const { processing, enqueue } = useOperationQueue();
 
   const selectedCharacter = characters.find((c) => c.id === selectedCharacterId);
 
-  useEffect(() => {
-    if (!selectedCharacterId) return;
-    loadMemories();
-  }, [selectedCharacterId]);
-
-  const loadMemories = async () => {
+  const loadMemories = useCallback(async () => {
     if (!selectedCharacterId) return;
     setLoading(true);
     setError(null);
+    setDeletedIds(new Set());
     try {
       const result = await invoke<Memory[]>('list_memories', {
         characterId: selectedCharacterId,
@@ -31,17 +31,41 @@ export function MemoryView() {
     } finally {
       setLoading(false);
     }
+  }, [selectedCharacterId]);
+
+  useEffect(() => {
+    if (!selectedCharacterId) return;
+    loadMemories();
+  }, [selectedCharacterId, loadMemories]);
+
+  // memory:generated イベントをリッスンし、該当キャラクターの記憶を即時反映
+  useEffect(() => {
+    if (!selectedCharacterId) return;
+
+    const unlisten = listen<{ character_id: string }>('memory:generated', (event) => {
+      if (event.payload.character_id === selectedCharacterId) {
+        loadMemories();
+      }
+    });
+
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, [selectedCharacterId, loadMemories]);
+
+  const handleDelete = (id: string) => {
+    if (deletedIds.has(id)) return;
+    setDeletedIds((prev) => new Set(prev).add(id));
+    enqueue(async () => {
+      try {
+        await invoke('delete_memory', { id });
+      } catch (e) {
+        setError(String(e));
+      }
+    });
   };
 
-  const handleDelete = async (id: string) => {
-    if (!confirm('この記憶を削除してよいか？')) return;
-    try {
-      await invoke('delete_memory', { id });
-      setMemories((prev) => prev.filter((m) => m.id !== id));
-    } catch (e) {
-      setError(String(e));
-    }
-  };
+  const visibleMemories = memories.filter((m) => !deletedIds.has(m.id));
 
   if (!selectedCharacterId) {
     return (
@@ -61,6 +85,9 @@ export function MemoryView() {
         {selectedCharacter && (
           <span className="text-sm text-muted-foreground">— {selectedCharacter.name}</span>
         )}
+        {processing && (
+          <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
+        )}
       </div>
 
       {/* Error */}
@@ -77,14 +104,14 @@ export function MemoryView() {
             <Loader2 className="w-4 h-4 animate-spin mr-2" />
             読み込み中...
           </div>
-        ) : memories.length === 0 ? (
+        ) : visibleMemories.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-32 text-muted-foreground gap-2">
             <Brain className="w-8 h-8" />
             <p className="text-sm">記憶がまだ生成されていない</p>
           </div>
         ) : (
           <div className="space-y-3">
-            {memories.map((memory) => (
+            {visibleMemories.map((memory) => (
               <div
                 key={memory.id}
                 className="p-4 rounded-lg border border-border bg-card group"

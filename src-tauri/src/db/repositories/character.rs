@@ -220,13 +220,16 @@ mod tests {
         let mut character = sample_character();
         character.tts_config = Some(TTSConfig {
             provider: TTSProvider::Voicepeak,
-            base_url: "http://localhost:8080".to_string(),
+            base_url: Some("http://localhost:8080".to_string()),
+            caption_base_url: None,
+            reference_audio_base_url: None,
             reference_audio_path: None,
             caption: None,
             narrator: Some("narrator1".to_string()),
             emotion: None,
             speed: Some(1.0),
             pitch: None,
+            irodori_mode: None,
         });
 
         insert_character(conn, &character).unwrap();

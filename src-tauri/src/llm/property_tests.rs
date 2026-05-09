@@ -33,6 +33,7 @@ mod tests {
                 role,
                 content,
                 tool_call_id,
+                images: None,
             })
     }
 
@@ -49,6 +50,7 @@ mod tests {
                 model,
                 api_key,
                 temperature,
+                provider: None,
             })
     }
 
@@ -227,6 +229,7 @@ mod tests {
                 role: MessageRole::Tool,
                 content: content.clone(),
                 tool_call_id: Some(tool_call_id.clone()),
+                images: None,
             }];
 
             let body = client.build_request_body(&messages, &config, None, false);
@@ -276,6 +279,361 @@ mod tests {
                     "Message {} role mapping incorrect", i
                 );
             }
+        }
+    }
+}
+
+
+// Feature: app-enhancements-v3, Property 2: プロバイダー×エンドポイントによるAPI形式決定
+#[cfg(test)]
+mod api_strategy_tests {
+    use proptest::prelude::*;
+
+    use crate::llm::client::{ApiStrategy, LLMClientConfig, is_default_endpoint, resolve_api_strategy};
+    use crate::models::LLMProvider;
+
+    // ========================================
+    // Arbitrary Strategies
+    // ========================================
+
+    /// LLMProvider のストラテジー（将来の拡張用に残す）
+    #[allow(dead_code)]
+    fn arb_provider() -> impl Strategy<Value = LLMProvider> {
+        prop_oneof![
+            Just(LLMProvider::Openai),
+            Just(LLMProvider::Anthropic),
+            Just(LLMProvider::Google),
+            Just(LLMProvider::OpenaiCompatible),
+        ]
+    }
+
+    /// Google デフォルトエンドポイントのストラテジー
+    fn arb_google_default_endpoint() -> impl Strategy<Value = String> {
+        prop_oneof![
+            Just(String::new()),
+            Just("https://generativelanguage.googleapis.com/v1beta".to_string()),
+            Just("https://generativelanguage.googleapis.com".to_string()),
+        ]
+    }
+
+    /// Anthropic デフォルトエンドポイントのストラテジー
+    fn arb_anthropic_default_endpoint() -> impl Strategy<Value = String> {
+        prop_oneof![
+            Just(String::new()),
+            Just("https://api.anthropic.com/v1".to_string()),
+            Just("https://api.anthropic.com".to_string()),
+        ]
+    }
+
+    /// カスタムエンドポイント（デフォルトではない）のストラテジー
+    fn arb_custom_endpoint() -> impl Strategy<Value = String> {
+        prop_oneof![
+            Just("http://localhost:8080/v1".to_string()),
+            Just("https://my-proxy.example.com/api".to_string()),
+            Just("https://custom-server.local:3000".to_string()),
+            "[a-z]{3,8}\\.[a-z]{2,5}".prop_map(|s| format!("https://{}/v1", s)),
+        ]
+    }
+
+    /// 任意のbase_url（デフォルトまたはカスタム）のストラテジー
+    fn arb_base_url() -> impl Strategy<Value = String> {
+        prop_oneof![
+            Just(String::new()),
+            arb_google_default_endpoint(),
+            arb_anthropic_default_endpoint(),
+            arb_custom_endpoint(),
+        ]
+    }
+
+
+
+    // ========================================
+    // Property 2: プロバイダー×エンドポイントによるAPI形式決定
+    // ========================================
+    // **Validates: Requirements 5.1, 5.2, 5.3, 5.4, 5.5**
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(20))]
+
+        /// provider=Google + デフォルトエンドポイント → OpenAI（応急措置: 常にOpenAI互換）
+        #[test]
+        fn prop_google_default_endpoint_returns_openai(
+            base_url in arb_google_default_endpoint(),
+            model in "[a-z]{2,8}-[0-9]{1,2}",
+            api_key in proptest::option::of("sk-[a-zA-Z0-9]{10,20}"),
+            temperature in 0.0f32..2.0,
+        ) {
+            let config = LLMClientConfig {
+                base_url,
+                model,
+                api_key,
+                temperature,
+                provider: Some(LLMProvider::Google),
+            };
+            let strategy = resolve_api_strategy(&config);
+            prop_assert_eq!(strategy, ApiStrategy::OpenAI,
+                "Google + default endpoint should resolve to OpenAI (workaround)");
+        }
+
+        /// provider=Anthropic + デフォルトエンドポイント → Anthropic（ネイティブAPI使用）
+        #[test]
+        fn prop_anthropic_default_endpoint_returns_anthropic(
+            base_url in arb_anthropic_default_endpoint(),
+            model in "[a-z]{2,8}-[0-9]{1,2}",
+            api_key in proptest::option::of("sk-[a-zA-Z0-9]{10,20}"),
+            temperature in 0.0f32..2.0,
+        ) {
+            let config = LLMClientConfig {
+                base_url,
+                model,
+                api_key,
+                temperature,
+                provider: Some(LLMProvider::Anthropic),
+            };
+            let strategy = resolve_api_strategy(&config);
+            prop_assert_eq!(strategy, ApiStrategy::Anthropic,
+                "Anthropic should always resolve to Anthropic strategy");
+        }
+
+        /// provider=Google + カスタムエンドポイント → OpenAI
+        #[test]
+        fn prop_google_custom_endpoint_returns_openai(
+            base_url in arb_custom_endpoint(),
+            model in "[a-z]{2,8}-[0-9]{1,2}",
+            api_key in proptest::option::of("sk-[a-zA-Z0-9]{10,20}"),
+            temperature in 0.0f32..2.0,
+        ) {
+            let config = LLMClientConfig {
+                base_url,
+                model,
+                api_key,
+                temperature,
+                provider: Some(LLMProvider::Google),
+            };
+            let strategy = resolve_api_strategy(&config);
+            prop_assert_eq!(strategy, ApiStrategy::OpenAI,
+                "Google + custom endpoint should resolve to OpenAI");
+        }
+
+        /// provider=Anthropic + カスタムエンドポイント → Anthropic（常にネイティブAPI）
+        #[test]
+        fn prop_anthropic_custom_endpoint_returns_anthropic(
+            base_url in arb_custom_endpoint(),
+            model in "[a-z]{2,8}-[0-9]{1,2}",
+            api_key in proptest::option::of("sk-[a-zA-Z0-9]{10,20}"),
+            temperature in 0.0f32..2.0,
+        ) {
+            let config = LLMClientConfig {
+                base_url,
+                model,
+                api_key,
+                temperature,
+                provider: Some(LLMProvider::Anthropic),
+            };
+            let strategy = resolve_api_strategy(&config);
+            prop_assert_eq!(strategy, ApiStrategy::Anthropic,
+                "Anthropic should always resolve to Anthropic strategy");
+        }
+
+        /// provider=Openai → OpenAI（エンドポイント問わず）
+        #[test]
+        fn prop_openai_provider_always_returns_openai(
+            base_url in arb_base_url(),
+            model in "[a-z]{2,8}-[0-9]{1,2}",
+            api_key in proptest::option::of("sk-[a-zA-Z0-9]{10,20}"),
+            temperature in 0.0f32..2.0,
+        ) {
+            let config = LLMClientConfig {
+                base_url,
+                model,
+                api_key,
+                temperature,
+                provider: Some(LLMProvider::Openai),
+            };
+            let strategy = resolve_api_strategy(&config);
+            prop_assert_eq!(strategy, ApiStrategy::OpenAI,
+                "Openai provider should always resolve to OpenAI");
+        }
+
+        /// provider=OpenaiCompatible → OpenAI（エンドポイント問わず）
+        #[test]
+        fn prop_openai_compatible_always_returns_openai(
+            base_url in arb_base_url(),
+            model in "[a-z]{2,8}-[0-9]{1,2}",
+            api_key in proptest::option::of("sk-[a-zA-Z0-9]{10,20}"),
+            temperature in 0.0f32..2.0,
+        ) {
+            let config = LLMClientConfig {
+                base_url,
+                model,
+                api_key,
+                temperature,
+                provider: Some(LLMProvider::OpenaiCompatible),
+            };
+            let strategy = resolve_api_strategy(&config);
+            prop_assert_eq!(strategy, ApiStrategy::OpenAI,
+                "OpenaiCompatible provider should always resolve to OpenAI");
+        }
+
+        /// provider=None → OpenAI（エンドポイント問わず）
+        #[test]
+        fn prop_none_provider_always_returns_openai(
+            base_url in arb_base_url(),
+            model in "[a-z]{2,8}-[0-9]{1,2}",
+            api_key in proptest::option::of("sk-[a-zA-Z0-9]{10,20}"),
+            temperature in 0.0f32..2.0,
+        ) {
+            let config = LLMClientConfig {
+                base_url,
+                model,
+                api_key,
+                temperature,
+                provider: None,
+            };
+            let strategy = resolve_api_strategy(&config);
+            prop_assert_eq!(strategy, ApiStrategy::OpenAI,
+                "None provider should always resolve to OpenAI");
+        }
+
+        /// is_default_endpoint: Googleデフォルトエンドポイント判定
+        #[test]
+        fn prop_is_default_endpoint_google(
+            base_url in arb_google_default_endpoint(),
+        ) {
+            prop_assert!(is_default_endpoint(&base_url, LLMProvider::Google),
+                "Google default endpoints should be recognized as default");
+        }
+
+        /// is_default_endpoint: Anthropicデフォルトエンドポイント判定
+        #[test]
+        fn prop_is_default_endpoint_anthropic(
+            base_url in arb_anthropic_default_endpoint(),
+        ) {
+            prop_assert!(is_default_endpoint(&base_url, LLMProvider::Anthropic),
+                "Anthropic default endpoints should be recognized as default");
+        }
+
+        /// is_default_endpoint: カスタムエンドポイントはデフォルトではない
+        #[test]
+        fn prop_custom_endpoint_not_default_for_google(
+            base_url in arb_custom_endpoint(),
+        ) {
+            prop_assert!(!is_default_endpoint(&base_url, LLMProvider::Google),
+                "Custom endpoints should not be recognized as Google default");
+        }
+
+        /// is_default_endpoint: カスタムエンドポイントはAnthropicデフォルトではない
+        #[test]
+        fn prop_custom_endpoint_not_default_for_anthropic(
+            base_url in arb_custom_endpoint(),
+        ) {
+            prop_assert!(!is_default_endpoint(&base_url, LLMProvider::Anthropic),
+                "Custom endpoints should not be recognized as Anthropic default");
+        }
+    }
+}
+
+
+// Feature: app-enhancements-v3, Property 3: プロバイダー別レスポンスパースの正当性
+#[cfg(test)]
+mod response_parse_tests {
+    use proptest::prelude::*;
+    use serde_json::json;
+
+    use crate::llm::client::{parse_anthropic_response, parse_gemini_response, LLMResponse};
+
+    // ========================================
+    // Arbitrary Strategies
+    // ========================================
+
+    /// 非空テキストのストラテジー
+    fn arb_non_empty_text() -> impl Strategy<Value = String> {
+        "[a-zA-Z0-9 ぁ-んァ-ヶ]{1,200}"
+    }
+
+    /// 有効なGeminiレスポンスJSON（非空テキスト）のストラテジー
+    fn arb_valid_gemini_response() -> impl Strategy<Value = (serde_json::Value, String)> {
+        arb_non_empty_text().prop_map(|text| {
+            let body = json!({
+                "candidates": [{
+                    "content": {
+                        "parts": [{"text": text.clone()}]
+                    }
+                }]
+            });
+            (body, text)
+        })
+    }
+
+    /// 有効なAnthropicレスポンスJSON（1〜4個のテキストブロック）のストラテジー
+    fn arb_valid_anthropic_response(
+    ) -> impl Strategy<Value = (serde_json::Value, String)> {
+        proptest::collection::vec(arb_non_empty_text(), 1..=4).prop_map(|texts| {
+            let expected = texts.join("");
+            let content: Vec<serde_json::Value> = texts
+                .into_iter()
+                .map(|t| json!({"type": "text", "text": t}))
+                .collect();
+            let body = json!({ "content": content });
+            (body, expected)
+        })
+    }
+
+    // ========================================
+    // Property 3: プロバイダー別レスポンスパースの正当性
+    // ========================================
+    // **Validates: Requirements 5.7**
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(20))]
+
+        /// Sub-property 1: 有効なGeminiレスポンスJSONに対し、parse_gemini_responseはOk(LLMResponse::Text(text))を返し、textが入力と一致する
+        #[test]
+        fn prop_parse_gemini_response_valid(
+            (body, expected_text) in arb_valid_gemini_response(),
+        ) {
+            let result = parse_gemini_response(&body);
+            prop_assert!(result.is_ok(), "parse_gemini_response should return Ok for valid input");
+            match result.unwrap() {
+                LLMResponse::Text(text) => {
+                    prop_assert_eq!(text, expected_text,
+                        "parsed text should match input text");
+                }
+                other => {
+                    prop_assert!(false, "Expected LLMResponse::Text, got {:?}", other);
+                }
+            }
+        }
+
+        /// Sub-property 2: 有効なAnthropicレスポンスJSONに対し、parse_anthropic_responseはOk(LLMResponse::Text(text))を返し、textが全テキストブロックの結合と一致する
+        #[test]
+        fn prop_parse_anthropic_response_valid(
+            (body, expected_text) in arb_valid_anthropic_response(),
+        ) {
+            let result = parse_anthropic_response(&body);
+            prop_assert!(result.is_ok(), "parse_anthropic_response should return Ok for valid input");
+            match result.unwrap() {
+                LLMResponse::Text(text) => {
+                    prop_assert_eq!(text, expected_text,
+                        "parsed text should be concatenation of all text blocks");
+                }
+                other => {
+                    prop_assert!(false, "Expected LLMResponse::Text, got {:?}", other);
+                }
+            }
+        }
+
+        /// Sub-property 3: Geminiレスポンスのcandidatesが空配列の場合、parse_gemini_responseはErrを返す
+        #[test]
+        fn prop_parse_gemini_response_empty_candidates(
+            _dummy in 0..20u32,
+        ) {
+            let body = json!({
+                "candidates": []
+            });
+            let result = parse_gemini_response(&body);
+            prop_assert!(result.is_err(),
+                "parse_gemini_response should return Err for empty candidates");
         }
     }
 }

@@ -21,6 +21,53 @@ pub fn insert_thought(conn: &Connection, thought: &Thought) -> Result<(), AppErr
     Ok(())
 }
 
+/// 思考を1件削除
+pub fn delete_thought(conn: &Connection, id: &str) -> Result<bool, AppError> {
+    let affected = conn.execute("DELETE FROM thoughts WHERE id = ?1", params![id])?;
+    Ok(affected > 0)
+}
+
+/// 指定カットオフ時刻より古い思考を削除（削除件数を返す）
+pub fn delete_thoughts_older_than(
+    conn: &Connection,
+    character_id: &str,
+    cutoff_time: &str,
+) -> Result<u32, AppError> {
+    let affected = conn.execute(
+        "DELETE FROM thoughts WHERE character_id = ?1 AND created_at < ?2",
+        params![character_id, cutoff_time],
+    )?;
+    Ok(affected as u32)
+}
+
+/// 指定時刻以降の思考を取得（作成日時の降順）
+pub fn get_recent_thoughts(
+    conn: &Connection,
+    character_id: &str,
+    since: &str,
+) -> Result<Vec<Thought>, AppError> {
+    let mut stmt = conn.prepare(
+        "SELECT id, character_id, content, context, created_at
+         FROM thoughts WHERE character_id = ?1 AND created_at >= ?2
+         ORDER BY created_at DESC",
+    )?;
+    let rows = stmt.query_map(params![character_id, since], |row| {
+        Ok(Thought {
+            id: row.get(0)?,
+            character_id: row.get(1)?,
+            content: row.get(2)?,
+            context: row.get(3)?,
+            created_at: row.get(4)?,
+        })
+    })?;
+
+    let mut thoughts = Vec::new();
+    for row in rows {
+        thoughts.push(row?);
+    }
+    Ok(thoughts)
+}
+
 /// キャラクターIDで思考一覧取得（作成日時の降順、件数制限あり）
 pub fn get_thoughts(
     conn: &Connection,

@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 
 /// TTS音声合成プロバイダー
@@ -8,11 +10,27 @@ pub enum TTSProvider {
     Voicepeak,
 }
 
+/// Irodori-TTSの動作モード
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum IrodoriMode {
+    Caption,
+    ReferenceAudio,
+}
+
 /// TTS設定（キャラクター個別）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TTSConfig {
     pub provider: TTSProvider,
-    pub base_url: String,
+    /// Irodori-TTS用ベースURL（VoicePeakでは不使用）
+    #[serde(default)]
+    pub base_url: Option<String>,
+    /// Irodori-TTS: キャプションモード用ベースURL
+    #[serde(default)]
+    pub caption_base_url: Option<String>,
+    /// Irodori-TTS: 参照音声モード用ベースURL
+    #[serde(default)]
+    pub reference_audio_base_url: Option<String>,
     /// Irodori-TTS: 参照音声ファイルパス
     pub reference_audio_path: Option<String>,
     /// Irodori-TTS: キャプション
@@ -21,17 +39,36 @@ pub struct TTSConfig {
     pub narrator: Option<String>,
     /// VoicePeak: 感情パラメータ
     pub emotion: Option<EmotionParams>,
-    /// 読み上げ速度
+    /// 読み上げ速度（VoicePeak: 50〜200）
     pub speed: Option<f32>,
-    /// ピッチ
+    /// ピッチ（VoicePeak: -300〜300）
     pub pitch: Option<f32>,
+    /// Irodori-TTS: caption mode vs reference audio mode
+    #[serde(default)]
+    pub irodori_mode: Option<IrodoriMode>,
 }
 
-/// VoicePeak感情パラメータ
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EmotionParams {
-    pub happy: Option<i32>,
-    pub fun: Option<i32>,
-    pub angry: Option<i32>,
-    pub sad: Option<i32>,
+/// VoicePeak感情パラメータ（ナレーターごとに異なるキーを持つ）
+pub type EmotionParams = HashMap<String, i32>;
+
+/// TTS生成開始イベント
+#[derive(Clone, Serialize)]
+pub struct TTSGeneratingEvent {
+    pub session_id: String,
+}
+
+/// TTS完了イベント（テキスト+音声）
+#[derive(Clone, Serialize)]
+pub struct TTSCompleteEvent {
+    pub session_id: String,
+    pub text: String,
+    pub audio: String, // Base64エンコード
+}
+
+/// TTSエラーイベント（フォールバック時）
+#[derive(Clone, Serialize)]
+pub struct TTSErrorEvent {
+    pub session_id: String,
+    pub text: String,
+    pub error: String,
 }
