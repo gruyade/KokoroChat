@@ -80,7 +80,7 @@ fn is_emoji(ch: char) -> bool {
     (0x200D..=0x200D).contains(&cp) ||    // Zero Width Joiner
     (0x1F900..=0x1F9FF).contains(&cp) ||  // Supplemental Symbols
     (0x1FA00..=0x1FA6F).contains(&cp) ||  // Chess Symbols
-    (0x1FA70..=0x1FAFF).contains(&cp)     // Symbols Extended-A
+    (0x1FA70..=0x1FAFF).contains(&cp) // Symbols Extended-A
 }
 
 /// テキストを音声合成用チャンクに分割（純粋関数）
@@ -97,9 +97,7 @@ pub fn split_text(text: &str, config: &SplitConfig) -> Vec<String> {
     }
 
     // 絵文字除去（文末記号・改行は保持）
-    let cleaned: String = text.chars()
-        .filter(|ch| !is_emoji(*ch))
-        .collect();
+    let cleaned: String = text.chars().filter(|ch| !is_emoji(*ch)).collect();
 
     // 改行をスペースに置換
     let cleaned = cleaned.replace('\n', " ").replace('\r', "");
@@ -217,14 +215,18 @@ mod tests {
 
     #[test]
     fn test_empty_text() {
-        let config = SplitConfig { max_chunk_size: 140 };
+        let config = SplitConfig {
+            max_chunk_size: 140,
+        };
         let result = split_text("", &config);
         assert!(result.is_empty());
     }
 
     #[test]
     fn test_short_text_no_split() {
-        let config = SplitConfig { max_chunk_size: 140 };
+        let config = SplitConfig {
+            max_chunk_size: 140,
+        };
         let text = "こんにちは。";
         let result = split_text(text, &config);
         assert_eq!(result, vec!["こんにちは。"]);
@@ -232,7 +234,9 @@ mod tests {
 
     #[test]
     fn test_sentence_boundary_split() {
-        let config = SplitConfig { max_chunk_size: 140 };
+        let config = SplitConfig {
+            max_chunk_size: 140,
+        };
         let text = "最初の文。次の文。最後の文";
         let result = split_text(text, &config);
         assert_eq!(result, vec!["最初の文。", "次の文。", "最後の文"]);
@@ -240,7 +244,9 @@ mod tests {
 
     #[test]
     fn test_exclamation_and_question_boundaries() {
-        let config = SplitConfig { max_chunk_size: 140 };
+        let config = SplitConfig {
+            max_chunk_size: 140,
+        };
         let text = "すごい！本当？そうだよ。";
         let result = split_text(text, &config);
         assert_eq!(result, vec!["すごい！", "本当？", "そうだよ。"]);

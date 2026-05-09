@@ -19,9 +19,7 @@ pub async fn process_attachment(
 
 /// サポートするファイル拡張子一覧を返す
 #[tauri::command]
-pub async fn get_supported_extensions(
-    state: State<'_, AppState>,
-) -> Result<Vec<String>, AppError> {
+pub async fn get_supported_extensions(state: State<'_, AppState>) -> Result<Vec<String>, AppError> {
     let extensions = state
         .attachment_processor
         .supported_extensions()

@@ -57,8 +57,7 @@ pub fn run() {
             let db = Database::open(&db_path).expect("Failed to open database");
 
             // CharacterCreator用（tokio::sync::Mutex）
-            let db_for_character =
-                Arc::new(tokio::sync::Mutex::new(db));
+            let db_for_character = Arc::new(tokio::sync::Mutex::new(db));
 
             // ChatEngine/MemoryManager用に別DBインスタンスを作成（std::sync::Mutex）
             let db_for_chat = Arc::new(std::sync::Mutex::new(
@@ -74,9 +73,8 @@ pub fn run() {
 
             // 設定ロード
             let config_path = app_data_dir.join("config.json");
-            let config_manager = Arc::new(
-                ModelConfigManager::new(config_path).expect("Failed to load config"),
-            );
+            let config_manager =
+                Arc::new(ModelConfigManager::new(config_path).expect("Failed to load config"));
 
             // コンポーネント初期化
             let llm_lock = Arc::new(tokio::sync::Mutex::new(()));
@@ -97,25 +95,21 @@ pub fn run() {
                 config_manager.clone(),
             ));
 
-            let chat_engine: Arc<dyn chat::engine::ChatEngine> =
-                Arc::new(DefaultChatEngine::new(
-                    db_for_chat.clone(),
-                    llm_client.clone(),
-                    config_manager.clone(),
-                    llm_lock.clone(),
-                    tts_connector.clone(),
-                    Some(tts_flow_controller),
-                ));
+            let chat_engine: Arc<dyn chat::engine::ChatEngine> = Arc::new(DefaultChatEngine::new(
+                db_for_chat.clone(),
+                llm_client.clone(),
+                config_manager.clone(),
+                llm_lock.clone(),
+                tts_connector.clone(),
+                Some(tts_flow_controller),
+            ));
 
             let memory_manager: Arc<dyn memory::manager::MemoryManager> =
                 Arc::new(DefaultMemoryManager::new(
                     db_for_memory,
                     llm_client.clone(),
                     config_manager.clone(),
-                    config_manager
-                        .get_config()
-                        .memory
-                        .compression_threshold,
+                    config_manager.get_config().memory.compression_threshold,
                     llm_lock.clone(),
                 ));
 

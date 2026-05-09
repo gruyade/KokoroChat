@@ -31,11 +31,17 @@ mod tests {
 
     /// ISO 8601日時文字列を生成するストラテジー
     fn iso8601_datetime() -> impl Strategy<Value = String> {
-        (2020u32..2030, 1u32..13, 1u32..29, 0u32..24, 0u32..60, 0u32..60).prop_map(
-            |(y, m, d, h, min, s)| {
-                format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z", y, m, d, h, min, s)
-            },
+        (
+            2020u32..2030,
+            1u32..13,
+            1u32..29,
+            0u32..24,
+            0u32..60,
+            0u32..60,
         )
+            .prop_map(|(y, m, d, h, min, s)| {
+                format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z", y, m, d, h, min, s)
+            })
     }
 
     /// ChatRoleのストラテジー（User, Assistant, Spontaneous, Tool）
@@ -50,17 +56,25 @@ mod tests {
 
     /// ChatMessageRecordのストラテジー
     fn arb_chat_message_record() -> impl Strategy<Value = ChatMessageRecord> {
-        (uuid_string(), uuid_string(), arb_chat_role(), non_empty_string(), iso8601_datetime())
-            .prop_map(|(id, session_id, role, content, created_at)| ChatMessageRecord {
-                id,
-                session_id,
-                role,
-                content,
-                attachments: None,
-                tool_calls: None,
-                tool_call_id: None,
-                created_at,
-            })
+        (
+            uuid_string(),
+            uuid_string(),
+            arb_chat_role(),
+            non_empty_string(),
+            iso8601_datetime(),
+        )
+            .prop_map(
+                |(id, session_id, role, content, created_at)| ChatMessageRecord {
+                    id,
+                    session_id,
+                    role,
+                    content,
+                    attachments: None,
+                    tool_calls: None,
+                    tool_call_id: None,
+                    created_at,
+                },
+            )
     }
 
     /// メッセージ履歴のストラテジー（0〜20件）

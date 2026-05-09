@@ -25,7 +25,8 @@ pub trait PluginHandler: Send + Sync {
 #[async_trait]
 pub trait PluginSystem: Send + Sync {
     /// tool_call群を対応するプラグインにディスパッチし、結果を収集
-    async fn handle_tool_calls(&self, tool_calls: &[ToolCall]) -> Result<Vec<ToolResult>, AppError>;
+    async fn handle_tool_calls(&self, tool_calls: &[ToolCall])
+        -> Result<Vec<ToolResult>, AppError>;
     /// 有効なプラグインが提供する全ツール定義を取得
     fn get_enabled_tools(&self) -> Vec<ToolDefinition>;
 }
@@ -43,7 +44,10 @@ impl DefaultPluginSystem {
 
 #[async_trait]
 impl PluginSystem for DefaultPluginSystem {
-    async fn handle_tool_calls(&self, tool_calls: &[ToolCall]) -> Result<Vec<ToolResult>, AppError> {
+    async fn handle_tool_calls(
+        &self,
+        tool_calls: &[ToolCall],
+    ) -> Result<Vec<ToolResult>, AppError> {
         let mut results = Vec::with_capacity(tool_calls.len());
 
         for tool_call in tool_calls {

@@ -3,8 +3,8 @@
 
 #[cfg(test)]
 mod tests {
-    use proptest::prelude::*;
     use crate::tts::text_splitter::{split_text, SplitConfig};
+    use proptest::prelude::*;
 
     use std::path::Path;
 
@@ -60,21 +60,19 @@ mod tests {
             proptest::option::of(50.0f32..200.0),
             proptest::option::of(-100.0f32..100.0),
         )
-            .prop_map(
-                |(narrator, emotion, speed, pitch)| TTSConfig {
-                    provider: TTSProvider::Voicepeak,
-                    base_url: None,
-                    caption_base_url: None,
-                    reference_audio_base_url: None,
-                    reference_audio_path: None,
-                    caption: None,
-                    narrator,
-                    emotion,
-                    speed,
-                    pitch,
-                    irodori_mode: None,
-                },
-            )
+            .prop_map(|(narrator, emotion, speed, pitch)| TTSConfig {
+                provider: TTSProvider::Voicepeak,
+                base_url: None,
+                caption_base_url: None,
+                reference_audio_base_url: None,
+                reference_audio_path: None,
+                caption: None,
+                narrator,
+                emotion,
+                speed,
+                pitch,
+                irodori_mode: None,
+            })
     }
 
     /// テキスト入力のストラテジー
@@ -544,9 +542,9 @@ mod tests {
     fn arb_wav_chunks() -> impl Strategy<Value = Vec<Vec<u8>>> {
         // 固定フォーマットパラメータを選択し、1〜5チャンクを生成
         (
-            prop::sample::select(vec![1u16, 2]),           // channels
+            prop::sample::select(vec![1u16, 2]),                // channels
             prop::sample::select(vec![22050u32, 44100, 48000]), // sample_rate
-            prop::sample::select(vec![8u16, 16]),          // bits_per_sample
+            prop::sample::select(vec![8u16, 16]),               // bits_per_sample
             prop::collection::vec(
                 prop::collection::vec(any::<u8>(), 1..=500), // PCM data per chunk
                 1..=5,                                       // number of chunks
@@ -618,13 +616,9 @@ mod tests {
         let segment = (
             prop::collection::vec(
                 prop::sample::select(vec![
-                    'あ', 'い', 'う', 'え', 'お',
-                    'か', 'き', 'く', 'け', 'こ',
-                    'さ', 'し', 'す', 'せ', 'そ',
-                    'た', 'ち', 'つ', 'て', 'と',
-                    'な', 'に', 'ぬ', 'ね', 'の',
-                    'は', 'ひ', 'ふ', 'へ', 'ほ',
-                    '私', '今', '日', '天', '気',
+                    'あ', 'い', 'う', 'え', 'お', 'か', 'き', 'く', 'け', 'こ', 'さ', 'し', 'す',
+                    'せ', 'そ', 'た', 'ち', 'つ', 'て', 'と', 'な', 'に', 'ぬ', 'ね', 'の', 'は',
+                    'ひ', 'ふ', 'へ', 'ほ', '私', '今', '日', '天', '気',
                 ]),
                 1..=20,
             ),
@@ -701,11 +695,8 @@ mod tests {
         let sentence = (
             prop::collection::vec(
                 prop::sample::select(vec![
-                    'あ', 'い', 'う', 'え', 'お',
-                    'か', 'き', 'く', 'け', 'こ',
-                    'さ', 'し', 'す', 'せ', 'そ',
-                    'た', 'ち', 'つ', 'て', 'と',
-                    '私', '今', '日', '天', '気',
+                    'あ', 'い', 'う', 'え', 'お', 'か', 'き', 'く', 'け', 'こ', 'さ', 'し', 'す',
+                    'せ', 'そ', 'た', 'ち', 'つ', 'て', 'と', '私', '今', '日', '天', '気',
                 ]),
                 1..=15,
             ),
@@ -718,34 +709,43 @@ mod tests {
             });
 
         // 2〜8個の文を結合（複数チャンクが生成されるよう最低2文）
-        prop::collection::vec(sentence, 2..=8).prop_map(|sentences| {
-            // 最長の文の文字数を取得し、max_chunk_size をそれ以上に設定
-            let max_sentence_len = sentences.iter().map(|s| s.chars().count()).max().unwrap_or(1);
-            // max_chunk_size は最長文以上だが全体テキスト未満にする
-            // （複数チャンクに分割されることを保証）
-            let total_len: usize = sentences.iter().map(|s| s.chars().count()).sum();
-            let text: String = sentences.into_iter().collect();
-            // max_chunk_size: 最長文以上、全体テキスト未満
-            let max_chunk_size = if total_len > max_sentence_len {
-                // 全体より小さく、最長文以上の値を使う
-                // 最長文 ≤ max_chunk_size < total_len を保証
-                max_sentence_len.max(1)
-            } else {
-                max_sentence_len
-            };
-            (text, max_chunk_size)
-        })
-        // 複数チャンクに分割されることをフィルタで保証
-        .prop_filter("must produce multiple chunks", |(text, max_chunk_size)| {
-            let config = SplitConfig { max_chunk_size: *max_chunk_size };
-            split_text(text, &config).len() > 1
-        })
+        prop::collection::vec(sentence, 2..=8)
+            .prop_map(|sentences| {
+                // 最長の文の文字数を取得し、max_chunk_size をそれ以上に設定
+                let max_sentence_len = sentences
+                    .iter()
+                    .map(|s| s.chars().count())
+                    .max()
+                    .unwrap_or(1);
+                // max_chunk_size は最長文以上だが全体テキスト未満にする
+                // （複数チャンクに分割されることを保証）
+                let total_len: usize = sentences.iter().map(|s| s.chars().count()).sum();
+                let text: String = sentences.into_iter().collect();
+                // max_chunk_size: 最長文以上、全体テキスト未満
+                let max_chunk_size = if total_len > max_sentence_len {
+                    // 全体より小さく、最長文以上の値を使う
+                    // 最長文 ≤ max_chunk_size < total_len を保証
+                    max_sentence_len.max(1)
+                } else {
+                    max_sentence_len
+                };
+                (text, max_chunk_size)
+            })
+            // 複数チャンクに分割されることをフィルタで保証
+            .prop_filter("must produce multiple chunks", |(text, max_chunk_size)| {
+                let config = SplitConfig {
+                    max_chunk_size: *max_chunk_size,
+                };
+                split_text(text, &config).len() > 1
+            })
     }
 
     /// 文境界文字かどうかを判定
     fn ends_with_sentence_boundary(s: &str) -> bool {
         const SENTENCE_BOUNDARIES: &[char] = &['。', '！', '？'];
-        s.chars().last().map_or(false, |c| SENTENCE_BOUNDARIES.contains(&c))
+        s.chars()
+            .last()
+            .map_or(false, |c| SENTENCE_BOUNDARIES.contains(&c))
     }
 
     proptest! {
@@ -830,8 +830,8 @@ mod tests {
             proptest::option::of("http://[a-z]{3,8}:[0-9]{4}/caption"),
             proptest::option::of("http://[a-z]{3,8}:[0-9]{4}/refaudio"),
         )
-            .prop_map(|(irodori_mode, base_url, caption_base_url, reference_audio_base_url)| {
-                TTSConfig {
+            .prop_map(
+                |(irodori_mode, base_url, caption_base_url, reference_audio_base_url)| TTSConfig {
                     provider: TTSProvider::IrodoriTts,
                     base_url,
                     caption_base_url,
@@ -843,14 +843,14 @@ mod tests {
                     speed: None,
                     pitch: None,
                     irodori_mode,
-                }
-            })
+                },
+            )
     }
 
     /// URL解決テスト用 TTSGlobalConfig のストラテジー
     fn arb_tts_global_config_for_url_resolution() -> impl Strategy<Value = TTSGlobalConfig> {
-        proptest::option::of("http://[a-z]{3,8}:[0-9]{4}/global")
-            .prop_map(|irodori_base_url| TTSGlobalConfig {
+        proptest::option::of("http://[a-z]{3,8}:[0-9]{4}/global").prop_map(|irodori_base_url| {
+            TTSGlobalConfig {
                 enabled: true,
                 voicepeak_path: None,
                 timeout_seconds: 60,
@@ -858,7 +858,8 @@ mod tests {
                 irodori_base_url,
                 irodori_caption_base_url: None,
                 irodori_reference_audio_base_url: None,
-            })
+            }
+        })
     }
 
     proptest! {

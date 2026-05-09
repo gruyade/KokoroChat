@@ -33,13 +33,11 @@ pub fn resolve_api_strategy(config: &LLMClientConfig) -> ApiStrategy {
     // Google: OpenAI互換エンドポイント(/v1beta/openai)を使用するためOpenAI形式
     // Anthropic: ネイティブ Messages API を使用
     match config.provider {
-        Some(LLMProvider::Anthropic) => {
-            ApiStrategy::Anthropic
-        }
-        Some(LLMProvider::Google) | Some(LLMProvider::Openai)
-        | Some(LLMProvider::OpenaiCompatible) | None => {
-            ApiStrategy::OpenAI
-        }
+        Some(LLMProvider::Anthropic) => ApiStrategy::Anthropic,
+        Some(LLMProvider::Google)
+        | Some(LLMProvider::Openai)
+        | Some(LLMProvider::OpenaiCompatible)
+        | None => ApiStrategy::OpenAI,
     }
 }
 
@@ -47,12 +45,8 @@ pub fn resolve_api_strategy(config: &LLMClientConfig) -> ApiStrategy {
 pub fn is_default_endpoint(base_url: &str, provider: LLMProvider) -> bool {
     let url = base_url.trim_end_matches('/');
     match provider {
-        LLMProvider::Google => {
-            url.is_empty() || url.contains("generativelanguage.googleapis.com")
-        }
-        LLMProvider::Anthropic => {
-            url.is_empty() || url.contains("api.anthropic.com")
-        }
+        LLMProvider::Google => url.is_empty() || url.contains("generativelanguage.googleapis.com"),
+        LLMProvider::Anthropic => url.is_empty() || url.contains("api.anthropic.com"),
         _ => true,
     }
 }
@@ -175,10 +169,7 @@ pub fn parse_gemini_response(body: &Value) -> Result<LLMResponse, AppError> {
 
     if text.is_empty() {
         // candidatesが空またはフィルタされた場合のチェック
-        if body["candidates"]
-            .as_array()
-            .map_or(true, |c| c.is_empty())
-        {
+        if body["candidates"].as_array().map_or(true, |c| c.is_empty()) {
             return Err(AppError::LlmApi(
                 "Gemini response has no candidates (possibly filtered by safety settings)"
                     .to_string(),
@@ -378,10 +369,8 @@ impl OpenAICompatibleClient {
                         let function = &tc["function"];
                         let name = function["name"].as_str().unwrap_or("").to_string();
                         let arguments_str = function["arguments"].as_str().unwrap_or("{}");
-                        let arguments: Value =
-                            serde_json::from_str(arguments_str).unwrap_or(Value::Object(
-                                serde_json::Map::new(),
-                            ));
+                        let arguments: Value = serde_json::from_str(arguments_str)
+                            .unwrap_or(Value::Object(serde_json::Map::new()));
                         ToolCall {
                             id,
                             name,
@@ -394,10 +383,7 @@ impl OpenAICompatibleClient {
         }
 
         // テキストレスポンス
-        let content = message["content"]
-            .as_str()
-            .unwrap_or("")
-            .to_string();
+        let content = message["content"].as_str().unwrap_or("").to_string();
 
         Ok(LLMResponse::Text(content))
     }
@@ -464,7 +450,12 @@ impl LLMClient for OpenAICompatibleClient {
                 let api_key = config.api_key.as_deref().unwrap_or("");
                 let url_with_key = format!("{}?key={}", url, api_key);
 
-                let response = self.http_client.post(&url_with_key).json(&body).send().await?;
+                let response = self
+                    .http_client
+                    .post(&url_with_key)
+                    .json(&body)
+                    .send()
+                    .await?;
 
                 if !response.status().is_success() {
                     let status = response.status();
@@ -550,7 +541,12 @@ impl LLMClient for OpenAICompatibleClient {
                 let api_key = config.api_key.as_deref().unwrap_or("");
                 let url_with_key = format!("{}&key={}", url, api_key);
 
-                let response = self.http_client.post(&url_with_key).json(&body).send().await?;
+                let response = self
+                    .http_client
+                    .post(&url_with_key)
+                    .json(&body)
+                    .send()
+                    .await?;
 
                 if !response.status().is_success() {
                     let status = response.status();
@@ -689,7 +685,12 @@ impl LLMClient for OpenAICompatibleClient {
                     }
                 });
 
-                let response = self.http_client.post(&url_with_key).json(&body).send().await?;
+                let response = self
+                    .http_client
+                    .post(&url_with_key)
+                    .json(&body)
+                    .send()
+                    .await?;
 
                 if !response.status().is_success() {
                     let status = response.status();
@@ -779,10 +780,7 @@ impl LLMClient for OpenAICompatibleClient {
                 }
 
                 let _: Value = response.json().await.map_err(|e| {
-                    AppError::LlmApi(format!(
-                        "Connection test: invalid response format: {}",
-                        e
-                    ))
+                    AppError::LlmApi(format!("Connection test: invalid response format: {}", e))
                 })?;
 
                 Ok(())
@@ -825,7 +823,11 @@ mod tests {
 
         assert_eq!(body["model"], "gpt-4");
         let temp = body["temperature"].as_f64().unwrap();
-        assert!((temp - 0.7f64).abs() < 1e-5, "temperature mismatch: {}", temp);
+        assert!(
+            (temp - 0.7f64).abs() < 1e-5,
+            "temperature mismatch: {}",
+            temp
+        );
         assert_eq!(body["stream"], false);
 
         let msgs = body["messages"].as_array().unwrap();
@@ -1110,7 +1112,11 @@ mod tests {
         assert_eq!(json["model"], "gpt-4");
         assert_eq!(json["api_key"], "sk-test");
         let temp = json["temperature"].as_f64().unwrap();
-        assert!((temp - 0.7f64).abs() < 1e-5, "temperature mismatch: {}", temp);
+        assert!(
+            (temp - 0.7f64).abs() < 1e-5,
+            "temperature mismatch: {}",
+            temp
+        );
     }
 
     #[test]
@@ -1470,10 +1476,7 @@ mod tests {
         };
 
         let url = build_anthropic_url(&config);
-        assert_eq!(
-            url,
-            "https://custom-proxy.example.com/v1/messages"
-        );
+        assert_eq!(url, "https://custom-proxy.example.com/v1/messages");
     }
 
     #[test]
@@ -1487,10 +1490,7 @@ mod tests {
         };
 
         let url = build_anthropic_url(&config);
-        assert_eq!(
-            url,
-            "https://custom-proxy.example.com/v1/messages"
-        );
+        assert_eq!(url, "https://custom-proxy.example.com/v1/messages");
     }
 
     // --- parse_gemini_response tests ---
@@ -1694,7 +1694,8 @@ mod tests {
 
     #[test]
     fn test_parse_gemini_sse_line_content() {
-        let line = r#"data: {"candidates":[{"content":{"parts":[{"text":"Hello"}],"role":"model"}}]}"#;
+        let line =
+            r#"data: {"candidates":[{"content":{"parts":[{"text":"Hello"}],"role":"model"}}]}"#;
         let result = OpenAICompatibleClient::parse_gemini_sse_line(line);
         assert_eq!(result, Some("Hello".to_string()));
     }

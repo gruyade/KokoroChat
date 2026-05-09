@@ -20,7 +20,10 @@ pub async fn synthesize_speech(
     state: State<'_, AppState>,
 ) -> Result<Vec<u8>, AppError> {
     let voicepeak_path = state.config_manager.get_config().tts.voicepeak_path;
-    state.tts_connector.synthesize(&text, &config, voicepeak_path.as_deref()).await
+    state
+        .tts_connector
+        .synthesize(&text, &config, voicepeak_path.as_deref())
+        .await
 }
 
 /// TTS接続テスト
@@ -32,7 +35,10 @@ pub async fn test_tts_connection(
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
     let voicepeak_path = state.config_manager.get_config().tts.voicepeak_path;
-    state.tts_connector.test_connection(&config, voicepeak_path.as_deref()).await
+    state
+        .tts_connector
+        .test_connection(&config, voicepeak_path.as_deref())
+        .await
 }
 
 /// VoicePeakナレーターの利用可能な感情リストを取得
@@ -55,21 +61,27 @@ pub async fn generate_speech_for_message(
     character_id: String,
     state: State<'_, AppState>,
 ) -> Result<String, AppError> {
-    use base64::Engine;
     use crate::db::repositories::character as char_repo;
     use crate::llm::client::{ChatMessage, LLMClientConfig, LLMResponse, MessageRole};
     use crate::models::config::ModelPurpose;
+    use base64::Engine;
 
     // キャラクターのTTS設定を取得
     let tts_config = {
-        let db = state.db.lock().map_err(|e| AppError::Database(format!("DB lock failed: {}", e)))?;
+        let db = state
+            .db
+            .lock()
+            .map_err(|e| AppError::Database(format!("DB lock failed: {}", e)))?;
         let character = char_repo::get_character(db.connection(), &character_id)?
             .ok_or_else(|| AppError::NotFound(format!("Character not found: {}", character_id)))?;
-        character.tts_config.ok_or_else(|| AppError::Validation("Character has no TTS config".to_string()))?
+        character
+            .tts_config
+            .ok_or_else(|| AppError::Validation("Character has no TTS config".to_string()))?
     };
 
     // LLMにspeech抽出を依頼
-    let llm_config = state.config_manager
+    let llm_config = state
+        .config_manager
         .get_model_settings(&ModelPurpose::Chat)
         .map(|s| LLMClientConfig {
             base_url: s.base_url,
@@ -121,7 +133,9 @@ pub async fn generate_speech_for_message(
     use crate::tts::text_splitter::{split_text, SplitConfig};
     use crate::tts::wav_concat::concatenate_wav;
 
-    let split_config = SplitConfig { max_chunk_size: app_tts_config.max_chunk_size };
+    let split_config = SplitConfig {
+        max_chunk_size: app_tts_config.max_chunk_size,
+    };
     let chunks = split_text(&speech_text, &split_config);
 
     if chunks.is_empty() {
@@ -130,7 +144,10 @@ pub async fn generate_speech_for_message(
 
     let mut audio_chunks: Vec<Vec<u8>> = Vec::new();
     for chunk in &chunks {
-        let audio = state.tts_connector.synthesize(chunk, &tts_config, voicepeak_path).await?;
+        let audio = state
+            .tts_connector
+            .synthesize(chunk, &tts_config, voicepeak_path)
+            .await?;
         audio_chunks.push(audio);
     }
 

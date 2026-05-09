@@ -54,13 +54,20 @@ mod tests {
         assert!(config.models.contains_key(&ModelPurpose::Chat));
         assert!(config.models.contains_key(&ModelPurpose::Memory));
         assert!(config.models.contains_key(&ModelPurpose::Thought));
-        assert!(config.models.contains_key(&ModelPurpose::CharacterGeneration));
+        assert!(config
+            .models
+            .contains_key(&ModelPurpose::CharacterGeneration));
     }
 
     #[test]
     fn test_default_config_values() {
         // 環境変数の影響を排除
-        let env_prefixes = ["AI_CHAT_LLM", "AI_CHAT_MEMORY", "AI_CHAT_THOUGHT", "AI_CHAT_CHARGEN"];
+        let env_prefixes = [
+            "AI_CHAT_LLM",
+            "AI_CHAT_MEMORY",
+            "AI_CHAT_THOUGHT",
+            "AI_CHAT_CHARGEN",
+        ];
         let suffixes = ["_BASE_URL", "_API_KEY", "_MODEL"];
         for prefix in &env_prefixes {
             for suffix in &suffixes {
@@ -105,13 +112,9 @@ mod tests {
 
         // 設定変更
         let mut config = manager.get_config();
-        config
-            .models
-            .get_mut(&ModelPurpose::Chat)
-            .unwrap()
-            .base_url = "http://localhost:8080".to_string();
-        config.models.get_mut(&ModelPurpose::Chat).unwrap().model =
-            "llama3".to_string();
+        config.models.get_mut(&ModelPurpose::Chat).unwrap().base_url =
+            "http://localhost:8080".to_string();
+        config.models.get_mut(&ModelPurpose::Chat).unwrap().model = "llama3".to_string();
         config.ui.language = "en".to_string();
 
         manager.set_config(config.clone()).unwrap();
@@ -190,7 +193,15 @@ mod tests {
             memory: MemoryConfig {
                 compression_threshold: 100,
             },
-            tts: TTSGlobalConfig { enabled: true, voicepeak_path: None, timeout_seconds: 60, max_chunk_size: 140, irodori_base_url: None, irodori_caption_base_url: None, irodori_reference_audio_base_url: None },
+            tts: TTSGlobalConfig {
+                enabled: true,
+                voicepeak_path: None,
+                timeout_seconds: 60,
+                max_chunk_size: 140,
+                irodori_base_url: None,
+                irodori_caption_base_url: None,
+                irodori_reference_audio_base_url: None,
+            },
             ui: UIConfig {
                 theme: Theme::Light,
                 language: "en".to_string(),
@@ -211,7 +222,11 @@ mod tests {
         let deserialized: AppConfig = serde_json::from_str(&json).unwrap();
 
         assert_eq!(
-            deserialized.models.get(&ModelPurpose::Chat).unwrap().base_url,
+            deserialized
+                .models
+                .get(&ModelPurpose::Chat)
+                .unwrap()
+                .base_url,
             "http://localhost:1234/v1"
         );
         assert_eq!(
@@ -308,7 +323,11 @@ mod tests {
     #[test]
     fn test_creates_directory_on_save() {
         let tmp_dir = tempfile::tempdir().unwrap();
-        let config_path = tmp_dir.path().join("deep").join("nested").join("config.json");
+        let config_path = tmp_dir
+            .path()
+            .join("deep")
+            .join("nested")
+            .join("config.json");
 
         let manager = ModelConfigManager::new(config_path.clone()).unwrap();
         manager.save().unwrap();

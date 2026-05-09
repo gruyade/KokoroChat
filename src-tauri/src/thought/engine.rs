@@ -9,7 +9,9 @@ use tauri::AppHandle;
 use tauri::Emitter;
 
 use crate::db::database::Database;
-use crate::db::repositories::{character as char_repo, chat as chat_repo, memory as memory_repo, thought as thought_repo};
+use crate::db::repositories::{
+    character as char_repo, chat as chat_repo, memory as memory_repo, thought as thought_repo,
+};
 use crate::error::AppError;
 use crate::llm::client::{ChatMessage, LLMClient, LLMClientConfig, LLMResponse, MessageRole};
 use crate::models::{ChatRole, Thought};
@@ -25,9 +27,17 @@ pub struct ThoughtEvent {
 #[async_trait]
 pub trait ThoughtEngine: Send + Sync {
     async fn generate_thought(&self, character_id: &str) -> Result<Thought, AppError>;
-    async fn get_thoughts(&self, character_id: &str, limit: Option<u32>) -> Result<Vec<Thought>, AppError>;
+    async fn get_thoughts(
+        &self,
+        character_id: &str,
+        limit: Option<u32>,
+    ) -> Result<Vec<Thought>, AppError>;
     async fn delete_thought(&self, id: &str) -> Result<(), AppError>;
-    async fn cleanup_old_thoughts(&self, character_id: &str, threshold_minutes: u64) -> Result<u32, AppError>;
+    async fn cleanup_old_thoughts(
+        &self,
+        character_id: &str,
+        threshold_minutes: u64,
+    ) -> Result<u32, AppError>;
     fn set_frequency(&self, character_id: &str, interval_minutes: u64);
     fn start(&self, character_id: &str, app_handle: AppHandle);
     fn stop(&self);
@@ -121,10 +131,7 @@ impl DefaultThoughtEngine {
                 .join("\n");
             messages.push(ChatMessage {
                 role: MessageRole::System,
-                content: format!(
-                    "以下はあなたの記憶です:\n{}",
-                    memory_text
-                ),
+                content: format!("以下はあなたの記憶です:\n{}", memory_text),
                 tool_call_id: None,
                 images: None,
             });
@@ -197,7 +204,8 @@ impl ThoughtEngine for DefaultThoughtEngine {
         };
 
         // LLMプロンプト構築
-        let prompt_messages = Self::build_thought_prompt(&system_prompt, &recent_messages, &memories);
+        let prompt_messages =
+            Self::build_thought_prompt(&system_prompt, &recent_messages, &memories);
 
         // コンテキスト概要を生成（保存用）
         let context_summary = if !recent_messages.is_empty() || !memories.is_empty() {
@@ -215,13 +223,18 @@ impl ThoughtEngine for DefaultThoughtEngine {
 
         // LLMロック取得後に呼び出し
         let _llm_guard = self.llm_lock.lock().await;
-        let response = self.llm_client.chat(&prompt_messages, &self.current_llm_config(), None).await?;
+        let response = self
+            .llm_client
+            .chat(&prompt_messages, &self.current_llm_config(), None)
+            .await?;
         drop(_llm_guard);
 
         let content = match response {
             LLMResponse::Text(text) => text.trim().to_string(),
             LLMResponse::ToolCalls(_) => {
-                return Err(AppError::LlmApi("Unexpected tool_calls response for thought generation".to_string()));
+                return Err(AppError::LlmApi(
+                    "Unexpected tool_calls response for thought generation".to_string(),
+                ));
             }
         };
 
@@ -247,7 +260,11 @@ impl ThoughtEngine for DefaultThoughtEngine {
         }
 
         // 自動クリーンアップ（閾値超過の古い思考を削除）
-        let threshold = self.config_manager.get_config().thought.auto_delete_threshold_minutes;
+        let threshold = self
+            .config_manager
+            .get_config()
+            .thought
+            .auto_delete_threshold_minutes;
         if let Err(e) = self.cleanup_old_thoughts(character_id, threshold).await {
             println!("[thought] cleanup error (non-fatal): {}", e);
         }
@@ -255,7 +272,11 @@ impl ThoughtEngine for DefaultThoughtEngine {
         Ok(thought)
     }
 
-    async fn get_thoughts(&self, character_id: &str, limit: Option<u32>) -> Result<Vec<Thought>, AppError> {
+    async fn get_thoughts(
+        &self,
+        character_id: &str,
+        limit: Option<u32>,
+    ) -> Result<Vec<Thought>, AppError> {
         let db_guard = self.db.lock().unwrap();
         let conn = db_guard.connection();
         thought_repo::get_thoughts(conn, character_id, limit)
@@ -271,7 +292,11 @@ impl ThoughtEngine for DefaultThoughtEngine {
         Ok(())
     }
 
-    async fn cleanup_old_thoughts(&self, character_id: &str, threshold_minutes: u64) -> Result<u32, AppError> {
+    async fn cleanup_old_thoughts(
+        &self,
+        character_id: &str,
+        threshold_minutes: u64,
+    ) -> Result<u32, AppError> {
         // threshold=0 は全保持（クリーンアップスキップ）
         if threshold_minutes == 0 {
             return Ok(0);
@@ -319,7 +344,8 @@ impl ThoughtEngine for DefaultThoughtEngine {
                     s.interval_minutes
                 };
 
-                let interval_duration = tokio::time::Duration::from_secs(interval_minutes.max(1) * 60);
+                let interval_duration =
+                    tokio::time::Duration::from_secs(interval_minutes.max(1) * 60);
                 tokio::time::sleep(interval_duration).await;
 
                 // 停止フラグチェック
@@ -384,10 +410,23 @@ impl ThoughtEngine for DefaultThoughtEngine {
                     let _llm_guard = llm_lock.lock().await;
                     let llm_config = config_manager
                         .get_model_settings(&crate::models::config::ModelPurpose::Thought)
-                        .map(|s| LLMClientConfig { base_url: s.base_url, model: s.model, api_key: s.api_key, temperature: s.temperature, provider: s.provider })
-                        .unwrap_or(LLMClientConfig { base_url: String::new(), model: String::new(), api_key: None, temperature: 0.7, provider: None });
+                        .map(|s| LLMClientConfig {
+                            base_url: s.base_url,
+                            model: s.model,
+                            api_key: s.api_key,
+                            temperature: s.temperature,
+                            provider: s.provider,
+                        })
+                        .unwrap_or(LLMClientConfig {
+                            base_url: String::new(),
+                            model: String::new(),
+                            api_key: None,
+                            temperature: 0.7,
+                            provider: None,
+                        });
 
-                    let response = match llm_client.chat(&prompt_messages, &llm_config, None).await {
+                    let response = match llm_client.chat(&prompt_messages, &llm_config, None).await
+                    {
                         Ok(resp) => resp,
                         Err(_) => continue,
                     };
@@ -436,13 +475,21 @@ impl ThoughtEngine for DefaultThoughtEngine {
                     }
 
                     // 自動クリーンアップ（閾値超過の古い思考を削除）
-                    let threshold = config_manager.get_config().thought.auto_delete_threshold_minutes;
+                    let threshold = config_manager
+                        .get_config()
+                        .thought
+                        .auto_delete_threshold_minutes;
                     if threshold > 0 {
-                        let cutoff = chrono::Utc::now() - chrono::Duration::minutes(threshold as i64);
+                        let cutoff =
+                            chrono::Utc::now() - chrono::Duration::minutes(threshold as i64);
                         let cutoff_str = cutoff.to_rfc3339();
                         let db_guard = db.lock().unwrap();
                         let conn = db_guard.connection();
-                        if let Err(e) = thought_repo::delete_thoughts_older_than(conn, &character_id, &cutoff_str) {
+                        if let Err(e) = thought_repo::delete_thoughts_older_than(
+                            conn,
+                            &character_id,
+                            &cutoff_str,
+                        ) {
                             println!("[thought] cleanup error (non-fatal): {}", e);
                         }
                     }

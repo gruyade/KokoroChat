@@ -60,7 +60,8 @@ impl VoicePeakHandler {
         if emotion.is_empty() {
             return None;
         }
-        let parts: Vec<String> = emotion.iter()
+        let parts: Vec<String> = emotion
+            .iter()
             .map(|(key, value)| format!("{}={}", key, value))
             .collect();
         Some(parts.join(","))
@@ -68,7 +69,12 @@ impl VoicePeakHandler {
 
     /// 音声合成: CLIプロセス実行 → WAVファイル読み取り
     /// `executable_path`: 全体設定から渡されるVoicePeak CLIパス（None時は"voicepeak"）
-    pub async fn synthesize(&self, text: &str, config: &TTSConfig, executable_path: Option<&str>) -> Result<Vec<u8>, AppError> {
+    pub async fn synthesize(
+        &self,
+        text: &str,
+        config: &TTSConfig,
+        executable_path: Option<&str>,
+    ) -> Result<Vec<u8>, AppError> {
         // VoicePeakはtempディレクトリへの出力でエラーになる場合があるため、
         // 実行ファイルと同じディレクトリに出力する
         let executable = executable_path.unwrap_or("voicepeak");
@@ -80,7 +86,14 @@ impl VoicePeakHandler {
 
         let args = Self::build_cli_args(text, &tmp_path, config);
 
-        println!("[VoicePeak] Executing: {} {}", executable, args.iter().map(|a| format!("\"{}\"", a)).collect::<Vec<_>>().join(" "));
+        println!(
+            "[VoicePeak] Executing: {} {}",
+            executable,
+            args.iter()
+                .map(|a| format!("\"{}\"", a))
+                .collect::<Vec<_>>()
+                .join(" ")
+        );
         println!("[VoicePeak] Output path: {}", tmp_path.display());
 
         let output = tokio::process::Command::new(executable)
@@ -106,7 +119,10 @@ impl VoicePeakHandler {
             .await
             .map_err(|e| AppError::Tts(format!("Failed to read VoicePeak output: {}", e)))?;
 
-        println!("[VoicePeak] Read {} bytes from output file", audio_data.len());
+        println!(
+            "[VoicePeak] Read {} bytes from output file",
+            audio_data.len()
+        );
 
         // 読み取り後にファイル削除
         let _ = tokio::fs::remove_file(&tmp_path).await;
@@ -116,7 +132,11 @@ impl VoicePeakHandler {
 
     /// 接続テスト: 短いテキストでCLI実行確認
     /// `executable_path`: 全体設定から渡されるVoicePeak CLIパス（None時は"voicepeak"）
-    pub async fn test_connection(&self, config: &TTSConfig, executable_path: Option<&str>) -> Result<(), AppError> {
+    pub async fn test_connection(
+        &self,
+        config: &TTSConfig,
+        executable_path: Option<&str>,
+    ) -> Result<(), AppError> {
         let executable = executable_path.unwrap_or("voicepeak");
         let output_dir = std::path::Path::new(executable)
             .parent()
@@ -149,7 +169,10 @@ impl VoicePeakHandler {
 
     /// ナレーターの利用可能な感情リストを取得
     /// コマンド: voicepeak --list-emotion "ナレーター名"
-    pub async fn list_emotions(executable_path: Option<&str>, narrator: &str) -> Result<Vec<String>, AppError> {
+    pub async fn list_emotions(
+        executable_path: Option<&str>,
+        narrator: &str,
+    ) -> Result<Vec<String>, AppError> {
         let executable = executable_path.unwrap_or("voicepeak");
         let output = tokio::process::Command::new(executable)
             .args(&["--list-emotion", narrator])
@@ -159,11 +182,15 @@ impl VoicePeakHandler {
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(AppError::Tts(format!("VoicePeak --list-emotion failed: {}", stderr)));
+            return Err(AppError::Tts(format!(
+                "VoicePeak --list-emotion failed: {}",
+                stderr
+            )));
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout);
-        let emotions: Vec<String> = stdout.lines()
+        let emotions: Vec<String> = stdout
+            .lines()
             .map(|line| line.trim().to_string())
             .filter(|line| !line.is_empty())
             .collect();

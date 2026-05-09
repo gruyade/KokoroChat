@@ -43,7 +43,13 @@ pub async fn send_message(
 
     let join_handle = tokio::spawn(async move {
         chat_engine
-            .send_message(&session_id_clone, &content_clone, attachments, &app_handle_clone, Some(partial_content_for_engine))
+            .send_message(
+                &session_id_clone,
+                &content_clone,
+                attachments,
+                &app_handle_clone,
+                Some(partial_content_for_engine),
+            )
             .await
     });
 
@@ -79,15 +85,21 @@ pub async fn send_message(
     let session_id_for_memory = session_id.clone();
     let app_handle_for_memory = app_handle.clone();
     tokio::spawn(async move {
-        use tauri::Emitter;
         use crate::commands::memory::MemoryGeneratedEvent;
+        use tauri::Emitter;
 
-        match memory_manager.check_and_compress(&session_id_for_memory).await {
+        match memory_manager
+            .check_and_compress(&session_id_for_memory)
+            .await
+        {
             Ok(Some(memory)) => {
-                if let Err(e) = app_handle_for_memory.emit("memory:generated", MemoryGeneratedEvent {
-                    character_id: memory.character_id.clone(),
-                    memory_id: memory.id.clone(),
-                }) {
+                if let Err(e) = app_handle_for_memory.emit(
+                    "memory:generated",
+                    MemoryGeneratedEvent {
+                        character_id: memory.character_id.clone(),
+                        memory_id: memory.id.clone(),
+                    },
+                ) {
                     println!("[memory] Failed to emit memory:generated event: {}", e);
                 }
             }
@@ -110,10 +122,10 @@ pub async fn trigger_spontaneous_check(
     state: State<'_, AppState>,
 ) -> Result<bool, AppError> {
     use crate::db::repositories::{character as char_repo, chat as chat_repo};
-    use crate::llm::client::{ChatMessage, LLMResponse, MessageRole, LLMClientConfig};
-    use crate::models::{ChatRole, ChatMessageRecord};
-    use tauri::Emitter;
+    use crate::llm::client::{ChatMessage, LLMClientConfig, LLMResponse, MessageRole};
+    use crate::models::{ChatMessageRecord, ChatRole};
     use std::sync::atomic::Ordering;
+    use tauri::Emitter;
 
     // 一時停止中はスキップ
     if state.spontaneous_paused.load(Ordering::SeqCst) {
@@ -138,7 +150,10 @@ pub async fn trigger_spontaneous_check(
 
     // セッション情報取得
     let (system_prompt, recent_messages) = {
-        let db_guard = state.db.lock().map_err(|e| AppError::Database(format!("{}", e)))?;
+        let db_guard = state
+            .db
+            .lock()
+            .map_err(|e| AppError::Database(format!("{}", e)))?;
         let conn = db_guard.connection();
 
         let session = chat_repo::get_session(conn, &session_id)?
@@ -146,7 +161,11 @@ pub async fn trigger_spontaneous_check(
         let character = char_repo::get_character(conn, &session.character_id)?
             .ok_or_else(|| AppError::NotFound(format!("Character: {}", session.character_id)))?;
         let msgs = chat_repo::get_messages(conn, &session_id)?;
-        let recent = if msgs.len() > 15 { msgs[msgs.len()-15..].to_vec() } else { msgs };
+        let recent = if msgs.len() > 15 {
+            msgs[msgs.len() - 15..].to_vec()
+        } else {
+            msgs
+        };
         (character.system_prompt, recent)
     };
 
@@ -163,7 +182,12 @@ pub async fn trigger_spontaneous_check(
             ChatRole::Assistant | ChatRole::Spontaneous => MessageRole::Assistant,
             ChatRole::Tool => MessageRole::Tool,
         };
-        messages.push(ChatMessage { role, content: msg.content.clone(), tool_call_id: None, images: None });
+        messages.push(ChatMessage {
+            role,
+            content: msg.content.clone(),
+            tool_call_id: None,
+            images: None,
+        });
     }
 
     // 確率1.0の場合は必ず発話させる（デバッグ用途を想定）
@@ -181,10 +205,23 @@ pub async fn trigger_spontaneous_check(
     });
 
     // LLM呼び出し
-    let llm_config = state.config_manager
+    let llm_config = state
+        .config_manager
         .get_model_settings(&crate::models::config::ModelPurpose::Chat)
-        .map(|s| LLMClientConfig { base_url: s.base_url, model: s.model, api_key: s.api_key, temperature: s.temperature, provider: s.provider })
-        .unwrap_or(LLMClientConfig { base_url: String::new(), model: String::new(), api_key: None, temperature: 0.9, provider: None });
+        .map(|s| LLMClientConfig {
+            base_url: s.base_url,
+            model: s.model,
+            api_key: s.api_key,
+            temperature: s.temperature,
+            provider: s.provider,
+        })
+        .unwrap_or(LLMClientConfig {
+            base_url: String::new(),
+            model: String::new(),
+            api_key: None,
+            temperature: 0.9,
+            provider: None,
+        });
 
     if llm_config.base_url.is_empty() {
         println!("[spontaneous] LLM base_url is empty, skipping");
@@ -201,7 +238,10 @@ pub async fn trigger_spontaneous_check(
         }
     };
     if content.is_empty() || content.contains("[SKIP]") {
-        println!("[spontaneous] LLM returned SKIP or empty (content={:?}), skipping", content);
+        println!(
+            "[spontaneous] LLM returned SKIP or empty (content={:?}), skipping",
+            content
+        );
         return Ok(false);
     }
     let preview: String = content.chars().take(50).collect();
@@ -221,15 +261,21 @@ pub async fn trigger_spontaneous_check(
     };
 
     {
-        let db_guard = state.db.lock().map_err(|e| AppError::Database(format!("{}", e)))?;
+        let db_guard = state
+            .db
+            .lock()
+            .map_err(|e| AppError::Database(format!("{}", e)))?;
         chat_repo::insert_message(db_guard.connection(), &msg)?;
     }
 
     // フロントエンドにイベント通知
-    let _ = app_handle.emit("spontaneous:message", serde_json::json!({
-        "session_id": session_id,
-        "message": content,
-    }));
+    let _ = app_handle.emit(
+        "spontaneous:message",
+        serde_json::json!({
+            "session_id": session_id,
+            "message": content,
+        }),
+    );
 
     Ok(true)
 }
@@ -290,7 +336,12 @@ pub async fn regenerate_message(
 
     let join_handle = tokio::spawn(async move {
         chat_engine
-            .regenerate(&session_id_clone, &message_id_clone, &app_handle_clone, Some(partial_content_for_engine))
+            .regenerate(
+                &session_id_clone,
+                &message_id_clone,
+                &app_handle_clone,
+                Some(partial_content_for_engine),
+            )
             .await
     });
 
@@ -349,7 +400,10 @@ pub async fn stop_generation(
                 created_at: now,
             };
 
-            let db = state.db.lock().map_err(|e| AppError::Database(format!("{}", e)))?;
+            let db = state
+                .db
+                .lock()
+                .map_err(|e| AppError::Database(format!("{}", e)))?;
             chat_repo::insert_message(db.connection(), &msg)?;
         }
 
@@ -369,11 +423,11 @@ pub async fn stop_generation(
 
 /// メッセージ削除
 #[tauri::command]
-pub async fn delete_message(
-    id: String,
-    state: State<'_, AppState>,
-) -> Result<(), AppError> {
-    let db = state.db.lock().map_err(|e| AppError::Database(format!("{}", e)))?;
+pub async fn delete_message(id: String, state: State<'_, AppState>) -> Result<(), AppError> {
+    let db = state
+        .db
+        .lock()
+        .map_err(|e| AppError::Database(format!("{}", e)))?;
     db.connection().execute(
         "DELETE FROM chat_messages WHERE id = ?1",
         rusqlite::params![id],

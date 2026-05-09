@@ -87,9 +87,10 @@ pub async fn fetch_available_models(
         }
     }
 
-    let response = request.send().await.map_err(|e| {
-        AppError::Network(format!("モデル一覧の取得に失敗: {}", e))
-    })?;
+    let response = request
+        .send()
+        .await
+        .map_err(|e| AppError::Network(format!("モデル一覧の取得に失敗: {}", e)))?;
 
     let status = response.status();
     if status == reqwest::StatusCode::UNAUTHORIZED || status == reqwest::StatusCode::FORBIDDEN {
@@ -103,13 +104,13 @@ pub async fn fetch_available_models(
         )));
     }
 
-    let body = response.text().await.map_err(|e| {
-        AppError::Network(format!("レスポンスの読み取りに失敗: {}", e))
-    })?;
+    let body = response
+        .text()
+        .await
+        .map_err(|e| AppError::Network(format!("レスポンスの読み取りに失敗: {}", e)))?;
 
-    let models_response: ModelsResponse = serde_json::from_str(&body).map_err(|e| {
-        AppError::Serialization(format!("モデル一覧のJSON解析に失敗: {}", e))
-    })?;
+    let models_response: ModelsResponse = serde_json::from_str(&body)
+        .map_err(|e| AppError::Serialization(format!("モデル一覧のJSON解析に失敗: {}", e)))?;
 
     let model_ids: Vec<String> = models_response.data.into_iter().map(|m| m.id).collect();
 

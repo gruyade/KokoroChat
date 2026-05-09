@@ -12,13 +12,12 @@ mod tests {
 
     use crate::character::creator::{CharacterCreator, DefaultCharacterCreator};
     use crate::commands::character::{
-        CharacterExportData, ExportedCharacter, ExportedChatSession,
-        ExportedMemory, ExportedMessage, ExportedThought,
+        CharacterExportData, ExportedCharacter, ExportedChatSession, ExportedMemory,
+        ExportedMessage, ExportedThought,
     };
     use crate::db::database::Database;
     use crate::db::repositories::{
-        character as char_repo, chat as chat_repo, memory as memory_repo,
-        thought as thought_repo,
+        character as char_repo, chat as chat_repo, memory as memory_repo, thought as thought_repo,
     };
     use crate::error::AppError;
     use crate::llm::client::{ChatMessage, LLMClient, LLMClientConfig, LLMResponse};
@@ -62,8 +61,8 @@ mod tests {
     // ========================================
 
     fn test_llm_config() -> Arc<crate::config::model_config::ModelConfigManager> {
-        use std::collections::HashMap;
         use crate::models::config::*;
+        use std::collections::HashMap;
 
         let mut models = HashMap::new();
         let settings = ModelSettings {
@@ -80,13 +79,41 @@ mod tests {
 
         let config = AppConfig {
             models,
-            spontaneous: SpontaneousConfig { enabled: false, min_interval_seconds: 60, probability: 0.3 },
-            thought: ThoughtConfig { enabled: false, interval_minutes: 5, auto_delete_threshold_minutes: 1440 },
-            memory: MemoryConfig { compression_threshold: 50 },
-            tts: TTSGlobalConfig { enabled: false, voicepeak_path: None, timeout_seconds: 60, max_chunk_size: 140, irodori_base_url: None, irodori_caption_base_url: None, irodori_reference_audio_base_url: None },
-            ui: UIConfig { theme: Theme::Dark, language: "ja".to_string(), send_key: SendKey::default() },
-            plugins: PluginsConfig { enabled_plugins: vec![], plugin_settings: HashMap::new() },
-            attachment: AttachmentConfig { max_file_size_bytes: 10 * 1024 * 1024, allowed_extensions: vec![] },
+            spontaneous: SpontaneousConfig {
+                enabled: false,
+                min_interval_seconds: 60,
+                probability: 0.3,
+            },
+            thought: ThoughtConfig {
+                enabled: false,
+                interval_minutes: 5,
+                auto_delete_threshold_minutes: 1440,
+            },
+            memory: MemoryConfig {
+                compression_threshold: 50,
+            },
+            tts: TTSGlobalConfig {
+                enabled: false,
+                voicepeak_path: None,
+                timeout_seconds: 60,
+                max_chunk_size: 140,
+                irodori_base_url: None,
+                irodori_caption_base_url: None,
+                irodori_reference_audio_base_url: None,
+            },
+            ui: UIConfig {
+                theme: Theme::Dark,
+                language: "ja".to_string(),
+                send_key: SendKey::default(),
+            },
+            plugins: PluginsConfig {
+                enabled_plugins: vec![],
+                plugin_settings: HashMap::new(),
+            },
+            attachment: AttachmentConfig {
+                max_file_size_bytes: 10 * 1024 * 1024,
+                allowed_extensions: vec![],
+            },
         };
 
         Arc::new(crate::config::model_config::ModelConfigManager::new_with_config(config))
@@ -99,11 +126,17 @@ mod tests {
 
     /// ISO 8601日時文字列を生成するストラテジー
     fn iso8601_datetime() -> impl Strategy<Value = String> {
-        (2020u32..2030, 1u32..13, 1u32..29, 0u32..24, 0u32..60, 0u32..60).prop_map(
-            |(y, m, d, h, min, s)| {
-                format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z", y, m, d, h, min, s)
-            },
+        (
+            2020u32..2030,
+            1u32..13,
+            1u32..29,
+            0u32..24,
+            0u32..60,
+            0u32..60,
         )
+            .prop_map(|(y, m, d, h, min, s)| {
+                format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z", y, m, d, h, min, s)
+            })
     }
 
     /// ユニークなUUIDを生成するストラテジー
@@ -347,8 +380,7 @@ mod tests {
                     last_message_preview: None,
                     created_at,
                 };
-                let messages_strategy =
-                    proptest::collection::vec(arb_message(session_id), 0..=3);
+                let messages_strategy = proptest::collection::vec(arb_message(session_id), 0..=3);
                 (Just(session), messages_strategy)
             })
     }
@@ -704,7 +736,8 @@ mod tests {
         for (fs, ss) in first_sorted.iter().zip(second_sorted.iter()) {
             prop_assert_eq!(&fs.title, &ss.title, "Session title mismatch");
             prop_assert_eq!(
-                &fs.created_at, &ss.created_at,
+                &fs.created_at,
+                &ss.created_at,
                 "Session created_at mismatch"
             );
             prop_assert_eq!(
@@ -717,19 +750,23 @@ mod tests {
                 prop_assert_eq!(&fm.role, &sm.role, "Message role mismatch");
                 prop_assert_eq!(&fm.content, &sm.content, "Message content mismatch");
                 prop_assert_eq!(
-                    &fm.attachments, &sm.attachments,
+                    &fm.attachments,
+                    &sm.attachments,
                     "Message attachments mismatch"
                 );
                 prop_assert_eq!(
-                    &fm.tool_calls, &sm.tool_calls,
+                    &fm.tool_calls,
+                    &sm.tool_calls,
                     "Message tool_calls mismatch"
                 );
                 prop_assert_eq!(
-                    &fm.tool_call_id, &sm.tool_call_id,
+                    &fm.tool_call_id,
+                    &sm.tool_call_id,
                     "Message tool_call_id mismatch"
                 );
                 prop_assert_eq!(
-                    &fm.created_at, &sm.created_at,
+                    &fm.created_at,
+                    &sm.created_at,
                     "Message created_at mismatch"
                 );
             }
@@ -748,14 +785,20 @@ mod tests {
 
         let mut first_thoughts_sorted: Vec<_> = first_thoughts.iter().collect();
         let mut second_thoughts_sorted: Vec<_> = second_thoughts.iter().collect();
-        first_thoughts_sorted.sort_by(|a, b| (&a.created_at, &a.content).cmp(&(&b.created_at, &b.content)));
-        second_thoughts_sorted.sort_by(|a, b| (&a.created_at, &a.content).cmp(&(&b.created_at, &b.content)));
+        first_thoughts_sorted
+            .sort_by(|a, b| (&a.created_at, &a.content).cmp(&(&b.created_at, &b.content)));
+        second_thoughts_sorted
+            .sort_by(|a, b| (&a.created_at, &a.content).cmp(&(&b.created_at, &b.content)));
 
-        for (ft, st) in first_thoughts_sorted.iter().zip(second_thoughts_sorted.iter()) {
+        for (ft, st) in first_thoughts_sorted
+            .iter()
+            .zip(second_thoughts_sorted.iter())
+        {
             prop_assert_eq!(&ft.content, &st.content, "Thought content mismatch");
             prop_assert_eq!(&ft.context, &st.context, "Thought context mismatch");
             prop_assert_eq!(
-                &ft.created_at, &st.created_at,
+                &ft.created_at,
+                &st.created_at,
                 "Thought created_at mismatch"
             );
         }
@@ -776,15 +819,17 @@ mod tests {
 
         let mut first_memories_sorted: Vec<_> = first_memories.iter().collect();
         let mut second_memories_sorted: Vec<_> = second_memories.iter().collect();
-        first_memories_sorted.sort_by(|a, b| (&a.created_at, &a.content).cmp(&(&b.created_at, &b.content)));
-        second_memories_sorted.sort_by(|a, b| (&a.created_at, &a.content).cmp(&(&b.created_at, &b.content)));
+        first_memories_sorted
+            .sort_by(|a, b| (&a.created_at, &a.content).cmp(&(&b.created_at, &b.content)));
+        second_memories_sorted
+            .sort_by(|a, b| (&a.created_at, &a.content).cmp(&(&b.created_at, &b.content)));
 
-        for (fm, sm) in first_memories_sorted.iter().zip(second_memories_sorted.iter()) {
+        for (fm, sm) in first_memories_sorted
+            .iter()
+            .zip(second_memories_sorted.iter())
+        {
             prop_assert_eq!(&fm.content, &sm.content, "Memory content mismatch");
-            prop_assert_eq!(
-                &fm.created_at, &sm.created_at,
-                "Memory created_at mismatch"
-            );
+            prop_assert_eq!(&fm.created_at, &sm.created_at, "Memory created_at mismatch");
         }
 
         Ok(())
@@ -839,10 +884,7 @@ mod tests {
 
     /// 不正なバージョン番号（0 or 2以上）を生成
     fn invalid_version() -> impl Strategy<Value = u32> {
-        prop_oneof![
-            Just(0u32),
-            2u32..100,
-        ]
+        prop_oneof![Just(0u32), 2u32..100,]
     }
 
     /// 空白のみ or 空文字列を生成（trimすると空になる文字列）
@@ -864,32 +906,48 @@ mod tests {
     /// 4. character.system_prompt が空
     fn arb_invalid_export_data() -> impl Strategy<Value = CharacterExportData> {
         // 不正パターンの種類を選択（0..4）
-        (0u8..4, non_empty_string(), non_empty_string(), non_empty_string(),
-         empty_or_whitespace_string(), invalid_version(), iso8601_datetime())
-            .prop_map(|(pattern, valid_name, valid_desc, valid_prompt,
-                        empty_str, bad_version, exported_at)| {
-                let (version, name, description, system_prompt) = match pattern {
-                    0 => (bad_version, valid_name, valid_desc, valid_prompt),
-                    1 => (1u32, empty_str.clone(), valid_desc, valid_prompt),
-                    2 => (1u32, valid_name, empty_str.clone(), valid_prompt),
-                    3 => (1u32, valid_name, valid_desc, empty_str.clone()),
-                    _ => unreachable!(),
-                };
-
-                CharacterExportData {
-                    version,
+        (
+            0u8..4,
+            non_empty_string(),
+            non_empty_string(),
+            non_empty_string(),
+            empty_or_whitespace_string(),
+            invalid_version(),
+            iso8601_datetime(),
+        )
+            .prop_map(
+                |(
+                    pattern,
+                    valid_name,
+                    valid_desc,
+                    valid_prompt,
+                    empty_str,
+                    bad_version,
                     exported_at,
-                    character: ExportedCharacter {
-                        name,
-                        description,
-                        system_prompt,
-                        tts_config: None,
-                    },
-                    chat_sessions: None,
-                    thoughts: None,
-                    memories: None,
-                }
-            })
+                )| {
+                    let (version, name, description, system_prompt) = match pattern {
+                        0 => (bad_version, valid_name, valid_desc, valid_prompt),
+                        1 => (1u32, empty_str.clone(), valid_desc, valid_prompt),
+                        2 => (1u32, valid_name, empty_str.clone(), valid_prompt),
+                        3 => (1u32, valid_name, valid_desc, empty_str.clone()),
+                        _ => unreachable!(),
+                    };
+
+                    CharacterExportData {
+                        version,
+                        exported_at,
+                        character: ExportedCharacter {
+                            name,
+                            description,
+                            system_prompt,
+                            tts_config: None,
+                        },
+                        chat_sessions: None,
+                        thoughts: None,
+                        memories: None,
+                    }
+                },
+            )
     }
 
     proptest! {

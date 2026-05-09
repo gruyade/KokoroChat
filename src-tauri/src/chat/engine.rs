@@ -8,11 +8,15 @@ use serde::Serialize;
 use tauri::{AppHandle, Emitter};
 
 use crate::db::database::Database;
-use crate::db::repositories::{character as char_repo, chat as chat_repo, memory as mem_repo, thought as thought_repo};
+use crate::db::repositories::{
+    character as char_repo, chat as chat_repo, memory as mem_repo, thought as thought_repo,
+};
 use crate::error::AppError;
 use crate::llm::client::{ChatMessage, LLMClient, LLMClientConfig, LLMResponse, MessageRole};
-use crate::models::{Attachment, ChatMessageRecord, ChatRole, ChatSession, MessageAttachment, Thought};
 use crate::models::tts::{TTSCompleteEvent, TTSErrorEvent, TTSGeneratingEvent};
+use crate::models::{
+    Attachment, ChatMessageRecord, ChatRole, ChatSession, MessageAttachment, Thought,
+};
 use crate::tts::connector::TTSConnector;
 use crate::tts::flow_controller::TTSFlowController;
 
@@ -172,7 +176,10 @@ impl DefaultChatEngine {
                 (display, speech)
             }
             Err(e) => {
-                println!("[TTS] JSON parse failed ({}), using full text as fallback", e);
+                println!(
+                    "[TTS] JSON parse failed ({}), using full text as fallback",
+                    e
+                );
                 (response.to_string(), response.to_string())
             }
         }
@@ -323,9 +330,10 @@ impl ChatEngine for DefaultChatEngine {
             created_at: now,
         };
 
-        let db = self.db.lock().map_err(|e| {
-            AppError::Database(format!("Failed to acquire DB lock: {}", e))
-        })?;
+        let db = self
+            .db
+            .lock()
+            .map_err(|e| AppError::Database(format!("Failed to acquire DB lock: {}", e)))?;
         chat_repo::insert_session(db.connection(), &session)?;
 
         Ok(session_id)
@@ -367,9 +375,10 @@ impl ChatEngine for DefaultChatEngine {
 
         // DB操作（ロック範囲を最小化）
         let (system_prompt, memories, thoughts, history, tts_config) = {
-            let db = self.db.lock().map_err(|e| {
-                AppError::Database(format!("Failed to acquire DB lock: {}", e))
-            })?;
+            let db = self
+                .db
+                .lock()
+                .map_err(|e| AppError::Database(format!("Failed to acquire DB lock: {}", e)))?;
             let conn = db.connection();
 
             // ユーザーメッセージ保存
@@ -380,21 +389,23 @@ impl ChatEngine for DefaultChatEngine {
                 .ok_or_else(|| AppError::NotFound(format!("Session not found: {}", session_id)))?;
 
             // キャラクター取得
-            let character = char_repo::get_character(conn, &session.character_id)?
-                .ok_or_else(|| {
-                    AppError::NotFound(format!(
-                        "Character not found: {}",
-                        session.character_id
-                    ))
+            let character =
+                char_repo::get_character(conn, &session.character_id)?.ok_or_else(|| {
+                    AppError::NotFound(format!("Character not found: {}", session.character_id))
                 })?;
 
             // メモリ取得（現時点では全メモリ取得）
             let memories = mem_repo::list_memories(conn, &session.character_id)?;
 
             // 閾値内の最近の思考を取得
-            let threshold_minutes = self.config_manager.get_config().thought.auto_delete_threshold_minutes;
+            let threshold_minutes = self
+                .config_manager
+                .get_config()
+                .thought
+                .auto_delete_threshold_minutes;
             let thoughts = if threshold_minutes > 0 {
-                let since = chrono::Utc::now() - chrono::Duration::minutes(threshold_minutes as i64);
+                let since =
+                    chrono::Utc::now() - chrono::Duration::minutes(threshold_minutes as i64);
                 let since_str = since.to_rfc3339();
                 thought_repo::get_recent_thoughts(conn, &session.character_id, &since_str)?
             } else {
@@ -405,7 +416,13 @@ impl ChatEngine for DefaultChatEngine {
             // チャット履歴取得
             let history = chat_repo::get_messages(conn, session_id)?;
 
-            (character.system_prompt, memories, thoughts, history, character.tts_config)
+            (
+                character.system_prompt,
+                memories,
+                thoughts,
+                history,
+                character.tts_config,
+            )
         };
 
         // 2. コンテキスト組み立て
@@ -452,67 +469,93 @@ impl ChatEngine for DefaultChatEngine {
 
             // LLM応答をJSONパース: {"display": "...", "speech": "..."}
             let (display_text, speech_text) = Self::parse_tts_response(&response);
-            println!("[TTS] Parsed - display: {} chars, speech: {} chars", display_text.len(), speech_text.len());
+            println!(
+                "[TTS] Parsed - display: {} chars, speech: {} chars",
+                display_text.len(),
+                speech_text.len()
+            );
 
             // tts:generating イベント発行
             println!("[TTS] LLM response complete, starting TTS generation...");
-            app_handle.emit(
-                "tts:generating",
-                TTSGeneratingEvent {
-                    session_id: session_id_owned.clone(),
-                },
-            ).map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
+            app_handle
+                .emit(
+                    "tts:generating",
+                    TTSGeneratingEvent {
+                        session_id: session_id_owned.clone(),
+                    },
+                )
+                .map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
 
             // TTS Flow Controller で音声生成（speechテキストを使用）
             let char_tts_config = tts_config.as_ref().unwrap();
             let app_tts_config = self.config_manager.get_config().tts.clone();
             let voicepeak_path = app_tts_config.voicepeak_path.as_deref();
             let timeout_seconds = app_tts_config.timeout_seconds;
-            println!("[TTS] voicepeak_path: {:?}, timeout: {}s", voicepeak_path, timeout_seconds);
+            println!(
+                "[TTS] voicepeak_path: {:?}, timeout: {}s",
+                voicepeak_path, timeout_seconds
+            );
             println!("[TTS] provider: {:?}", char_tts_config.provider);
 
             if let Some(ref flow_controller) = self.tts_flow_controller {
                 match flow_controller
-                    .process(&speech_text, char_tts_config, voicepeak_path, timeout_seconds)
+                    .process(
+                        &speech_text,
+                        char_tts_config,
+                        voicepeak_path,
+                        timeout_seconds,
+                    )
                     .await
                 {
                     Ok(tts_result) => {
-                        println!("[TTS] Success! Audio size: {} bytes", tts_result.audio_data.len());
+                        println!(
+                            "[TTS] Success! Audio size: {} bytes",
+                            tts_result.audio_data.len()
+                        );
                         let audio_base64 = base64::engine::general_purpose::STANDARD
                             .encode(&tts_result.audio_data);
-                        println!("[TTS] Emitting tts:complete, base64 length: {}", audio_base64.len());
-                        app_handle.emit(
-                            "tts:complete",
-                            TTSCompleteEvent {
-                                session_id: session_id_owned.clone(),
-                                text: display_text.clone(),
-                                audio: audio_base64,
-                            },
-                        ).map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
+                        println!(
+                            "[TTS] Emitting tts:complete, base64 length: {}",
+                            audio_base64.len()
+                        );
+                        app_handle
+                            .emit(
+                                "tts:complete",
+                                TTSCompleteEvent {
+                                    session_id: session_id_owned.clone(),
+                                    text: display_text.clone(),
+                                    audio: audio_base64,
+                                },
+                            )
+                            .map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
                         println!("[TTS] tts:complete emitted successfully");
                     }
                     Err(e) => {
                         println!("[TTS] Error: {}", e);
-                        app_handle.emit(
-                            "tts:error",
-                            TTSErrorEvent {
-                                session_id: session_id_owned.clone(),
-                                text: display_text.clone(),
-                                error: e.to_string(),
-                            },
-                        ).map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
+                        app_handle
+                            .emit(
+                                "tts:error",
+                                TTSErrorEvent {
+                                    session_id: session_id_owned.clone(),
+                                    text: display_text.clone(),
+                                    error: e.to_string(),
+                                },
+                            )
+                            .map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
                     }
                 }
             } else {
                 println!("[TTS] Error: Flow Controller not initialized");
-                app_handle.emit(
-                    "tts:error",
-                    TTSErrorEvent {
-                        session_id: session_id_owned.clone(),
-                        text: display_text.clone(),
-                        error: "TTS Flow Controller is not initialized".to_string(),
-                    },
-                ).map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
+                app_handle
+                    .emit(
+                        "tts:error",
+                        TTSErrorEvent {
+                            session_id: session_id_owned.clone(),
+                            text: display_text.clone(),
+                            error: "TTS Flow Controller is not initialized".to_string(),
+                        },
+                    )
+                    .map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
             }
 
             // DB保存用はdisplayテキスト
@@ -547,14 +590,16 @@ impl ChatEngine for DefaultChatEngine {
             drop(_llm_guard);
 
             // ストリーミング完了イベント
-            app_handle.emit(
-                "chat:stream",
-                ChatStreamEvent {
-                    session_id: session_id_owned.clone(),
-                    chunk: String::new(),
-                    done: true,
-                },
-            ).map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
+            app_handle
+                .emit(
+                    "chat:stream",
+                    ChatStreamEvent {
+                        session_id: session_id_owned.clone(),
+                        chunk: String::new(),
+                        done: true,
+                    },
+                )
+                .map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
 
             response
         };
@@ -575,9 +620,10 @@ impl ChatEngine for DefaultChatEngine {
         };
 
         {
-            let db = self.db.lock().map_err(|e| {
-                AppError::Database(format!("Failed to acquire DB lock: {}", e))
-            })?;
+            let db = self
+                .db
+                .lock()
+                .map_err(|e| AppError::Database(format!("Failed to acquire DB lock: {}", e)))?;
             let conn = db.connection();
 
             chat_repo::insert_message(conn, &assistant_message)?;
@@ -599,9 +645,10 @@ impl ChatEngine for DefaultChatEngine {
     ) -> Result<(), AppError> {
         // 1. 対象メッセージを取得し、直前のuserメッセージを特定
         let user_content = {
-            let db = self.db.lock().map_err(|e| {
-                AppError::Database(format!("Failed to acquire DB lock: {}", e))
-            })?;
+            let db = self
+                .db
+                .lock()
+                .map_err(|e| AppError::Database(format!("Failed to acquire DB lock: {}", e)))?;
             let conn = db.connection();
 
             // メッセージ履歴取得
@@ -638,24 +685,30 @@ impl ChatEngine for DefaultChatEngine {
 
         // 2. 直前のuserメッセージのcontentで再送信（send_messageと同様のストリーミング処理）
         let (system_prompt, memories, thoughts, history, tts_config) = {
-            let db = self.db.lock().map_err(|e| {
-                AppError::Database(format!("Failed to acquire DB lock: {}", e))
-            })?;
+            let db = self
+                .db
+                .lock()
+                .map_err(|e| AppError::Database(format!("Failed to acquire DB lock: {}", e)))?;
             let conn = db.connection();
 
             let session = chat_repo::get_session(conn, session_id)?
                 .ok_or_else(|| AppError::NotFound(format!("Session not found: {}", session_id)))?;
 
-            let character = char_repo::get_character(conn, &session.character_id)?
-                .ok_or_else(|| {
+            let character =
+                char_repo::get_character(conn, &session.character_id)?.ok_or_else(|| {
                     AppError::NotFound(format!("Character not found: {}", session.character_id))
                 })?;
 
             let memories = mem_repo::list_memories(conn, &session.character_id)?;
 
-            let threshold_minutes = self.config_manager.get_config().thought.auto_delete_threshold_minutes;
+            let threshold_minutes = self
+                .config_manager
+                .get_config()
+                .thought
+                .auto_delete_threshold_minutes;
             let thoughts = if threshold_minutes > 0 {
-                let since = chrono::Utc::now() - chrono::Duration::minutes(threshold_minutes as i64);
+                let since =
+                    chrono::Utc::now() - chrono::Duration::minutes(threshold_minutes as i64);
                 let since_str = since.to_rfc3339();
                 thought_repo::get_recent_thoughts(conn, &session.character_id, &since_str)?
             } else {
@@ -664,7 +717,13 @@ impl ChatEngine for DefaultChatEngine {
 
             let history = chat_repo::get_messages(conn, session_id)?;
 
-            (character.system_prompt, memories, thoughts, history, character.tts_config)
+            (
+                character.system_prompt,
+                memories,
+                thoughts,
+                history,
+                character.tts_config,
+            )
         };
 
         // コンテキスト組み立て（履歴の最後のuserメッセージを除外して、user_contentを末尾に配置）
@@ -717,12 +776,14 @@ impl ChatEngine for DefaultChatEngine {
             drop(_llm_guard);
 
             // tts:generating イベント発行
-            app_handle.emit(
-                "tts:generating",
-                TTSGeneratingEvent {
-                    session_id: session_id_owned.clone(),
-                },
-            ).map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
+            app_handle
+                .emit(
+                    "tts:generating",
+                    TTSGeneratingEvent {
+                        session_id: session_id_owned.clone(),
+                    },
+                )
+                .map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
 
             // TTS Flow Controller で音声生成
             let char_tts_config = tts_config.as_ref().unwrap();
@@ -738,35 +799,41 @@ impl ChatEngine for DefaultChatEngine {
                     Ok(tts_result) => {
                         let audio_base64 = base64::engine::general_purpose::STANDARD
                             .encode(&tts_result.audio_data);
-                        app_handle.emit(
-                            "tts:complete",
-                            TTSCompleteEvent {
-                                session_id: session_id_owned.clone(),
-                                text: response.clone(),
-                                audio: audio_base64,
-                            },
-                        ).map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
+                        app_handle
+                            .emit(
+                                "tts:complete",
+                                TTSCompleteEvent {
+                                    session_id: session_id_owned.clone(),
+                                    text: response.clone(),
+                                    audio: audio_base64,
+                                },
+                            )
+                            .map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
                     }
                     Err(e) => {
-                        app_handle.emit(
-                            "tts:error",
-                            TTSErrorEvent {
-                                session_id: session_id_owned.clone(),
-                                text: response.clone(),
-                                error: e.to_string(),
-                            },
-                        ).map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
+                        app_handle
+                            .emit(
+                                "tts:error",
+                                TTSErrorEvent {
+                                    session_id: session_id_owned.clone(),
+                                    text: response.clone(),
+                                    error: e.to_string(),
+                                },
+                            )
+                            .map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
                     }
                 }
             } else {
-                app_handle.emit(
-                    "tts:error",
-                    TTSErrorEvent {
-                        session_id: session_id_owned.clone(),
-                        text: response.clone(),
-                        error: "TTS Flow Controller is not initialized".to_string(),
-                    },
-                ).map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
+                app_handle
+                    .emit(
+                        "tts:error",
+                        TTSErrorEvent {
+                            session_id: session_id_owned.clone(),
+                            text: response.clone(),
+                            error: "TTS Flow Controller is not initialized".to_string(),
+                        },
+                    )
+                    .map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
             }
 
             response
@@ -799,14 +866,16 @@ impl ChatEngine for DefaultChatEngine {
             drop(_llm_guard);
 
             // ストリーミング完了イベント
-            app_handle.emit(
-                "chat:stream",
-                ChatStreamEvent {
-                    session_id: session_id_owned.clone(),
-                    chunk: String::new(),
-                    done: true,
-                },
-            ).map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
+            app_handle
+                .emit(
+                    "chat:stream",
+                    ChatStreamEvent {
+                        session_id: session_id_owned.clone(),
+                        chunk: String::new(),
+                        done: true,
+                    },
+                )
+                .map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
 
             response
         };
@@ -827,9 +896,10 @@ impl ChatEngine for DefaultChatEngine {
         };
 
         {
-            let db = self.db.lock().map_err(|e| {
-                AppError::Database(format!("Failed to acquire DB lock: {}", e))
-            })?;
+            let db = self
+                .db
+                .lock()
+                .map_err(|e| AppError::Database(format!("Failed to acquire DB lock: {}", e)))?;
             let conn = db.connection();
 
             chat_repo::insert_message(conn, &assistant_message)?;
@@ -842,23 +912,26 @@ impl ChatEngine for DefaultChatEngine {
     }
 
     async fn get_history(&self, session_id: &str) -> Result<Vec<ChatMessageRecord>, AppError> {
-        let db = self.db.lock().map_err(|e| {
-            AppError::Database(format!("Failed to acquire DB lock: {}", e))
-        })?;
+        let db = self
+            .db
+            .lock()
+            .map_err(|e| AppError::Database(format!("Failed to acquire DB lock: {}", e)))?;
         chat_repo::get_messages(db.connection(), session_id)
     }
 
     async fn list_sessions(&self, character_id: &str) -> Result<Vec<ChatSession>, AppError> {
-        let db = self.db.lock().map_err(|e| {
-            AppError::Database(format!("Failed to acquire DB lock: {}", e))
-        })?;
+        let db = self
+            .db
+            .lock()
+            .map_err(|e| AppError::Database(format!("Failed to acquire DB lock: {}", e)))?;
         chat_repo::list_sessions(db.connection(), character_id)
     }
 
     async fn delete_session(&self, session_id: &str) -> Result<(), AppError> {
-        let db = self.db.lock().map_err(|e| {
-            AppError::Database(format!("Failed to acquire DB lock: {}", e))
-        })?;
+        let db = self
+            .db
+            .lock()
+            .map_err(|e| AppError::Database(format!("Failed to acquire DB lock: {}", e)))?;
         chat_repo::delete_session(db.connection(), session_id)
     }
 
@@ -872,9 +945,10 @@ impl ChatEngine for DefaultChatEngine {
     ) -> Result<(), AppError> {
         // 1. 対象メッセージの検証、後続メッセージ削除、内容更新
         {
-            let db = self.db.lock().map_err(|e| {
-                AppError::Database(format!("Failed to acquire DB lock: {}", e))
-            })?;
+            let db = self
+                .db
+                .lock()
+                .map_err(|e| AppError::Database(format!("Failed to acquire DB lock: {}", e)))?;
             let conn = db.connection();
 
             // 対象メッセージを取得して role=User であることを確認
@@ -899,24 +973,30 @@ impl ChatEngine for DefaultChatEngine {
 
         // 2. 更新後のコンテキストを組み立てて再送信
         let (system_prompt, memories, thoughts, history, tts_config) = {
-            let db = self.db.lock().map_err(|e| {
-                AppError::Database(format!("Failed to acquire DB lock: {}", e))
-            })?;
+            let db = self
+                .db
+                .lock()
+                .map_err(|e| AppError::Database(format!("Failed to acquire DB lock: {}", e)))?;
             let conn = db.connection();
 
             let session = chat_repo::get_session(conn, session_id)?
                 .ok_or_else(|| AppError::NotFound(format!("Session not found: {}", session_id)))?;
 
-            let character = char_repo::get_character(conn, &session.character_id)?
-                .ok_or_else(|| {
+            let character =
+                char_repo::get_character(conn, &session.character_id)?.ok_or_else(|| {
                     AppError::NotFound(format!("Character not found: {}", session.character_id))
                 })?;
 
             let memories = mem_repo::list_memories(conn, &session.character_id)?;
 
-            let threshold_minutes = self.config_manager.get_config().thought.auto_delete_threshold_minutes;
+            let threshold_minutes = self
+                .config_manager
+                .get_config()
+                .thought
+                .auto_delete_threshold_minutes;
             let thoughts = if threshold_minutes > 0 {
-                let since = chrono::Utc::now() - chrono::Duration::minutes(threshold_minutes as i64);
+                let since =
+                    chrono::Utc::now() - chrono::Duration::minutes(threshold_minutes as i64);
                 let since_str = since.to_rfc3339();
                 thought_repo::get_recent_thoughts(conn, &session.character_id, &since_str)?
             } else {
@@ -925,7 +1005,13 @@ impl ChatEngine for DefaultChatEngine {
 
             let history = chat_repo::get_messages(conn, session_id)?;
 
-            (character.system_prompt, memories, thoughts, history, character.tts_config)
+            (
+                character.system_prompt,
+                memories,
+                thoughts,
+                history,
+                character.tts_config,
+            )
         };
 
         // コンテキスト組み立て: 履歴末尾のuserメッセージ（編集済み）を除外し、user_contentとして渡す
@@ -972,12 +1058,14 @@ impl ChatEngine for DefaultChatEngine {
                 .await?;
             drop(_llm_guard);
 
-            app_handle.emit(
-                "tts:generating",
-                TTSGeneratingEvent {
-                    session_id: session_id_owned.clone(),
-                },
-            ).map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
+            app_handle
+                .emit(
+                    "tts:generating",
+                    TTSGeneratingEvent {
+                        session_id: session_id_owned.clone(),
+                    },
+                )
+                .map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
 
             let char_tts_config = tts_config.as_ref().unwrap();
             let app_tts_config = self.config_manager.get_config().tts.clone();
@@ -992,35 +1080,41 @@ impl ChatEngine for DefaultChatEngine {
                     Ok(tts_result) => {
                         let audio_base64 = base64::engine::general_purpose::STANDARD
                             .encode(&tts_result.audio_data);
-                        app_handle.emit(
-                            "tts:complete",
-                            TTSCompleteEvent {
-                                session_id: session_id_owned.clone(),
-                                text: response.clone(),
-                                audio: audio_base64,
-                            },
-                        ).map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
+                        app_handle
+                            .emit(
+                                "tts:complete",
+                                TTSCompleteEvent {
+                                    session_id: session_id_owned.clone(),
+                                    text: response.clone(),
+                                    audio: audio_base64,
+                                },
+                            )
+                            .map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
                     }
                     Err(e) => {
-                        app_handle.emit(
-                            "tts:error",
-                            TTSErrorEvent {
-                                session_id: session_id_owned.clone(),
-                                text: response.clone(),
-                                error: e.to_string(),
-                            },
-                        ).map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
+                        app_handle
+                            .emit(
+                                "tts:error",
+                                TTSErrorEvent {
+                                    session_id: session_id_owned.clone(),
+                                    text: response.clone(),
+                                    error: e.to_string(),
+                                },
+                            )
+                            .map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
                     }
                 }
             } else {
-                app_handle.emit(
-                    "tts:error",
-                    TTSErrorEvent {
-                        session_id: session_id_owned.clone(),
-                        text: response.clone(),
-                        error: "TTS Flow Controller is not initialized".to_string(),
-                    },
-                ).map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
+                app_handle
+                    .emit(
+                        "tts:error",
+                        TTSErrorEvent {
+                            session_id: session_id_owned.clone(),
+                            text: response.clone(),
+                            error: "TTS Flow Controller is not initialized".to_string(),
+                        },
+                    )
+                    .map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
             }
 
             response
@@ -1052,14 +1146,16 @@ impl ChatEngine for DefaultChatEngine {
                 .await?;
             drop(_llm_guard);
 
-            app_handle.emit(
-                "chat:stream",
-                ChatStreamEvent {
-                    session_id: session_id_owned.clone(),
-                    chunk: String::new(),
-                    done: true,
-                },
-            ).map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
+            app_handle
+                .emit(
+                    "chat:stream",
+                    ChatStreamEvent {
+                        session_id: session_id_owned.clone(),
+                        chunk: String::new(),
+                        done: true,
+                    },
+                )
+                .map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
 
             response
         };
@@ -1080,9 +1176,10 @@ impl ChatEngine for DefaultChatEngine {
         };
 
         {
-            let db = self.db.lock().map_err(|e| {
-                AppError::Database(format!("Failed to acquire DB lock: {}", e))
-            })?;
+            let db = self
+                .db
+                .lock()
+                .map_err(|e| AppError::Database(format!("Failed to acquire DB lock: {}", e)))?;
             let conn = db.connection();
 
             chat_repo::insert_message(conn, &assistant_message)?;
@@ -1131,9 +1228,10 @@ impl DefaultChatEngine {
         };
 
         let (system_prompt, memories, thoughts, history) = {
-            let db = self.db.lock().map_err(|e| {
-                AppError::Database(format!("Failed to acquire DB lock: {}", e))
-            })?;
+            let db = self
+                .db
+                .lock()
+                .map_err(|e| AppError::Database(format!("Failed to acquire DB lock: {}", e)))?;
             let conn = db.connection();
 
             chat_repo::insert_message(conn, &user_message)?;
@@ -1141,20 +1239,22 @@ impl DefaultChatEngine {
             let session = chat_repo::get_session(conn, session_id)?
                 .ok_or_else(|| AppError::NotFound(format!("Session not found: {}", session_id)))?;
 
-            let character = char_repo::get_character(conn, &session.character_id)?
-                .ok_or_else(|| {
-                    AppError::NotFound(format!(
-                        "Character not found: {}",
-                        session.character_id
-                    ))
+            let character =
+                char_repo::get_character(conn, &session.character_id)?.ok_or_else(|| {
+                    AppError::NotFound(format!("Character not found: {}", session.character_id))
                 })?;
 
             let memories = mem_repo::list_memories(conn, &session.character_id)?;
 
             // 閾値内の最近の思考を取得
-            let threshold_minutes = self.config_manager.get_config().thought.auto_delete_threshold_minutes;
+            let threshold_minutes = self
+                .config_manager
+                .get_config()
+                .thought
+                .auto_delete_threshold_minutes;
             let thoughts = if threshold_minutes > 0 {
-                let since = chrono::Utc::now() - chrono::Duration::minutes(threshold_minutes as i64);
+                let since =
+                    chrono::Utc::now() - chrono::Duration::minutes(threshold_minutes as i64);
                 let since_str = since.to_rfc3339();
                 thought_repo::get_recent_thoughts(conn, &session.character_id, &since_str)?
             } else {
@@ -1190,23 +1290,27 @@ impl DefaultChatEngine {
         match response {
             LLMResponse::Text(text) => {
                 // テキストレスポンス
-                app_handle.emit(
-                    "chat:stream",
-                    ChatStreamEvent {
-                        session_id: session_id.to_string(),
-                        chunk: text.clone(),
-                        done: false,
-                    },
-                ).map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
+                app_handle
+                    .emit(
+                        "chat:stream",
+                        ChatStreamEvent {
+                            session_id: session_id.to_string(),
+                            chunk: text.clone(),
+                            done: false,
+                        },
+                    )
+                    .map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
 
-                app_handle.emit(
-                    "chat:stream",
-                    ChatStreamEvent {
-                        session_id: session_id.to_string(),
-                        chunk: String::new(),
-                        done: true,
-                    },
-                ).map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
+                app_handle
+                    .emit(
+                        "chat:stream",
+                        ChatStreamEvent {
+                            session_id: session_id.to_string(),
+                            chunk: String::new(),
+                            done: true,
+                        },
+                    )
+                    .map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
 
                 let assistant_message = ChatMessageRecord {
                     id: assistant_msg_id,
@@ -1219,9 +1323,10 @@ impl DefaultChatEngine {
                     created_at: assistant_now.clone(),
                 };
 
-                let db = self.db.lock().map_err(|e| {
-                    AppError::Database(format!("Failed to acquire DB lock: {}", e))
-                })?;
+                let db = self
+                    .db
+                    .lock()
+                    .map_err(|e| AppError::Database(format!("Failed to acquire DB lock: {}", e)))?;
                 let conn = db.connection();
 
                 chat_repo::insert_message(conn, &assistant_message)?;
@@ -1232,13 +1337,15 @@ impl DefaultChatEngine {
             LLMResponse::ToolCalls(tool_calls) => {
                 // tool_callレスポンス — イベント発火してDB保存
                 for tc in &tool_calls {
-                    app_handle.emit(
-                        "tool:executing",
-                        ToolExecutingEvent {
-                            session_id: session_id.to_string(),
-                            tool_name: tc.name.clone(),
-                        },
-                    ).map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
+                    app_handle
+                        .emit(
+                            "tool:executing",
+                            ToolExecutingEvent {
+                                session_id: session_id.to_string(),
+                                tool_name: tc.name.clone(),
+                            },
+                        )
+                        .map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
                 }
 
                 let assistant_message = ChatMessageRecord {
@@ -1252,9 +1359,10 @@ impl DefaultChatEngine {
                     created_at: assistant_now.clone(),
                 };
 
-                let db = self.db.lock().map_err(|e| {
-                    AppError::Database(format!("Failed to acquire DB lock: {}", e))
-                })?;
+                let db = self
+                    .db
+                    .lock()
+                    .map_err(|e| AppError::Database(format!("Failed to acquire DB lock: {}", e)))?;
                 let conn = db.connection();
 
                 chat_repo::insert_message(conn, &assistant_message)?;

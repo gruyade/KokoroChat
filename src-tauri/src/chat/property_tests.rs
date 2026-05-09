@@ -13,8 +13,8 @@ mod tests {
     use crate::db::database::Database;
     use crate::error::AppError;
     use crate::llm::client::{ChatMessage, LLMClient, LLMClientConfig, LLMResponse, MessageRole};
-    use crate::models::{ChatMessageRecord, ChatRole, Memory, ToolDefinition};
     use crate::models::tts::TTSConfig;
+    use crate::models::{ChatMessageRecord, ChatRole, Memory, ToolDefinition};
     use crate::tts::connector::TTSConnector;
 
     use async_trait::async_trait;
@@ -58,11 +58,20 @@ mod tests {
 
     #[async_trait]
     impl TTSConnector for MockTTSConnector {
-        async fn synthesize(&self, _text: &str, _config: &TTSConfig, _voicepeak_path: Option<&str>) -> Result<Vec<u8>, AppError> {
+        async fn synthesize(
+            &self,
+            _text: &str,
+            _config: &TTSConfig,
+            _voicepeak_path: Option<&str>,
+        ) -> Result<Vec<u8>, AppError> {
             Ok(vec![])
         }
 
-        async fn test_connection(&self, _config: &TTSConfig, _voicepeak_path: Option<&str>) -> Result<(), AppError> {
+        async fn test_connection(
+            &self,
+            _config: &TTSConfig,
+            _voicepeak_path: Option<&str>,
+        ) -> Result<(), AppError> {
             Ok(())
         }
     }
@@ -83,17 +92,29 @@ mod tests {
 
     /// ISO 8601日時文字列を生成するストラテジー
     fn iso8601_datetime() -> impl Strategy<Value = String> {
-        (2020u32..2030, 1u32..13, 1u32..29, 0u32..24, 0u32..60, 0u32..60).prop_map(
-            |(y, m, d, h, min, s)| {
-                format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z", y, m, d, h, min, s)
-            },
+        (
+            2020u32..2030,
+            1u32..13,
+            1u32..29,
+            0u32..24,
+            0u32..60,
+            0u32..60,
         )
+            .prop_map(|(y, m, d, h, min, s)| {
+                format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z", y, m, d, h, min, s)
+            })
     }
 
     /// Memory のストラテジー（0〜5件）
     fn arb_memories(max_count: usize) -> impl Strategy<Value = Vec<Memory>> {
         proptest::collection::vec(
-            (uuid_string(), uuid_string(), non_empty_string(), iso8601_datetime(), iso8601_datetime())
+            (
+                uuid_string(),
+                uuid_string(),
+                non_empty_string(),
+                iso8601_datetime(),
+                iso8601_datetime(),
+            )
                 .prop_map(|(id, char_id, content, created_at, updated_at)| Memory {
                     id,
                     character_id: char_id,
@@ -120,31 +141,38 @@ mod tests {
     /// チャット履歴のストラテジー（0〜10件、user/assistant交互）
     fn arb_chat_history(max_count: usize) -> impl Strategy<Value = Vec<ChatMessageRecord>> {
         proptest::collection::vec(
-            (uuid_string(), uuid_string(), non_empty_string(), iso8601_datetime()),
+            (
+                uuid_string(),
+                uuid_string(),
+                non_empty_string(),
+                iso8601_datetime(),
+            ),
             0..=max_count,
         )
         .prop_map(|items| {
             items
                 .into_iter()
                 .enumerate()
-                .map(|(i, (id, session_id, content, created_at))| ChatMessageRecord {
-                    id,
-                    session_id,
-                    role: alternating_role(i),
-                    content,
-                    attachments: None,
-                    tool_calls: None,
-                    tool_call_id: None,
-                    created_at,
-                })
+                .map(
+                    |(i, (id, session_id, content, created_at))| ChatMessageRecord {
+                        id,
+                        session_id,
+                        role: alternating_role(i),
+                        content,
+                        attachments: None,
+                        tool_calls: None,
+                        tool_call_id: None,
+                        created_at,
+                    },
+                )
                 .collect()
         })
     }
 
     /// DefaultChatEngine インスタンスを作成（build_contextテスト用、DB不要だがコンストラクタに必要）
     fn create_engine() -> DefaultChatEngine {
-        use std::collections::HashMap;
         use crate::models::config::*;
+        use std::collections::HashMap;
 
         let db = Database::open_in_memory().unwrap();
         let db = Arc::new(Mutex::new(db));
@@ -165,19 +193,55 @@ mod tests {
 
         let config = AppConfig {
             models,
-            spontaneous: SpontaneousConfig { enabled: false, min_interval_seconds: 60, probability: 0.3 },
-            thought: ThoughtConfig { enabled: false, interval_minutes: 5, auto_delete_threshold_minutes: 1440 },
-            memory: MemoryConfig { compression_threshold: 50 },
-            tts: TTSGlobalConfig { enabled: false, voicepeak_path: None, timeout_seconds: 60, max_chunk_size: 140, irodori_base_url: None, irodori_caption_base_url: None, irodori_reference_audio_base_url: None },
-            ui: UIConfig { theme: Theme::Dark, language: "ja".to_string(), send_key: SendKey::default() },
-            plugins: PluginsConfig { enabled_plugins: vec![], plugin_settings: HashMap::new() },
-            attachment: AttachmentConfig { max_file_size_bytes: 10 * 1024 * 1024, allowed_extensions: vec![] },
+            spontaneous: SpontaneousConfig {
+                enabled: false,
+                min_interval_seconds: 60,
+                probability: 0.3,
+            },
+            thought: ThoughtConfig {
+                enabled: false,
+                interval_minutes: 5,
+                auto_delete_threshold_minutes: 1440,
+            },
+            memory: MemoryConfig {
+                compression_threshold: 50,
+            },
+            tts: TTSGlobalConfig {
+                enabled: false,
+                voicepeak_path: None,
+                timeout_seconds: 60,
+                max_chunk_size: 140,
+                irodori_base_url: None,
+                irodori_caption_base_url: None,
+                irodori_reference_audio_base_url: None,
+            },
+            ui: UIConfig {
+                theme: Theme::Dark,
+                language: "ja".to_string(),
+                send_key: SendKey::default(),
+            },
+            plugins: PluginsConfig {
+                enabled_plugins: vec![],
+                plugin_settings: HashMap::new(),
+            },
+            attachment: AttachmentConfig {
+                max_file_size_bytes: 10 * 1024 * 1024,
+                allowed_extensions: vec![],
+            },
         };
 
-        let config_manager = Arc::new(crate::config::model_config::ModelConfigManager::new_with_config(config));
+        let config_manager =
+            Arc::new(crate::config::model_config::ModelConfigManager::new_with_config(config));
         let llm_lock = Arc::new(tokio::sync::Mutex::new(()));
         let tts_connector: Arc<dyn TTSConnector> = Arc::new(MockTTSConnector);
-        DefaultChatEngine::new(db, llm_client, config_manager, llm_lock, tts_connector, None)
+        DefaultChatEngine::new(
+            db,
+            llm_client,
+            config_manager,
+            llm_lock,
+            tts_connector,
+            None,
+        )
     }
 
     // ========================================

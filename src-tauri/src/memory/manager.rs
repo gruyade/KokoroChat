@@ -98,9 +98,7 @@ impl DefaultMemoryManager {
     }
 
     /// 会話メッセージを圧縮用テキストに変換
-    fn format_messages_for_compression(
-        messages: &[crate::models::ChatMessageRecord],
-    ) -> String {
+    fn format_messages_for_compression(messages: &[crate::models::ChatMessageRecord]) -> String {
         messages
             .iter()
             .map(|msg| {
@@ -118,12 +116,17 @@ impl DefaultMemoryManager {
 
     /// 圧縮の内部実装（skip_threshold=trueで閾値チェックをスキップ）
     /// 圧縮が実行された場合は生成されたMemoryを返す
-    async fn compress_internal(&self, session_id: &str, skip_threshold: bool) -> Result<Option<Memory>, AppError> {
+    async fn compress_internal(
+        &self,
+        session_id: &str,
+        skip_threshold: bool,
+    ) -> Result<Option<Memory>, AppError> {
         // 1. セッションのメッセージを取得し、前回圧縮時点以降のみ抽出
         let (messages_to_compress, character_id) = {
-            let db = self.db.lock().map_err(|e| {
-                AppError::Database(format!("Failed to lock database: {}", e))
-            })?;
+            let db = self
+                .db
+                .lock()
+                .map_err(|e| AppError::Database(format!("Failed to lock database: {}", e)))?;
             let conn = db.connection();
 
             let all_messages = chat_repo::get_messages(conn, session_id)?;
@@ -134,7 +137,8 @@ impl DefaultMemoryManager {
 
             // 前回圧縮の最終メッセージIDを取得
             let memories = memory_repo::list_memories(conn, &session.character_id)?;
-            let last_compressed_message_id = memories.iter()
+            let last_compressed_message_id = memories
+                .iter()
                 .filter(|m| m.source_session_id.as_deref() == Some(session_id))
                 .filter_map(|m| m.source_message_to.as_deref())
                 .next(); // list_memories は DESC 順なので最初のマッチが最新
@@ -216,9 +220,10 @@ impl DefaultMemoryManager {
             updated_at: now,
         };
 
-        let db = self.db.lock().map_err(|e| {
-            AppError::Database(format!("Failed to lock database: {}", e))
-        })?;
+        let db = self
+            .db
+            .lock()
+            .map_err(|e| AppError::Database(format!("Failed to lock database: {}", e)))?;
         let conn = db.connection();
         memory_repo::insert_memory(conn, &memory)?;
 
@@ -242,33 +247,37 @@ impl MemoryManager for DefaultMemoryManager {
         _context: &str,
     ) -> Result<Vec<Memory>, AppError> {
         // 現時点ではシンプルに全件返却
-        let db = self.db.lock().map_err(|e| {
-            AppError::Database(format!("Failed to lock database: {}", e))
-        })?;
+        let db = self
+            .db
+            .lock()
+            .map_err(|e| AppError::Database(format!("Failed to lock database: {}", e)))?;
         let conn = db.connection();
         memory_repo::list_memories(conn, character_id)
     }
 
     async fn list_memories(&self, character_id: &str) -> Result<Vec<Memory>, AppError> {
-        let db = self.db.lock().map_err(|e| {
-            AppError::Database(format!("Failed to lock database: {}", e))
-        })?;
+        let db = self
+            .db
+            .lock()
+            .map_err(|e| AppError::Database(format!("Failed to lock database: {}", e)))?;
         let conn = db.connection();
         memory_repo::list_memories(conn, character_id)
     }
 
     async fn update_memory(&self, id: &str, content: &str) -> Result<(), AppError> {
-        let db = self.db.lock().map_err(|e| {
-            AppError::Database(format!("Failed to lock database: {}", e))
-        })?;
+        let db = self
+            .db
+            .lock()
+            .map_err(|e| AppError::Database(format!("Failed to lock database: {}", e)))?;
         let conn = db.connection();
         memory_repo::update_memory(conn, id, content)
     }
 
     async fn delete_memory(&self, id: &str) -> Result<(), AppError> {
-        let db = self.db.lock().map_err(|e| {
-            AppError::Database(format!("Failed to lock database: {}", e))
-        })?;
+        let db = self
+            .db
+            .lock()
+            .map_err(|e| AppError::Database(format!("Failed to lock database: {}", e)))?;
         let conn = db.connection();
         memory_repo::delete_memory(conn, id)
     }
@@ -371,8 +380,8 @@ mod tests {
     }
 
     fn default_config() -> Arc<crate::config::model_config::ModelConfigManager> {
-        use std::collections::HashMap;
         use crate::models::config::*;
+        use std::collections::HashMap;
 
         let mut models = HashMap::new();
         let settings = ModelSettings {
@@ -389,13 +398,41 @@ mod tests {
 
         let config = AppConfig {
             models,
-            spontaneous: SpontaneousConfig { enabled: false, min_interval_seconds: 60, probability: 0.3 },
-            thought: ThoughtConfig { enabled: false, interval_minutes: 5, auto_delete_threshold_minutes: 1440 },
-            memory: MemoryConfig { compression_threshold: 50 },
-            tts: TTSGlobalConfig { enabled: false, voicepeak_path: None, timeout_seconds: 60, max_chunk_size: 140, irodori_base_url: None, irodori_caption_base_url: None, irodori_reference_audio_base_url: None },
-            ui: UIConfig { theme: Theme::Dark, language: "ja".to_string(), send_key: SendKey::default() },
-            plugins: PluginsConfig { enabled_plugins: vec![], plugin_settings: HashMap::new() },
-            attachment: AttachmentConfig { max_file_size_bytes: 10 * 1024 * 1024, allowed_extensions: vec![] },
+            spontaneous: SpontaneousConfig {
+                enabled: false,
+                min_interval_seconds: 60,
+                probability: 0.3,
+            },
+            thought: ThoughtConfig {
+                enabled: false,
+                interval_minutes: 5,
+                auto_delete_threshold_minutes: 1440,
+            },
+            memory: MemoryConfig {
+                compression_threshold: 50,
+            },
+            tts: TTSGlobalConfig {
+                enabled: false,
+                voicepeak_path: None,
+                timeout_seconds: 60,
+                max_chunk_size: 140,
+                irodori_base_url: None,
+                irodori_caption_base_url: None,
+                irodori_reference_audio_base_url: None,
+            },
+            ui: UIConfig {
+                theme: Theme::Dark,
+                language: "ja".to_string(),
+                send_key: SendKey::default(),
+            },
+            plugins: PluginsConfig {
+                enabled_plugins: vec![],
+                plugin_settings: HashMap::new(),
+            },
+            attachment: AttachmentConfig {
+                max_file_size_bytes: 10 * 1024 * 1024,
+                allowed_extensions: vec![],
+            },
         };
 
         Arc::new(crate::config::model_config::ModelConfigManager::new_with_config(config))
@@ -411,7 +448,8 @@ mod tests {
         let mock_llm = Arc::new(MockLLMClient::new("Summary"));
         let llm_lock = Arc::new(tokio::sync::Mutex::new(()));
 
-        let manager = DefaultMemoryManager::new(db_arc.clone(), mock_llm, default_config(), 50, llm_lock);
+        let manager =
+            DefaultMemoryManager::new(db_arc.clone(), mock_llm, default_config(), 50, llm_lock);
 
         // 閾値未満なので圧縮されない
         manager.check_and_compress("sess-001").await.unwrap();
@@ -433,7 +471,8 @@ mod tests {
         ));
         let llm_lock = Arc::new(tokio::sync::Mutex::new(()));
 
-        let manager = DefaultMemoryManager::new(db_arc.clone(), mock_llm, default_config(), 50, llm_lock);
+        let manager =
+            DefaultMemoryManager::new(db_arc.clone(), mock_llm, default_config(), 50, llm_lock);
 
         manager.check_and_compress("sess-001").await.unwrap();
 
@@ -441,18 +480,9 @@ mod tests {
         let memories = memory_repo::list_memories(db_lock.connection(), "char-001").unwrap();
         assert_eq!(memories.len(), 1);
         assert!(memories[0].content.contains("ユーザーは猫が好き"));
-        assert_eq!(
-            memories[0].source_session_id,
-            Some("sess-001".to_string())
-        );
-        assert_eq!(
-            memories[0].source_message_from,
-            Some("msg-000".to_string())
-        );
-        assert_eq!(
-            memories[0].source_message_to,
-            Some("msg-049".to_string())
-        );
+        assert_eq!(memories[0].source_session_id, Some("sess-001".to_string()));
+        assert_eq!(memories[0].source_message_from, Some("msg-000".to_string()));
+        assert_eq!(memories[0].source_message_to, Some("msg-049".to_string()));
     }
 
     #[tokio::test]
@@ -468,7 +498,8 @@ mod tests {
         ));
         let llm_lock = Arc::new(tokio::sync::Mutex::new(()));
 
-        let manager = DefaultMemoryManager::new(db_arc.clone(), mock_llm, default_config(), 50, llm_lock);
+        let manager =
+            DefaultMemoryManager::new(db_arc.clone(), mock_llm, default_config(), 50, llm_lock);
 
         // 1回目の圧縮
         manager.check_and_compress("sess-001").await.unwrap();
@@ -485,7 +516,11 @@ mod tests {
         {
             let db_lock = db_arc.lock().unwrap();
             let memories = memory_repo::list_memories(db_lock.connection(), "char-001").unwrap();
-            assert_eq!(memories.len(), 1, "No new memory should be created without new messages");
+            assert_eq!(
+                memories.len(),
+                1,
+                "No new memory should be created without new messages"
+            );
         }
     }
 
@@ -500,7 +535,8 @@ mod tests {
         let mock_llm = Arc::new(MockLLMClient::new("要約"));
         let llm_lock = Arc::new(tokio::sync::Mutex::new(()));
 
-        let manager = DefaultMemoryManager::new(db_arc.clone(), mock_llm, default_config(), 50, llm_lock);
+        let manager =
+            DefaultMemoryManager::new(db_arc.clone(), mock_llm, default_config(), 50, llm_lock);
 
         // 1回目の圧縮
         manager.check_and_compress("sess-001").await.unwrap();
@@ -513,7 +549,11 @@ mod tests {
                 let msg = ChatMessageRecord {
                     id: format!("msg-{:03}", i),
                     session_id: "sess-001".to_string(),
-                    role: if i % 2 == 0 { ChatRole::User } else { ChatRole::Assistant },
+                    role: if i % 2 == 0 {
+                        ChatRole::User
+                    } else {
+                        ChatRole::Assistant
+                    },
                     content: format!("Message {}", i),
                     attachments: None,
                     tool_calls: None,
@@ -530,7 +570,11 @@ mod tests {
         {
             let db_lock = db_arc.lock().unwrap();
             let memories = memory_repo::list_memories(db_lock.connection(), "char-001").unwrap();
-            assert_eq!(memories.len(), 1, "Should not compress when new messages < threshold");
+            assert_eq!(
+                memories.len(),
+                1,
+                "Should not compress when new messages < threshold"
+            );
         }
     }
 
@@ -624,9 +668,13 @@ mod tests {
         let mock_llm = Arc::new(MockLLMClient::new(""));
         let llm_lock = Arc::new(tokio::sync::Mutex::new(()));
 
-        let manager = DefaultMemoryManager::new(db_arc.clone(), mock_llm, default_config(), 50, llm_lock);
+        let manager =
+            DefaultMemoryManager::new(db_arc.clone(), mock_llm, default_config(), 50, llm_lock);
 
-        manager.update_memory("mem-001", "更新後の内容").await.unwrap();
+        manager
+            .update_memory("mem-001", "更新後の内容")
+            .await
+            .unwrap();
 
         let db_lock = db_arc.lock().unwrap();
         let memories = memory_repo::list_memories(db_lock.connection(), "char-001").unwrap();
@@ -654,7 +702,8 @@ mod tests {
         let mock_llm = Arc::new(MockLLMClient::new(""));
         let llm_lock = Arc::new(tokio::sync::Mutex::new(()));
 
-        let manager = DefaultMemoryManager::new(db_arc.clone(), mock_llm, default_config(), 50, llm_lock);
+        let manager =
+            DefaultMemoryManager::new(db_arc.clone(), mock_llm, default_config(), 50, llm_lock);
 
         manager.delete_memory("mem-001").await.unwrap();
 

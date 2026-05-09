@@ -9,7 +9,7 @@ use tauri::AppHandle;
 use tauri::Emitter;
 
 use crate::db::database::Database;
-use crate::db::repositories::{chat as chat_repo, character as char_repo};
+use crate::db::repositories::{character as char_repo, chat as chat_repo};
 use crate::llm::client::{ChatMessage, LLMClient, LLMClientConfig, LLMResponse, MessageRole};
 use crate::models::{ChatMessageRecord, ChatRole};
 
@@ -345,7 +345,8 @@ mod tests {
     #[test]
     fn test_build_spontaneous_prompt_empty_messages() {
         let messages: Vec<ChatMessageRecord> = vec![];
-        let prompt = DefaultSpontaneousSpeaker::build_spontaneous_prompt("You are a cat.", &messages);
+        let prompt =
+            DefaultSpontaneousSpeaker::build_spontaneous_prompt("You are a cat.", &messages);
 
         // system + meta-prompt = 2メッセージ
         assert_eq!(prompt.len(), 2);

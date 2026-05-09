@@ -42,10 +42,14 @@ pub fn parse_wav_header(data: &[u8]) -> Result<WavHeader, AppError> {
 
     // RIFFヘッダー検証
     if &data[0..4] != b"RIFF" {
-        return Err(AppError::Tts("Invalid WAV: missing RIFF header".to_string()));
+        return Err(AppError::Tts(
+            "Invalid WAV: missing RIFF header".to_string(),
+        ));
     }
     if &data[8..12] != b"WAVE" {
-        return Err(AppError::Tts("Invalid WAV: missing WAVE format".to_string()));
+        return Err(AppError::Tts(
+            "Invalid WAV: missing WAVE format".to_string(),
+        ));
     }
 
     // fmtチャンクを探索
@@ -60,9 +64,7 @@ pub fn parse_wav_header(data: &[u8]) -> Result<WavHeader, AppError> {
 
         if chunk_id == b"fmt " {
             if offset + 8 + 16 > data.len() {
-                return Err(AppError::Tts(
-                    "WAV fmt chunk too short".to_string(),
-                ));
+                return Err(AppError::Tts("WAV fmt chunk too short".to_string()));
             }
             let fmt_offset = offset + 8;
             channels = Some(read_u16_le(data, fmt_offset + 2)?);

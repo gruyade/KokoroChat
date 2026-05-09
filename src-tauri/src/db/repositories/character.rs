@@ -83,7 +83,16 @@ pub fn list_characters(conn: &Connection) -> Result<Vec<Character>, AppError> {
 
     let mut characters = Vec::new();
     for row in rows {
-        let (id, name, description, system_prompt, avatar_path, tts_config_str, created_at, updated_at) = row?;
+        let (
+            id,
+            name,
+            description,
+            system_prompt,
+            avatar_path,
+            tts_config_str,
+            created_at,
+            updated_at,
+        ) = row?;
         let tts_config = tts_config_str
             .map(|s| serde_json::from_str(&s))
             .transpose()?;

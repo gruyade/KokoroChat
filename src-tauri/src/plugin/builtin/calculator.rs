@@ -216,9 +216,7 @@ impl PluginHandler for CalculatorPlugin {
             .arguments
             .get("expression")
             .and_then(Value::as_str)
-            .ok_or_else(|| {
-                AppError::Plugin("'expression' パラメータが必要".to_string())
-            })?;
+            .ok_or_else(|| AppError::Plugin("'expression' パラメータが必要".to_string()))?;
 
         let result = match self.evaluate(expression) {
             Ok(value) => ToolResult {

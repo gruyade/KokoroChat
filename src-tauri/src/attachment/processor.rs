@@ -160,11 +160,10 @@ impl AttachmentProcessor for DefaultAttachmentProcessor {
 
     async fn extract_text(&self, attachment: &Attachment) -> Result<String, AppError> {
         match &attachment.attachment_type {
-            AttachmentType::Text | AttachmentType::Pdf => {
-                attachment.extracted_text.clone().ok_or_else(|| {
-                    AppError::Attachment("テキストが抽出されていません".to_string())
-                })
-            }
+            AttachmentType::Text | AttachmentType::Pdf => attachment
+                .extracted_text
+                .clone()
+                .ok_or_else(|| AppError::Attachment("テキストが抽出されていません".to_string())),
             AttachmentType::Image => Err(AppError::Attachment(
                 "画像ファイルからテキスト抽出はできない".to_string(),
             )),
@@ -173,9 +172,10 @@ impl AttachmentProcessor for DefaultAttachmentProcessor {
 
     async fn encode_image(&self, attachment: &Attachment) -> Result<String, AppError> {
         match &attachment.attachment_type {
-            AttachmentType::Image => attachment.base64_data.clone().ok_or_else(|| {
-                AppError::Attachment("Base64データが存在しません".to_string())
-            }),
+            AttachmentType::Image => attachment
+                .base64_data
+                .clone()
+                .ok_or_else(|| AppError::Attachment("Base64データが存在しません".to_string())),
             _ => Err(AppError::Attachment(
                 "画像以外のファイルはBase64エンコードできない".to_string(),
             )),
@@ -369,9 +369,7 @@ mod tests {
         let tmp = NamedTempFile::with_suffix(".exe").unwrap();
 
         let processor = DefaultAttachmentProcessor::new();
-        let result = processor
-            .process_file(tmp.path().to_str().unwrap())
-            .await;
+        let result = processor.process_file(tmp.path().to_str().unwrap()).await;
         assert!(result.is_err());
         match result.unwrap_err() {
             AppError::Attachment(msg) => {
@@ -390,9 +388,7 @@ mod tests {
         tmp.write_all(&data).unwrap();
 
         let processor = DefaultAttachmentProcessor::new();
-        let result = processor
-            .process_file(tmp.path().to_str().unwrap())
-            .await;
+        let result = processor.process_file(tmp.path().to_str().unwrap()).await;
         assert!(result.is_err());
         match result.unwrap_err() {
             AppError::Attachment(msg) => assert!(msg.contains("上限")),

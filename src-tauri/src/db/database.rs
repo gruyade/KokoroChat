@@ -162,9 +162,13 @@ mod tests {
     fn test_idempotent_migrations() {
         let db = Database::open_in_memory().unwrap();
         // 2回目のマイグレーション実行もエラーにならない
-        let result = db.connection().execute_batch(migrations::create_tables_sql());
+        let result = db
+            .connection()
+            .execute_batch(migrations::create_tables_sql());
         assert!(result.is_ok());
-        let result = db.connection().execute_batch(migrations::create_indexes_sql());
+        let result = db
+            .connection()
+            .execute_batch(migrations::create_indexes_sql());
         assert!(result.is_ok());
     }
 
@@ -183,7 +187,8 @@ mod tests {
         conn.execute(
             "INSERT INTO chat_sessions (id, character_id, created_at) VALUES (?1, ?2, ?3)",
             rusqlite::params!["sess1", "char1", "2024-01-01T00:00:00Z"],
-        ).unwrap();
+        )
+        .unwrap();
 
         // メッセージ作成
         conn.execute(
@@ -200,39 +205,57 @@ mod tests {
         // 思考作成
         conn.execute(
             "INSERT INTO thoughts (id, character_id, content, created_at) VALUES (?1, ?2, ?3, ?4)",
-            rusqlite::params!["thought1", "char1", "Thought content", "2024-01-01T00:00:00Z"],
-        ).unwrap();
+            rusqlite::params![
+                "thought1",
+                "char1",
+                "Thought content",
+                "2024-01-01T00:00:00Z"
+            ],
+        )
+        .unwrap();
 
         // キャラクター削除
-        conn.execute("DELETE FROM characters WHERE id = ?1", rusqlite::params!["char1"]).unwrap();
+        conn.execute(
+            "DELETE FROM characters WHERE id = ?1",
+            rusqlite::params!["char1"],
+        )
+        .unwrap();
 
         // 関連データが全て削除されていることを確認
-        let session_count: i32 = conn.query_row(
-            "SELECT COUNT(*) FROM chat_sessions WHERE character_id = ?1",
-            rusqlite::params!["char1"],
-            |row| row.get(0),
-        ).unwrap();
+        let session_count: i32 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM chat_sessions WHERE character_id = ?1",
+                rusqlite::params!["char1"],
+                |row| row.get(0),
+            )
+            .unwrap();
         assert_eq!(session_count, 0);
 
-        let message_count: i32 = conn.query_row(
-            "SELECT COUNT(*) FROM chat_messages WHERE session_id = ?1",
-            rusqlite::params!["sess1"],
-            |row| row.get(0),
-        ).unwrap();
+        let message_count: i32 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM chat_messages WHERE session_id = ?1",
+                rusqlite::params!["sess1"],
+                |row| row.get(0),
+            )
+            .unwrap();
         assert_eq!(message_count, 0);
 
-        let memory_count: i32 = conn.query_row(
-            "SELECT COUNT(*) FROM memories WHERE character_id = ?1",
-            rusqlite::params!["char1"],
-            |row| row.get(0),
-        ).unwrap();
+        let memory_count: i32 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM memories WHERE character_id = ?1",
+                rusqlite::params!["char1"],
+                |row| row.get(0),
+            )
+            .unwrap();
         assert_eq!(memory_count, 0);
 
-        let thought_count: i32 = conn.query_row(
-            "SELECT COUNT(*) FROM thoughts WHERE character_id = ?1",
-            rusqlite::params!["char1"],
-            |row| row.get(0),
-        ).unwrap();
+        let thought_count: i32 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM thoughts WHERE character_id = ?1",
+                rusqlite::params!["char1"],
+                |row| row.get(0),
+            )
+            .unwrap();
         assert_eq!(thought_count, 0);
     }
 
@@ -249,7 +272,8 @@ mod tests {
         conn.execute(
             "INSERT INTO chat_sessions (id, character_id, created_at) VALUES (?1, ?2, ?3)",
             rusqlite::params!["sess1", "char1", "2024-01-01T00:00:00Z"],
-        ).unwrap();
+        )
+        .unwrap();
 
         conn.execute(
             "INSERT INTO chat_messages (id, session_id, role, content, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -257,13 +281,19 @@ mod tests {
         ).unwrap();
 
         // セッション削除
-        conn.execute("DELETE FROM chat_sessions WHERE id = ?1", rusqlite::params!["sess1"]).unwrap();
-
-        let message_count: i32 = conn.query_row(
-            "SELECT COUNT(*) FROM chat_messages WHERE session_id = ?1",
+        conn.execute(
+            "DELETE FROM chat_sessions WHERE id = ?1",
             rusqlite::params!["sess1"],
-            |row| row.get(0),
-        ).unwrap();
+        )
+        .unwrap();
+
+        let message_count: i32 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM chat_messages WHERE session_id = ?1",
+                rusqlite::params!["sess1"],
+                |row| row.get(0),
+            )
+            .unwrap();
         assert_eq!(message_count, 0);
     }
 
@@ -280,7 +310,8 @@ mod tests {
         conn.execute(
             "INSERT INTO chat_sessions (id, character_id, created_at) VALUES (?1, ?2, ?3)",
             rusqlite::params!["sess1", "char1", "2024-01-01T00:00:00Z"],
-        ).unwrap();
+        )
+        .unwrap();
 
         conn.execute(
             "INSERT INTO chat_messages (id, session_id, role, content, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -293,13 +324,19 @@ mod tests {
         ).unwrap();
 
         // メッセージ削除
-        conn.execute("DELETE FROM chat_messages WHERE id = ?1", rusqlite::params!["msg1"]).unwrap();
-
-        let attachment_count: i32 = conn.query_row(
-            "SELECT COUNT(*) FROM attachments WHERE message_id = ?1",
+        conn.execute(
+            "DELETE FROM chat_messages WHERE id = ?1",
             rusqlite::params!["msg1"],
-            |row| row.get(0),
-        ).unwrap();
+        )
+        .unwrap();
+
+        let attachment_count: i32 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM attachments WHERE message_id = ?1",
+                rusqlite::params!["msg1"],
+                |row| row.get(0),
+            )
+            .unwrap();
         assert_eq!(attachment_count, 0);
     }
 
@@ -316,7 +353,8 @@ mod tests {
         conn.execute(
             "INSERT INTO chat_sessions (id, character_id, created_at) VALUES (?1, ?2, ?3)",
             rusqlite::params!["sess1", "char1", "2024-01-01T00:00:00Z"],
-        ).unwrap();
+        )
+        .unwrap();
 
         // 不正なroleでの挿入はエラーになる
         let result = conn.execute(
@@ -339,7 +377,8 @@ mod tests {
         conn.execute(
             "INSERT INTO chat_sessions (id, character_id, created_at) VALUES (?1, ?2, ?3)",
             rusqlite::params!["sess1", "char1", "2024-01-01T00:00:00Z"],
-        ).unwrap();
+        )
+        .unwrap();
 
         conn.execute(
             "INSERT INTO chat_messages (id, session_id, role, content, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
