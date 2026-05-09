@@ -74,8 +74,8 @@ mod tests {
     // ========================================
 
     fn default_llm_config() -> Arc<crate::config::model_config::ModelConfigManager> {
-        use std::collections::HashMap;
         use crate::models::config::*;
+        use std::collections::HashMap;
 
         let mut models = HashMap::new();
         let settings = ModelSettings {
@@ -92,13 +92,41 @@ mod tests {
 
         let config = AppConfig {
             models,
-            spontaneous: SpontaneousConfig { enabled: false, min_interval_seconds: 60, probability: 0.3 },
-            thought: ThoughtConfig { enabled: false, interval_minutes: 5, auto_delete_threshold_minutes: 1440 },
-            memory: MemoryConfig { compression_threshold: 50 },
-            tts: TTSGlobalConfig { enabled: false, voicepeak_path: None, timeout_seconds: 60, max_chunk_size: 140, irodori_base_url: None, irodori_caption_base_url: None, irodori_reference_audio_base_url: None },
-            ui: UIConfig { theme: Theme::Dark, language: "ja".to_string(), send_key: SendKey::default() },
-            plugins: PluginsConfig { enabled_plugins: vec![], plugin_settings: HashMap::new() },
-            attachment: AttachmentConfig { max_file_size_bytes: 10 * 1024 * 1024, allowed_extensions: vec![] },
+            spontaneous: SpontaneousConfig {
+                enabled: false,
+                min_interval_seconds: 60,
+                probability: 0.3,
+            },
+            thought: ThoughtConfig {
+                enabled: false,
+                interval_minutes: 5,
+                auto_delete_threshold_minutes: 1440,
+            },
+            memory: MemoryConfig {
+                compression_threshold: 50,
+            },
+            tts: TTSGlobalConfig {
+                enabled: false,
+                voicepeak_path: None,
+                timeout_seconds: 60,
+                max_chunk_size: 140,
+                irodori_base_url: None,
+                irodori_caption_base_url: None,
+                irodori_reference_audio_base_url: None,
+            },
+            ui: UIConfig {
+                theme: Theme::Dark,
+                language: "ja".to_string(),
+                send_key: SendKey::default(),
+            },
+            plugins: PluginsConfig {
+                enabled_plugins: vec![],
+                plugin_settings: HashMap::new(),
+            },
+            attachment: AttachmentConfig {
+                max_file_size_bytes: 10 * 1024 * 1024,
+                allowed_extensions: vec![],
+            },
         };
 
         Arc::new(crate::config::model_config::ModelConfigManager::new_with_config(config))
@@ -151,7 +179,12 @@ mod tests {
                 attachments: None,
                 tool_calls: None,
                 tool_call_id: None,
-                created_at: format!("2024-01-01T{:02}:{:02}:{:02}Z", i / 3600, (i % 3600) / 60, i % 60),
+                created_at: format!(
+                    "2024-01-01T{:02}:{:02}:{:02}Z",
+                    i / 3600,
+                    (i % 3600) / 60,
+                    i % 60
+                ),
             };
             chat_repo::insert_message(conn, &msg).unwrap();
         }

@@ -10,27 +10,19 @@ use crate::state::AppState;
 
 /// 登録済みプラグイン一覧取得
 #[tauri::command]
-pub async fn list_plugins(
-    state: State<'_, AppState>,
-) -> Result<Vec<PluginInfo>, AppError> {
+pub async fn list_plugins(state: State<'_, AppState>) -> Result<Vec<PluginInfo>, AppError> {
     Ok(state.plugin_registry.list_plugins())
 }
 
 /// プラグイン有効化
 #[tauri::command]
-pub async fn enable_plugin(
-    name: String,
-    state: State<'_, AppState>,
-) -> Result<(), AppError> {
+pub async fn enable_plugin(name: String, state: State<'_, AppState>) -> Result<(), AppError> {
     state.plugin_registry.enable_plugin(&name)
 }
 
 /// プラグイン無効化
 #[tauri::command]
-pub async fn disable_plugin(
-    name: String,
-    state: State<'_, AppState>,
-) -> Result<(), AppError> {
+pub async fn disable_plugin(name: String, state: State<'_, AppState>) -> Result<(), AppError> {
     state.plugin_registry.disable_plugin(&name)
 }
 

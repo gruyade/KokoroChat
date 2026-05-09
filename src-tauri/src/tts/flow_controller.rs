@@ -160,9 +160,7 @@ impl TTSFlowController {
             .unwrap_or(&IrodoriMode::Caption);
 
         match mode {
-            IrodoriMode::Caption => {
-                self.prepare_irodori_caption_config(text, tts_config).await
-            }
+            IrodoriMode::Caption => self.prepare_irodori_caption_config(text, tts_config).await,
             IrodoriMode::ReferenceAudio => {
                 // reference_audioモード: キャプション生成なし、設定そのまま
                 tts_config.clone()

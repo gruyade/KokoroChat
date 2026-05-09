@@ -56,21 +56,17 @@ mod tests {
 
     /// ToolDefinition のストラテジー
     fn arb_tool_definition() -> impl Strategy<Value = ToolDefinition> {
-        (
-            "[a-z_]{3,20}",
-            "[a-zA-Z ]{5,50}",
-        )
-            .prop_map(|(name, description)| ToolDefinition {
-                name,
-                description,
-                parameters: serde_json::json!({
-                    "type": "object",
-                    "properties": {
-                        "input": {"type": "string"}
-                    },
-                    "required": ["input"]
-                }),
-            })
+        ("[a-z_]{3,20}", "[a-zA-Z ]{5,50}").prop_map(|(name, description)| ToolDefinition {
+            name,
+            description,
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "input": {"type": "string"}
+                },
+                "required": ["input"]
+            }),
+        })
     }
 
     // ========================================
@@ -283,13 +279,14 @@ mod tests {
     }
 }
 
-
 // Feature: app-enhancements-v3, Property 2: プロバイダー×エンドポイントによるAPI形式決定
 #[cfg(test)]
 mod api_strategy_tests {
     use proptest::prelude::*;
 
-    use crate::llm::client::{ApiStrategy, LLMClientConfig, is_default_endpoint, resolve_api_strategy};
+    use crate::llm::client::{
+        is_default_endpoint, resolve_api_strategy, ApiStrategy, LLMClientConfig,
+    };
     use crate::models::LLMProvider;
 
     // ========================================
@@ -344,8 +341,6 @@ mod api_strategy_tests {
             arb_custom_endpoint(),
         ]
     }
-
-
 
     // ========================================
     // Property 2: プロバイダー×エンドポイントによるAPI形式決定
@@ -533,7 +528,6 @@ mod api_strategy_tests {
     }
 }
 
-
 // Feature: app-enhancements-v3, Property 3: プロバイダー別レスポンスパースの正当性
 #[cfg(test)]
 mod response_parse_tests {
@@ -566,8 +560,7 @@ mod response_parse_tests {
     }
 
     /// 有効なAnthropicレスポンスJSON（1〜4個のテキストブロック）のストラテジー
-    fn arb_valid_anthropic_response(
-    ) -> impl Strategy<Value = (serde_json::Value, String)> {
+    fn arb_valid_anthropic_response() -> impl Strategy<Value = (serde_json::Value, String)> {
         proptest::collection::vec(arb_non_empty_text(), 1..=4).prop_map(|texts| {
             let expected = texts.join("");
             let content: Vec<serde_json::Value> = texts

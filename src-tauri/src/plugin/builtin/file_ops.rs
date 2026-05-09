@@ -47,10 +47,7 @@ impl FileOpsPlugin {
         let resolved_str = resolved.to_string_lossy().to_string();
 
         if !resolved_str.starts_with(&base_str) {
-            return Err(format!(
-                "アクセス拒否: '{}' はサンドボックス外",
-                path_str
-            ));
+            return Err(format!("アクセス拒否: '{}' はサンドボックス外", path_str));
         }
 
         Ok(resolved)
@@ -58,8 +55,7 @@ impl FileOpsPlugin {
 
     fn read_file(&self, path_str: &str) -> Result<String, String> {
         let path = self.validate_path(path_str)?;
-        std::fs::read_to_string(&path)
-            .map_err(|e| format!("ファイル読み込みエラー: {}", e))
+        std::fs::read_to_string(&path).map_err(|e| format!("ファイル読み込みエラー: {}", e))
     }
 
     fn write_file(&self, path_str: &str, content: &str) -> Result<String, String> {
@@ -71,8 +67,7 @@ impl FileOpsPlugin {
                 .map_err(|e| format!("ディレクトリ作成エラー: {}", e))?;
         }
 
-        std::fs::write(&path, content)
-            .map_err(|e| format!("ファイル書き込みエラー: {}", e))?;
+        std::fs::write(&path, content).map_err(|e| format!("ファイル書き込みエラー: {}", e))?;
 
         Ok(format!("ファイルを書き込み完了: {}", path.display()))
     }
@@ -132,9 +127,7 @@ impl PluginHandler for FileOpsPlugin {
                     .arguments
                     .get("path")
                     .and_then(Value::as_str)
-                    .ok_or_else(|| {
-                        AppError::Plugin("'path' パラメータが必要".to_string())
-                    })?;
+                    .ok_or_else(|| AppError::Plugin("'path' パラメータが必要".to_string()))?;
 
                 let result = match self.read_file(path) {
                     Ok(content) => ToolResult {
@@ -155,16 +148,12 @@ impl PluginHandler for FileOpsPlugin {
                     .arguments
                     .get("path")
                     .and_then(Value::as_str)
-                    .ok_or_else(|| {
-                        AppError::Plugin("'path' パラメータが必要".to_string())
-                    })?;
+                    .ok_or_else(|| AppError::Plugin("'path' パラメータが必要".to_string()))?;
                 let content = tool_call
                     .arguments
                     .get("content")
                     .and_then(Value::as_str)
-                    .ok_or_else(|| {
-                        AppError::Plugin("'content' パラメータが必要".to_string())
-                    })?;
+                    .ok_or_else(|| AppError::Plugin("'content' パラメータが必要".to_string()))?;
 
                 let result = match self.write_file(path, content) {
                     Ok(msg) => ToolResult {

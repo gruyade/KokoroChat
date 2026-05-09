@@ -60,27 +60,36 @@ mod bug_condition_tests {
     fn make_config_with_chat_settings(settings: ModelSettings) -> AppConfig {
         let mut models = HashMap::new();
         models.insert(ModelPurpose::Chat, settings);
-        models.insert(ModelPurpose::Memory, ModelSettings {
-            base_url: String::new(),
-            model: String::new(),
-            api_key: None,
-            temperature: 0.7,
-            provider: None,
-        });
-        models.insert(ModelPurpose::Thought, ModelSettings {
-            base_url: String::new(),
-            model: String::new(),
-            api_key: None,
-            temperature: 0.7,
-            provider: None,
-        });
-        models.insert(ModelPurpose::CharacterGeneration, ModelSettings {
-            base_url: String::new(),
-            model: String::new(),
-            api_key: None,
-            temperature: 0.7,
-            provider: None,
-        });
+        models.insert(
+            ModelPurpose::Memory,
+            ModelSettings {
+                base_url: String::new(),
+                model: String::new(),
+                api_key: None,
+                temperature: 0.7,
+                provider: None,
+            },
+        );
+        models.insert(
+            ModelPurpose::Thought,
+            ModelSettings {
+                base_url: String::new(),
+                model: String::new(),
+                api_key: None,
+                temperature: 0.7,
+                provider: None,
+            },
+        );
+        models.insert(
+            ModelPurpose::CharacterGeneration,
+            ModelSettings {
+                base_url: String::new(),
+                model: String::new(),
+                api_key: None,
+                temperature: 0.7,
+                provider: None,
+            },
+        );
 
         AppConfig {
             models,
@@ -97,7 +106,15 @@ mod bug_condition_tests {
             memory: MemoryConfig {
                 compression_threshold: 50,
             },
-            tts: TTSGlobalConfig { enabled: false, voicepeak_path: None, timeout_seconds: 60, max_chunk_size: 140, irodori_base_url: None, irodori_caption_base_url: None, irodori_reference_audio_base_url: None },
+            tts: TTSGlobalConfig {
+                enabled: false,
+                voicepeak_path: None,
+                timeout_seconds: 60,
+                max_chunk_size: 140,
+                irodori_base_url: None,
+                irodori_caption_base_url: None,
+                irodori_reference_audio_base_url: None,
+            },
             ui: UIConfig {
                 theme: Theme::Dark,
                 language: "ja".to_string(),
@@ -255,7 +272,15 @@ mod preservation_tests {
             memory: MemoryConfig {
                 compression_threshold: 50,
             },
-            tts: TTSGlobalConfig { enabled: false, voicepeak_path: None, timeout_seconds: 60, max_chunk_size: 140, irodori_base_url: None, irodori_caption_base_url: None, irodori_reference_audio_base_url: None },
+            tts: TTSGlobalConfig {
+                enabled: false,
+                voicepeak_path: None,
+                timeout_seconds: 60,
+                max_chunk_size: 140,
+                irodori_base_url: None,
+                irodori_caption_base_url: None,
+                irodori_reference_audio_base_url: None,
+            },
             ui: UIConfig {
                 theme: Theme::Dark,
                 language: "ja".to_string(),
@@ -536,7 +561,7 @@ mod tests {
                     Just("jpg".to_string()),
                     Just("webp".to_string()),
                 ],
-                1..8
+                1..8,
             ),
         );
 
@@ -578,8 +603,20 @@ mod tests {
                     memory: MemoryConfig {
                         compression_threshold,
                     },
-                    tts: TTSGlobalConfig { enabled: tts_enabled, voicepeak_path: None, timeout_seconds: 60, max_chunk_size: 140, irodori_base_url: None, irodori_caption_base_url: None, irodori_reference_audio_base_url: None },
-                    ui: UIConfig { theme, language, send_key: SendKey::default() },
+                    tts: TTSGlobalConfig {
+                        enabled: tts_enabled,
+                        voicepeak_path: None,
+                        timeout_seconds: 60,
+                        max_chunk_size: 140,
+                        irodori_base_url: None,
+                        irodori_caption_base_url: None,
+                        irodori_reference_audio_base_url: None,
+                    },
+                    ui: UIConfig {
+                        theme,
+                        language,
+                        send_key: SendKey::default(),
+                    },
                     plugins: PluginsConfig {
                         enabled_plugins,
                         plugin_settings: HashMap::new(),
@@ -862,13 +899,15 @@ mod model_settings_round_trip_tests {
             proptest::option::of("sk-[a-zA-Z0-9]{10,30}"),
             0.0f32..2.0,
         )
-            .prop_map(|(provider, base_url, model, api_key, temperature)| ModelSettings {
-                provider,
-                base_url,
-                model,
-                api_key,
-                temperature,
-            })
+            .prop_map(
+                |(provider, base_url, model, api_key, temperature)| ModelSettings {
+                    provider,
+                    base_url,
+                    model,
+                    api_key,
+                    temperature,
+                },
+            )
     }
 
     proptest! {

@@ -6,8 +6,8 @@ use std::sync::Mutex;
 
 use crate::error::AppError;
 use crate::models::config::{
-    AppConfig, AttachmentConfig, MemoryConfig, ModelPurpose, ModelSettings, PluginsConfig,
-    SendKey, SpontaneousConfig, TTSGlobalConfig, Theme, ThoughtConfig, UIConfig,
+    AppConfig, AttachmentConfig, MemoryConfig, ModelPurpose, ModelSettings, PluginsConfig, SendKey,
+    SpontaneousConfig, TTSGlobalConfig, Theme, ThoughtConfig, UIConfig,
 };
 
 /// モデル設定管理
@@ -58,9 +58,10 @@ impl ModelConfigManager {
             }
         }
 
-        let config = self.config.lock().map_err(|e| {
-            AppError::Io(format!("Failed to acquire config lock: {}", e))
-        })?;
+        let config = self
+            .config
+            .lock()
+            .map_err(|e| AppError::Io(format!("Failed to acquire config lock: {}", e)))?;
 
         let json = serde_json::to_string_pretty(&*config)?;
         std::fs::write(&self.config_path, json)?;
@@ -78,9 +79,10 @@ impl ModelConfigManager {
     /// 設定を更新して保存
     pub fn set_config(&self, config: AppConfig) -> Result<(), AppError> {
         {
-            let mut current = self.config.lock().map_err(|e| {
-                AppError::Io(format!("Failed to acquire config lock: {}", e))
-            })?;
+            let mut current = self
+                .config
+                .lock()
+                .map_err(|e| AppError::Io(format!("Failed to acquire config lock: {}", e)))?;
             *current = config;
         }
         self.save()
@@ -163,7 +165,15 @@ impl ModelConfigManager {
             memory: MemoryConfig {
                 compression_threshold: 50,
             },
-            tts: TTSGlobalConfig { enabled: false, voicepeak_path: None, timeout_seconds: 60, max_chunk_size: 140, irodori_base_url: None, irodori_caption_base_url: None, irodori_reference_audio_base_url: None },
+            tts: TTSGlobalConfig {
+                enabled: false,
+                voicepeak_path: None,
+                timeout_seconds: 60,
+                max_chunk_size: 140,
+                irodori_base_url: None,
+                irodori_caption_base_url: None,
+                irodori_reference_audio_base_url: None,
+            },
             ui: UIConfig {
                 theme: Theme::Dark,
                 language: "ja".to_string(),

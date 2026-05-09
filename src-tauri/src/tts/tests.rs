@@ -23,9 +23,7 @@ mod emotion_generator_tests {
         }
 
         fn with_error(err: AppError) -> Self {
-            Self {
-                response: Err(err),
-            }
+            Self { response: Err(err) }
         }
     }
 
@@ -93,7 +91,8 @@ mod emotion_generator_tests {
 
     #[test]
     fn test_parse_valid_json_produces_correct_params() {
-        let json = r#"{"happy": 80, "fun": 60, "angry": 10, "sad": 5, "speed": 120.0, "pitch": 50.0}"#;
+        let json =
+            r#"{"happy": 80, "fun": 60, "angry": 10, "sad": 5, "speed": 120.0, "pitch": 50.0}"#;
         let config = make_base_config();
 
         let result = EmotionGenerator::parse_and_validate(json, &config).unwrap();
@@ -221,9 +220,8 @@ mod emotion_generator_tests {
         let generator = EmotionGenerator;
         let base_config = make_base_config();
         let llm_config = make_llm_config();
-        let mock_client = MockLLMClient::with_error(
-            AppError::LlmApi("Connection refused".to_string()),
-        );
+        let mock_client =
+            MockLLMClient::with_error(AppError::LlmApi("Connection refused".to_string()));
 
         let result = generator
             .generate("こんにちは", &base_config, &mock_client, &llm_config)
@@ -246,7 +244,12 @@ mod emotion_generator_tests {
         );
 
         let result = generator
-            .generate("今日はとても楽しい一日だった！", &base_config, &mock_client, &llm_config)
+            .generate(
+                "今日はとても楽しい一日だった！",
+                &base_config,
+                &mock_client,
+                &llm_config,
+            )
             .await
             .unwrap();
 
@@ -268,7 +271,12 @@ mod emotion_generator_tests {
         );
 
         let result = generator
-            .generate("悲しいお知らせがある", &base_config, &mock_client, &llm_config)
+            .generate(
+                "悲しいお知らせがある",
+                &base_config,
+                &mock_client,
+                &llm_config,
+            )
             .await
             .unwrap();
 
@@ -650,7 +658,10 @@ mod tests {
 
         assert_eq!(deserialized.provider, config.provider);
         assert_eq!(deserialized.base_url, config.base_url);
-        assert_eq!(deserialized.reference_audio_path, config.reference_audio_path);
+        assert_eq!(
+            deserialized.reference_audio_path,
+            config.reference_audio_path
+        );
         assert_eq!(deserialized.caption, config.caption);
         assert_eq!(deserialized.narrator, config.narrator);
         assert_eq!(deserialized.speed, config.speed);
@@ -722,10 +733,7 @@ mod tests {
 
         let config: TTSConfig = serde_json::from_value(json).unwrap();
         assert_eq!(config.provider, TTSProvider::IrodoriTts);
-        assert_eq!(
-            config.base_url,
-            Some("http://localhost:5000".to_string())
-        );
+        assert_eq!(config.base_url, Some("http://localhost:5000".to_string()));
         assert_eq!(
             config.reference_audio_path,
             Some("/audio/ref.wav".to_string())
@@ -735,7 +743,6 @@ mod tests {
         assert!(config.emotion.is_none());
     }
 }
-
 
 #[cfg(test)]
 mod caption_generator_tests {
@@ -759,9 +766,7 @@ mod caption_generator_tests {
         }
 
         fn with_error(err: AppError) -> Self {
-            Self {
-                response: Err(err),
-            }
+            Self { response: Err(err) }
         }
 
         fn with_tool_calls() -> Self {
@@ -817,7 +822,8 @@ mod caption_generator_tests {
 
     #[test]
     fn test_combine_captions_normal_inputs() {
-        let result = CaptionGenerator::combine_captions("落ち着いた女性の声", "優しく語りかけるように");
+        let result =
+            CaptionGenerator::combine_captions("落ち着いた女性の声", "優しく語りかけるように");
         assert!(result.contains("落ち着いた女性の声"));
         assert!(result.contains("優しく語りかけるように"));
     }
@@ -843,7 +849,12 @@ mod caption_generator_tests {
         let mock_client = MockLLMClient::with_text("  優しく語りかけるように  ");
 
         let result = generator
-            .generate("こんにちは、今日はいい天気ですね。", "落ち着いた女性の声", &mock_client, &llm_config)
+            .generate(
+                "こんにちは、今日はいい天気ですね。",
+                "落ち着いた女性の声",
+                &mock_client,
+                &llm_config,
+            )
             .await
             .unwrap();
 
@@ -885,7 +896,6 @@ mod caption_generator_tests {
         assert!(err_msg.contains("Unexpected tool call"));
     }
 }
-
 
 #[cfg(test)]
 mod flow_controller_tests {
@@ -1148,11 +1158,7 @@ mod flow_controller_tests {
         ));
         let config_manager = Arc::new(ModelConfigManager::new_with_config(make_test_app_config()));
 
-        let controller = TTSFlowController::new(
-            tts_connector,
-            llm_client,
-            config_manager,
-        );
+        let controller = TTSFlowController::new(tts_connector, llm_client, config_manager);
 
         let tts_config = make_voicepeak_tts_config();
         let result = controller
@@ -1179,22 +1185,14 @@ mod flow_controller_tests {
             wav_data,
             Duration::from_secs(2),
         ));
-        let llm_client = Arc::new(MockLLMClient::with_text(
-            r#"{"happy": 50, "speed": 100.0}"#,
-        ));
+        let llm_client = Arc::new(MockLLMClient::with_text(r#"{"happy": 50, "speed": 100.0}"#));
         let config_manager = Arc::new(ModelConfigManager::new_with_config(make_test_app_config()));
 
-        let controller = TTSFlowController::new(
-            tts_connector,
-            llm_client,
-            config_manager,
-        );
+        let controller = TTSFlowController::new(tts_connector, llm_client, config_manager);
 
         let tts_config = make_voicepeak_tts_config();
         // タイムアウト0秒 → 即座にタイムアウト
-        let result = controller
-            .process("テスト", &tts_config, None, 0)
-            .await;
+        let result = controller.process("テスト", &tts_config, None, 0).await;
 
         assert!(result.is_err());
         let err_msg = result.unwrap_err().to_string();
@@ -1213,11 +1211,7 @@ mod flow_controller_tests {
         let llm_client = Arc::new(MockLLMClient::with_error());
         let config_manager = Arc::new(ModelConfigManager::new_with_config(make_test_app_config()));
 
-        let controller = TTSFlowController::new(
-            tts_connector,
-            llm_client,
-            config_manager,
-        );
+        let controller = TTSFlowController::new(tts_connector, llm_client, config_manager);
 
         let tts_config = make_voicepeak_tts_config();
         // LLM失敗してもフォールバックで成功する
@@ -1286,11 +1280,7 @@ mod flow_controller_tests {
         let llm_client = Arc::new(TrackingLLMClient::new());
         let config_manager = Arc::new(ModelConfigManager::new_with_config(make_test_app_config()));
 
-        let controller = TTSFlowController::new(
-            tts_connector,
-            llm_client.clone(),
-            config_manager,
-        );
+        let controller = TTSFlowController::new(tts_connector, llm_client.clone(), config_manager);
 
         let tts_config = make_irodori_reference_audio_config();
         let result = controller
@@ -1313,11 +1303,7 @@ mod flow_controller_tests {
         let llm_client = Arc::new(TrackingLLMClient::new());
         let config_manager = Arc::new(ModelConfigManager::new_with_config(make_test_app_config()));
 
-        let controller = TTSFlowController::new(
-            tts_connector,
-            llm_client.clone(),
-            config_manager,
-        );
+        let controller = TTSFlowController::new(tts_connector, llm_client.clone(), config_manager);
 
         let tts_config = make_irodori_caption_config();
         let result = controller

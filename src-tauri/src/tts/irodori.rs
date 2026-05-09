@@ -73,7 +73,11 @@ impl<'a> IrodoriTTSHandler<'a> {
 
     /// 合成エンドポイントURLを構築
     fn build_synthesize_url(config: &TTSConfig) -> String {
-        let base = config.base_url.as_deref().unwrap_or("").trim_end_matches('/');
+        let base = config
+            .base_url
+            .as_deref()
+            .unwrap_or("")
+            .trim_end_matches('/');
         format!("{}/synthesize", base)
     }
 

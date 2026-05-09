@@ -3,8 +3,8 @@
 use std::collections::HashMap;
 
 use crate::error::AppError;
-use crate::llm::client::{ChatMessage, LLMClientConfig, LLMResponse, MessageRole};
 use crate::llm::client::LLMClient;
+use crate::llm::client::{ChatMessage, LLMClientConfig, LLMResponse, MessageRole};
 use crate::models::tts::{EmotionParams, TTSConfig};
 
 /// LLMで感情パラメータを生成
@@ -28,7 +28,10 @@ impl EmotionGenerator {
         llm_config: &LLMClientConfig,
     ) -> Result<GeneratedEmotionParams, AppError> {
         let system_prompt = Self::build_system_prompt(base_config);
-        let user_prompt = format!("以下のテキストの感情を分析してJSON形式で返してください:\n\n{}", text);
+        let user_prompt = format!(
+            "以下のテキストの感情を分析してJSON形式で返してください:\n\n{}",
+            text
+        );
 
         let messages = vec![
             ChatMessage {
@@ -67,9 +70,13 @@ impl EmotionGenerator {
         // JSONブロック内のテキストを抽出（```json ... ``` 形式対応）
         let cleaned = Self::extract_json(json_str);
 
-        let raw: HashMap<String, serde_json::Value> = serde_json::from_str(&cleaned).map_err(|e| {
-            AppError::Tts(format!("Failed to parse emotion JSON: {} (input: {})", e, cleaned))
-        })?;
+        let raw: HashMap<String, serde_json::Value> =
+            serde_json::from_str(&cleaned).map_err(|e| {
+                AppError::Tts(format!(
+                    "Failed to parse emotion JSON: {} (input: {})",
+                    e, cleaned
+                ))
+            })?;
 
         let mut emotion = EmotionParams::new();
         let mut speed: Option<f32> = None;
@@ -82,7 +89,9 @@ impl EmotionGenerator {
                     "pitch" => pitch = Some(clamp_f32(num as f32, -300.0, 300.0)),
                     _ => {
                         // 感情パラメータ: 0〜キャラクター設定の上限値にクランプ
-                        let max_value = base_config.emotion.as_ref()
+                        let max_value = base_config
+                            .emotion
+                            .as_ref()
                             .and_then(|e| e.get(key).copied())
                             .unwrap_or(100);
                         emotion.insert(key.clone(), clamp_i32(num as i32, 0, max_value));
@@ -102,15 +111,18 @@ impl EmotionGenerator {
     fn build_system_prompt(base_config: &TTSConfig) -> String {
         let emotion_info = if let Some(ref emotion) = base_config.emotion {
             if emotion.is_empty() {
-                "利用可能な感情キー: happy, fun, angry, sad\n各感情キーの値は0-100の整数です。".to_string()
+                "利用可能な感情キー: happy, fun, angry, sad\n各感情キーの値は0-100の整数です。"
+                    .to_string()
             } else {
-                let keys_with_max: Vec<String> = emotion.iter()
+                let keys_with_max: Vec<String> = emotion
+                    .iter()
                     .map(|(k, v)| format!("  - {}: 0〜{}", k, v))
                     .collect();
                 format!("利用可能な感情キーと上限値:\n{}\n各値は0から上限値までの整数で設定してください。上限値を超えないこと。", keys_with_max.join("\n"))
             }
         } else {
-            "利用可能な感情キー: happy, fun, angry, sad\n各感情キーの値は0-100の整数です。".to_string()
+            "利用可能な感情キー: happy, fun, angry, sad\n各感情キーの値は0-100の整数です。"
+                .to_string()
         };
 
         format!(

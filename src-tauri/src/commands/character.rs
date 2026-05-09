@@ -7,7 +7,9 @@ use crate::db::repositories::{
     character as char_repo, chat as chat_repo, memory as memory_repo, thought as thought_repo,
 };
 use crate::error::AppError;
-use crate::models::{Character, CharacterUpdate, ChatMessageRecord, ChatRole, ChatSession, Memory, Thought};
+use crate::models::{
+    Character, CharacterUpdate, ChatMessageRecord, ChatRole, ChatSession, Memory, Thought,
+};
 use crate::state::AppState;
 
 // ─── エクスポート用データ型 ───
@@ -121,9 +123,7 @@ pub async fn create_character(
 
 /// 全キャラクター一覧取得
 #[tauri::command]
-pub async fn list_characters(
-    state: State<'_, AppState>,
-) -> Result<Vec<Character>, AppError> {
+pub async fn list_characters(state: State<'_, AppState>) -> Result<Vec<Character>, AppError> {
     state.character_creator.list_characters().await
 }
 
@@ -148,10 +148,7 @@ pub async fn update_character(
 
 /// キャラクター削除（関連データもCASCADE削除）
 #[tauri::command]
-pub async fn delete_character(
-    id: String,
-    state: State<'_, AppState>,
-) -> Result<(), AppError> {
+pub async fn delete_character(id: String, state: State<'_, AppState>) -> Result<(), AppError> {
     state.character_creator.delete_character(&id).await
 }
 
@@ -162,7 +159,10 @@ pub async fn generate_system_prompt(
     description: String,
     state: State<'_, AppState>,
 ) -> Result<String, AppError> {
-    state.character_creator.generate_system_prompt(&name, &description).await
+    state
+        .character_creator
+        .generate_system_prompt(&name, &description)
+        .await
 }
 
 /// System Prompt改善（既存プロンプト + 説明内容から改良）
@@ -178,7 +178,8 @@ pub async fn improve_system_prompt(
     use crate::models::config::ModelPurpose;
 
     // キャラクター生成用のLLM設定を取得
-    let llm_config = state.config_manager
+    let llm_config = state
+        .config_manager
         .get_model_settings(&ModelPurpose::CharacterGeneration)
         .map(|s| LLMClientConfig {
             base_url: s.base_url,
@@ -371,7 +372,9 @@ pub async fn save_avatar(
 ) -> Result<String, AppError> {
     use tauri::Manager;
 
-    let app_data_dir = app_handle.path().app_data_dir()
+    let app_data_dir = app_handle
+        .path()
+        .app_data_dir()
         .map_err(|e| AppError::Io(format!("Failed to get app data dir: {}", e)))?;
     let avatars_dir = app_data_dir.join("avatars");
     std::fs::create_dir_all(&avatars_dir)
@@ -394,9 +397,7 @@ pub async fn save_avatar(
 
 /// アバター画像をBase64で読み込み
 #[tauri::command]
-pub async fn read_avatar(
-    avatar_path: String,
-) -> Result<String, AppError> {
+pub async fn read_avatar(avatar_path: String) -> Result<String, AppError> {
     use base64::Engine;
 
     let data = std::fs::read(&avatar_path)

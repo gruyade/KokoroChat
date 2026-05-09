@@ -132,8 +132,8 @@ fn setup_db_with_memories(db: &Database) {
 }
 
 fn default_llm_config() -> Arc<crate::config::model_config::ModelConfigManager> {
-    use std::collections::HashMap;
     use crate::models::config::*;
+    use std::collections::HashMap;
 
     let mut models = HashMap::new();
     let settings = ModelSettings {
@@ -150,13 +150,41 @@ fn default_llm_config() -> Arc<crate::config::model_config::ModelConfigManager> 
 
     let config = AppConfig {
         models,
-        spontaneous: SpontaneousConfig { enabled: false, min_interval_seconds: 60, probability: 0.3 },
-        thought: ThoughtConfig { enabled: false, interval_minutes: 5, auto_delete_threshold_minutes: 1440 },
-        memory: MemoryConfig { compression_threshold: 50 },
-        tts: TTSGlobalConfig { enabled: false, voicepeak_path: None, timeout_seconds: 60, max_chunk_size: 140, irodori_base_url: None, irodori_caption_base_url: None, irodori_reference_audio_base_url: None },
-        ui: UIConfig { theme: Theme::Dark, language: "ja".to_string(), send_key: SendKey::default() },
-        plugins: PluginsConfig { enabled_plugins: vec![], plugin_settings: HashMap::new() },
-        attachment: AttachmentConfig { max_file_size_bytes: 10 * 1024 * 1024, allowed_extensions: vec![] },
+        spontaneous: SpontaneousConfig {
+            enabled: false,
+            min_interval_seconds: 60,
+            probability: 0.3,
+        },
+        thought: ThoughtConfig {
+            enabled: false,
+            interval_minutes: 5,
+            auto_delete_threshold_minutes: 1440,
+        },
+        memory: MemoryConfig {
+            compression_threshold: 50,
+        },
+        tts: TTSGlobalConfig {
+            enabled: false,
+            voicepeak_path: None,
+            timeout_seconds: 60,
+            max_chunk_size: 140,
+            irodori_base_url: None,
+            irodori_caption_base_url: None,
+            irodori_reference_audio_base_url: None,
+        },
+        ui: UIConfig {
+            theme: Theme::Dark,
+            language: "ja".to_string(),
+            send_key: SendKey::default(),
+        },
+        plugins: PluginsConfig {
+            enabled_plugins: vec![],
+            plugin_settings: HashMap::new(),
+        },
+        attachment: AttachmentConfig {
+            max_file_size_bytes: 10 * 1024 * 1024,
+            allowed_extensions: vec![],
+        },
     };
 
     Arc::new(crate::config::model_config::ModelConfigManager::new_with_config(config))
@@ -317,7 +345,9 @@ fn test_stop_sets_running_false() {
 
     let engine = DefaultThoughtEngine::new(db.clone(), mock_llm, config, test_llm_lock());
 
-    engine.running.store(true, std::sync::atomic::Ordering::SeqCst);
+    engine
+        .running
+        .store(true, std::sync::atomic::Ordering::SeqCst);
     engine.stop();
 
     assert!(!engine.running.load(std::sync::atomic::Ordering::SeqCst));
@@ -328,11 +358,7 @@ fn test_build_thought_prompt_empty_context() {
     let messages: Vec<ChatMessageRecord> = vec![];
     let memories: Vec<Memory> = vec![];
 
-    let prompt = DefaultThoughtEngine::build_thought_prompt(
-        "You are a cat.",
-        &messages,
-        &memories,
-    );
+    let prompt = DefaultThoughtEngine::build_thought_prompt("You are a cat.", &messages, &memories);
 
     // system + meta-prompt = 2メッセージ
     assert_eq!(prompt.len(), 2);
@@ -378,11 +404,7 @@ fn test_build_thought_prompt_with_messages_and_memories() {
         updated_at: "2024-01-01T00:00:00Z".to_string(),
     }];
 
-    let prompt = DefaultThoughtEngine::build_thought_prompt(
-        "You are a cat.",
-        &messages,
-        &memories,
-    );
+    let prompt = DefaultThoughtEngine::build_thought_prompt("You are a cat.", &messages, &memories);
 
     // system + memory_system + 2 conversation + meta-prompt = 5
     assert_eq!(prompt.len(), 5);
@@ -414,11 +436,7 @@ fn test_build_thought_prompt_spontaneous_role_mapped_to_assistant() {
         created_at: "2024-01-01T10:00:00Z".to_string(),
     }];
 
-    let prompt = DefaultThoughtEngine::build_thought_prompt(
-        "System prompt",
-        &messages,
-        &[],
-    );
+    let prompt = DefaultThoughtEngine::build_thought_prompt("System prompt", &messages, &[]);
 
     // Spontaneous roleはAssistantにマッピング
     assert_eq!(prompt[1].role, MessageRole::Assistant);

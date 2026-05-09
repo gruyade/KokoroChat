@@ -64,9 +64,10 @@ impl Default for DefaultPluginRegistry {
 impl PluginRegistry for DefaultPluginRegistry {
     fn register(&self, handler: Box<dyn PluginHandler>) -> Result<(), AppError> {
         let name = handler.name().to_string();
-        let mut plugins = self.plugins.write().map_err(|e| {
-            AppError::Plugin(format!("Failed to acquire write lock: {}", e))
-        })?;
+        let mut plugins = self
+            .plugins
+            .write()
+            .map_err(|e| AppError::Plugin(format!("Failed to acquire write lock: {}", e)))?;
 
         if plugins.contains_key(&name) {
             return Err(AppError::Plugin(format!(
@@ -88,9 +89,10 @@ impl PluginRegistry for DefaultPluginRegistry {
     }
 
     fn unregister(&self, name: &str) -> Result<(), AppError> {
-        let mut plugins = self.plugins.write().map_err(|e| {
-            AppError::Plugin(format!("Failed to acquire write lock: {}", e))
-        })?;
+        let mut plugins = self
+            .plugins
+            .write()
+            .map_err(|e| AppError::Plugin(format!("Failed to acquire write lock: {}", e)))?;
 
         if plugins.remove(name).is_none() {
             return Err(AppError::NotFound(format!("Plugin '{}' not found", name)));
@@ -116,9 +118,10 @@ impl PluginRegistry for DefaultPluginRegistry {
     }
 
     fn enable_plugin(&self, name: &str) -> Result<(), AppError> {
-        let mut plugins = self.plugins.write().map_err(|e| {
-            AppError::Plugin(format!("Failed to acquire write lock: {}", e))
-        })?;
+        let mut plugins = self
+            .plugins
+            .write()
+            .map_err(|e| AppError::Plugin(format!("Failed to acquire write lock: {}", e)))?;
 
         let entry = plugins
             .get_mut(name)
@@ -129,9 +132,10 @@ impl PluginRegistry for DefaultPluginRegistry {
     }
 
     fn disable_plugin(&self, name: &str) -> Result<(), AppError> {
-        let mut plugins = self.plugins.write().map_err(|e| {
-            AppError::Plugin(format!("Failed to acquire write lock: {}", e))
-        })?;
+        let mut plugins = self
+            .plugins
+            .write()
+            .map_err(|e| AppError::Plugin(format!("Failed to acquire write lock: {}", e)))?;
 
         let entry = plugins
             .get_mut(name)
@@ -147,9 +151,10 @@ impl PluginRegistry for DefaultPluginRegistry {
     }
 
     fn set_plugin_config(&self, name: &str, config: Value) -> Result<(), AppError> {
-        let mut plugins = self.plugins.write().map_err(|e| {
-            AppError::Plugin(format!("Failed to acquire write lock: {}", e))
-        })?;
+        let mut plugins = self
+            .plugins
+            .write()
+            .map_err(|e| AppError::Plugin(format!("Failed to acquire write lock: {}", e)))?;
 
         let entry = plugins
             .get_mut(name)
@@ -172,15 +177,20 @@ impl PluginRegistry for DefaultPluginRegistry {
     async fn execute_tool(&self, tool_call: &ToolCall) -> Result<ToolResult, AppError> {
         // ツール名からプラグインを検索し、Arcクローンを取得してからロックを解放
         let handler: Option<Arc<dyn PluginHandler>> = {
-            let plugins = self.plugins.read().map_err(|e| {
-                AppError::Plugin(format!("Failed to acquire read lock: {}", e))
-            })?;
+            let plugins = self
+                .plugins
+                .read()
+                .map_err(|e| AppError::Plugin(format!("Failed to acquire read lock: {}", e)))?;
 
             plugins
                 .values()
                 .find(|entry| {
                     entry.enabled
-                        && entry.handler.tools().iter().any(|t| t.name == tool_call.name)
+                        && entry
+                            .handler
+                            .tools()
+                            .iter()
+                            .any(|t| t.name == tool_call.name)
                 })
                 .map(|entry| Arc::clone(&entry.handler))
         };

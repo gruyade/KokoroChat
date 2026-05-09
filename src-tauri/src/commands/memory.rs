@@ -37,10 +37,7 @@ pub async fn update_memory(
 
 /// 記憶を削除
 #[tauri::command]
-pub async fn delete_memory(
-    id: String,
-    state: State<'_, AppState>,
-) -> Result<(), AppError> {
+pub async fn delete_memory(id: String, state: State<'_, AppState>) -> Result<(), AppError> {
     state.memory_manager.delete_memory(&id).await
 }
 
@@ -54,10 +51,13 @@ pub async fn generate_memory_manual(
     let result = state.memory_manager.force_compress(&session_id).await?;
 
     if let Some(memory) = result {
-        if let Err(e) = app_handle.emit("memory:generated", MemoryGeneratedEvent {
-            character_id: memory.character_id.clone(),
-            memory_id: memory.id.clone(),
-        }) {
+        if let Err(e) = app_handle.emit(
+            "memory:generated",
+            MemoryGeneratedEvent {
+                character_id: memory.character_id.clone(),
+                memory_id: memory.id.clone(),
+            },
+        ) {
             println!("[memory] Failed to emit memory:generated event: {}", e);
         }
     }

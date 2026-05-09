@@ -34,6 +34,7 @@
   "devDependencies": {
     "@eslint/js": "^9.39.4",
     "@tailwindcss/typography": "^0.5.19",
+    "@tauri-apps/cli": "^2.11.1",
     "@testing-library/jest-dom": "^6.6.0",
     "@testing-library/react": "^16.0.0",
     "@types/hast": "^3.0.4",

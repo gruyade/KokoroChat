@@ -44,10 +44,7 @@ pub fn get_session(conn: &Connection, id: &str) -> Result<Option<ChatSession>, A
 }
 
 /// キャラクターIDでセッション一覧取得（最終メッセージ日時の降順）
-pub fn list_sessions(
-    conn: &Connection,
-    character_id: &str,
-) -> Result<Vec<ChatSession>, AppError> {
+pub fn list_sessions(conn: &Connection, character_id: &str) -> Result<Vec<ChatSession>, AppError> {
     let mut stmt = conn.prepare(
         "SELECT id, character_id, title, last_message_at, last_message_preview, created_at
          FROM chat_sessions WHERE character_id = ?1
@@ -132,27 +129,30 @@ pub fn insert_message(conn: &Connection, message: &ChatMessageRecord) -> Result<
 
 /// 指定IDのメッセージを削除
 pub fn delete_message(conn: &Connection, id: &str) -> Result<bool, AppError> {
-    let rows_affected = conn.execute(
-        "DELETE FROM chat_messages WHERE id = ?1",
-        params![id],
-    )?;
+    let rows_affected = conn.execute("DELETE FROM chat_messages WHERE id = ?1", params![id])?;
     Ok(rows_affected > 0)
 }
 
 /// 指定メッセージ以降の全メッセージを削除（指定メッセージ自体は残す）
 /// created_at が対象メッセージより後のメッセージを削除する
-pub fn delete_messages_after(conn: &Connection, session_id: &str, message_id: &str) -> Result<u32, AppError> {
+pub fn delete_messages_after(
+    conn: &Connection,
+    session_id: &str,
+    message_id: &str,
+) -> Result<u32, AppError> {
     // 対象メッセージの created_at を取得
-    let created_at: String = conn.query_row(
-        "SELECT created_at FROM chat_messages WHERE id = ?1 AND session_id = ?2",
-        params![message_id, session_id],
-        |row| row.get(0),
-    ).map_err(|e| match e {
-        rusqlite::Error::QueryReturnedNoRows => {
-            AppError::NotFound(format!("Message not found: {}", message_id))
-        }
-        other => AppError::Database(other.to_string()),
-    })?;
+    let created_at: String = conn
+        .query_row(
+            "SELECT created_at FROM chat_messages WHERE id = ?1 AND session_id = ?2",
+            params![message_id, session_id],
+            |row| row.get(0),
+        )
+        .map_err(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => {
+                AppError::NotFound(format!("Message not found: {}", message_id))
+            }
+            other => AppError::Database(other.to_string()),
+        })?;
 
     let rows_affected = conn.execute(
         "DELETE FROM chat_messages WHERE session_id = ?1 AND created_at > ?2",
@@ -162,13 +162,20 @@ pub fn delete_messages_after(conn: &Connection, session_id: &str, message_id: &s
 }
 
 /// 指定メッセージの content を更新
-pub fn update_message_content(conn: &Connection, message_id: &str, new_content: &str) -> Result<(), AppError> {
+pub fn update_message_content(
+    conn: &Connection,
+    message_id: &str,
+    new_content: &str,
+) -> Result<(), AppError> {
     let rows_affected = conn.execute(
         "UPDATE chat_messages SET content = ?1 WHERE id = ?2",
         params![new_content, message_id],
     )?;
     if rows_affected == 0 {
-        return Err(AppError::NotFound(format!("Message not found: {}", message_id)));
+        return Err(AppError::NotFound(format!(
+            "Message not found: {}",
+            message_id
+        )));
     }
     Ok(())
 }
@@ -199,7 +206,16 @@ pub fn get_messages(
 
     let mut messages = Vec::new();
     for row in rows {
-        let (id, session_id, role_str, content, attachments_str, tool_calls_str, tool_call_id, created_at) = row?;
+        let (
+            id,
+            session_id,
+            role_str,
+            content,
+            attachments_str,
+            tool_calls_str,
+            tool_call_id,
+            created_at,
+        ) = row?;
 
         let role = match role_str.as_str() {
             "user" => ChatRole::User,

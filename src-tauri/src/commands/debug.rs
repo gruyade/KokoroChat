@@ -28,15 +28,19 @@ pub async fn debug_compress_memory(
             return Err(AppError::Validation("メッセージがない".to_string()));
         }
 
-        let text = messages.iter().map(|m| {
-            let role = match m.role {
-                crate::models::ChatRole::User => "ユーザー",
-                crate::models::ChatRole::Assistant => "アシスタント",
-                crate::models::ChatRole::Spontaneous => "アシスタント（自発）",
-                crate::models::ChatRole::Tool => "ツール",
-            };
-            format!("{}: {}", role, m.content)
-        }).collect::<Vec<_>>().join("\n");
+        let text = messages
+            .iter()
+            .map(|m| {
+                let role = match m.role {
+                    crate::models::ChatRole::User => "ユーザー",
+                    crate::models::ChatRole::Assistant => "アシスタント",
+                    crate::models::ChatRole::Spontaneous => "アシスタント（自発）",
+                    crate::models::ChatRole::Tool => "ツール",
+                };
+                format!("{}: {}", role, m.content)
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
 
         let first = messages.first().map(|m| m.id.clone());
         let last = messages.last().map(|m| m.id.clone());
@@ -45,13 +49,22 @@ pub async fn debug_compress_memory(
     };
 
     // LLMで要約
-    let config = state.config_manager
+    let config = state
+        .config_manager
         .get_model_settings(&crate::models::config::ModelPurpose::Memory)
         .map(|s| crate::llm::client::LLMClientConfig {
-            base_url: s.base_url, model: s.model, api_key: s.api_key, temperature: s.temperature, provider: s.provider,
+            base_url: s.base_url,
+            model: s.model,
+            api_key: s.api_key,
+            temperature: s.temperature,
+            provider: s.provider,
         })
         .unwrap_or_else(|| crate::llm::client::LLMClientConfig {
-            base_url: String::new(), model: String::new(), api_key: None, temperature: 0.3, provider: None,
+            base_url: String::new(),
+            model: String::new(),
+            api_key: None,
+            temperature: 0.3,
+            provider: None,
         });
 
     let llm_messages = vec![
@@ -128,7 +141,11 @@ pub async fn debug_trigger_spontaneous(
             .ok_or_else(|| AppError::NotFound(format!("Character: {}", session.character_id)))?;
 
         let msgs = chat_repo::get_messages(conn, &session_id)?;
-        let recent = if msgs.len() > 20 { msgs[msgs.len()-20..].to_vec() } else { msgs };
+        let recent = if msgs.len() > 20 {
+            msgs[msgs.len() - 20..].to_vec()
+        } else {
+            msgs
+        };
 
         (character.system_prompt, recent)
     };
@@ -147,7 +164,12 @@ pub async fn debug_trigger_spontaneous(
             ChatRole::Assistant | ChatRole::Spontaneous => MessageRole::Assistant,
             ChatRole::Tool => MessageRole::Tool,
         };
-        messages.push(ChatMessage { role, content: msg.content.clone(), tool_call_id: None, images: None });
+        messages.push(ChatMessage {
+            role,
+            content: msg.content.clone(),
+            tool_call_id: None,
+            images: None,
+        });
     }
 
     messages.push(ChatMessage {
@@ -158,7 +180,8 @@ pub async fn debug_trigger_spontaneous(
     });
 
     // LLM呼び出し
-    let config = state.config_manager
+    let config = state
+        .config_manager
         .get_model_settings(&crate::models::config::ModelPurpose::Chat)
         .map(|s| crate::llm::client::LLMClientConfig {
             base_url: s.base_url,

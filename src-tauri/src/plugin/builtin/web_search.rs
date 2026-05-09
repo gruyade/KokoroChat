@@ -50,9 +50,7 @@ impl PluginHandler for WebSearchPlugin {
             .arguments
             .get("query")
             .and_then(Value::as_str)
-            .ok_or_else(|| {
-                AppError::Plugin("'query' パラメータが必要".to_string())
-            })?;
+            .ok_or_else(|| AppError::Plugin("'query' パラメータが必要".to_string()))?;
 
         // スタブ実装: プレースホルダーレスポンスを返す
         let stub_response = json!({

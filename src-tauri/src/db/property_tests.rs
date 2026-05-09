@@ -8,10 +8,8 @@ mod tests {
 
     use crate::db::database::Database;
     use crate::db::repositories::{character, chat, memory, thought};
-    use crate::models::{
-        Character, ChatMessageRecord, ChatRole, ChatSession, Memory, Thought,
-    };
     use crate::models::tts::{EmotionParams, TTSConfig, TTSProvider};
+    use crate::models::{Character, ChatMessageRecord, ChatRole, ChatSession, Memory, Thought};
 
     // ========================================
     // Arbitrary Strategies
@@ -24,11 +22,17 @@ mod tests {
 
     /// ISO 8601日時文字列を生成するストラテジー
     fn iso8601_datetime() -> impl Strategy<Value = String> {
-        (2020u32..2030, 1u32..13, 1u32..29, 0u32..24, 0u32..60, 0u32..60).prop_map(
-            |(y, m, d, h, min, s)| {
-                format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z", y, m, d, h, min, s)
-            },
+        (
+            2020u32..2030,
+            1u32..13,
+            1u32..29,
+            0u32..24,
+            0u32..60,
+            0u32..60,
         )
+            .prop_map(|(y, m, d, h, min, s)| {
+                format!("{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z", y, m, d, h, min, s)
+            })
     }
 
     /// UUID風のID文字列を生成するストラテジー
@@ -94,7 +98,16 @@ mod tests {
             iso8601_datetime(),
         )
             .prop_map(
-                |(id, name, description, system_prompt, avatar_path, tts_config, created_at, updated_at)| {
+                |(
+                    id,
+                    name,
+                    description,
+                    system_prompt,
+                    avatar_path,
+                    tts_config,
+                    created_at,
+                    updated_at,
+                )| {
                     Character {
                         id,
                         name,
