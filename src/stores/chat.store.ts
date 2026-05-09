@@ -76,8 +76,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   sendMessage: async (content: string, attachments?: Attachment[]) => {
-    const { currentSessionId, messages } = get();
+    const { currentSessionId, messages, isStreaming, isTTSGenerating } = get();
     if (!currentSessionId) return;
+
+    // ストリーミング中・TTS生成中は送信をブロック（連打防止）
+    if (isStreaming || isTTSGenerating) return;
 
     // ユーザーメッセージをローカルに即座に追加（楽観的更新）
     // 添付ファイル情報をMessageAttachment形式に変換してローカル表示用に保持
