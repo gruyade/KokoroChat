@@ -391,7 +391,8 @@ impl ThoughtEngine for DefaultThoughtEngine {
                             Vec::new()
                         };
 
-                        let memories = memory_repo::list_memories(conn, &character_id).unwrap_or_default();
+                        let memories =
+                            memory_repo::list_memories(conn, &character_id).unwrap_or_default();
 
                         (character.system_prompt, recent_messages, memories)
                     };

@@ -286,14 +286,9 @@ pub async fn export_character(
                         crate::models::ChatRole::Spontaneous => "spontaneous",
                         crate::models::ChatRole::Tool => "tool",
                     };
-                    let attachments_value = msg
-                        .attachments
-                        .map(serde_json::to_value)
-                        .transpose()?;
-                    let tool_calls_value = msg
-                        .tool_calls
-                        .map(serde_json::to_value)
-                        .transpose()?;
+                    let attachments_value =
+                        msg.attachments.map(serde_json::to_value).transpose()?;
+                    let tool_calls_value = msg.tool_calls.map(serde_json::to_value).transpose()?;
 
                     Ok(ExportedMessage {
                         role: role_str.to_string(),
