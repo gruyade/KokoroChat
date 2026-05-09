@@ -234,9 +234,7 @@ mod tests {
 
     #[test]
     fn test_sentence_boundary_split() {
-        let config = SplitConfig {
-            max_chunk_size: 5,
-        };
+        let config = SplitConfig { max_chunk_size: 5 };
         let text = "最初の文。次の文。最後の文";
         let result = split_text(text, &config);
         assert_eq!(result, vec!["最初の文。", "次の文。", "最後の文"]);
@@ -244,9 +242,7 @@ mod tests {
 
     #[test]
     fn test_exclamation_and_question_boundaries() {
-        let config = SplitConfig {
-            max_chunk_size: 5,
-        };
+        let config = SplitConfig { max_chunk_size: 5 };
         let text = "すごい！本当？そうだよ。";
         let result = split_text(text, &config);
         assert_eq!(result, vec!["すごい！", "本当？", "そうだよ。"]);

@@ -104,7 +104,9 @@ impl PluginRegistry for DefaultPluginRegistry {
     fn list_plugins(&self) -> Vec<PluginInfo> {
         let plugins = self.plugins.read().unwrap_or_else(|e| e.into_inner());
 
-        plugins.values().map(|entry| PluginInfo {
+        plugins
+            .values()
+            .map(|entry| PluginInfo {
                 name: entry.handler.name().to_string(),
                 description: entry.handler.description().to_string(),
                 version: "1.0.0".to_string(),

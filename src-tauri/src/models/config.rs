@@ -126,7 +126,6 @@ pub enum SendKey {
     ShiftEnter,
 }
 
-
 /// UI設定
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UIConfig {
