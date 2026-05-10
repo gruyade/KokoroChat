@@ -102,13 +102,21 @@ pub fn run() {
                 .register(Box::new(CalculatorPlugin::new()))
                 .ok();
             plugin_registry
-                .register(Box::new(WebSearchPlugin::new()))
+                .register(Box::new(WebSearchPlugin::new(config_manager.clone())))
                 .ok();
             plugin_registry
                 .register(Box::new(FileOpsPlugin::new(
                     app_data_dir.join("plugin_files"),
                 )))
                 .ok();
+
+            // config.json から保存済みプラグイン設定を PluginRegistry に復元
+            {
+                let app_config = config_manager.get_config();
+                for (name, value) in &app_config.plugins.plugin_settings {
+                    plugin_registry.set_plugin_config(name, value.clone()).ok();
+                }
+            }
 
             // プラグインシステム初期化（レジストリをラップ）
             let plugin_system: Arc<dyn plugin::system::PluginSystem> =

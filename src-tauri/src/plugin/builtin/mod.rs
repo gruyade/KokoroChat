@@ -4,4 +4,4 @@ pub mod web_search;
 
 pub use calculator::CalculatorPlugin;
 pub use file_ops::FileOpsPlugin;
-pub use web_search::WebSearchPlugin;
+pub use web_search::{SearchProvider, WebSearchConfig, WebSearchPlugin};

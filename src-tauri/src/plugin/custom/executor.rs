@@ -92,7 +92,10 @@ impl PluginHandler for HttpToolHandler {
                     self.record.name, e
                 ))
             } else {
-                AppError::Plugin(format!("HTTP tool '{}' request failed: {}", self.record.name, e))
+                AppError::Plugin(format!(
+                    "HTTP tool '{}' request failed: {}",
+                    self.record.name, e
+                ))
             }
         })?;
 

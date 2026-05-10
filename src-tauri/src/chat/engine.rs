@@ -753,9 +753,7 @@ impl ChatEngine for DefaultChatEngine {
                                     done: true,
                                 },
                             )
-                            .map_err(|e| {
-                                AppError::Io(format!("Failed to emit event: {}", e))
-                            })?;
+                            .map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
 
                         // アシスタントメッセージ保存 & セッションメタデータ更新
                         let assistant_msg_id = uuid::Uuid::new_v4().to_string();
@@ -774,10 +772,7 @@ impl ChatEngine for DefaultChatEngine {
 
                         {
                             let db = self.db.lock().map_err(|e| {
-                                AppError::Database(format!(
-                                    "Failed to acquire DB lock: {}",
-                                    e
-                                ))
+                                AppError::Database(format!("Failed to acquire DB lock: {}", e))
                             })?;
                             let conn = db.connection();
 
@@ -834,10 +829,7 @@ impl ChatEngine for DefaultChatEngine {
 
                         {
                             let db = self.db.lock().map_err(|e| {
-                                AppError::Database(format!(
-                                    "Failed to acquire DB lock: {}",
-                                    e
-                                ))
+                                AppError::Database(format!("Failed to acquire DB lock: {}", e))
                             })?;
                             let conn = db.connection();
                             chat_repo::insert_message(conn, &tc_assistant_message)?;
@@ -887,10 +879,7 @@ impl ChatEngine for DefaultChatEngine {
 
                             {
                                 let db = self.db.lock().map_err(|e| {
-                                    AppError::Database(format!(
-                                        "Failed to acquire DB lock: {}",
-                                        e
-                                    ))
+                                    AppError::Database(format!("Failed to acquire DB lock: {}", e))
                                 })?;
                                 let conn = db.connection();
                                 chat_repo::insert_message(conn, &tool_message)?;
@@ -923,8 +912,7 @@ impl ChatEngine for DefaultChatEngine {
                 .map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
 
             // 最大反復到達時はエラーメッセージをアシスタントとして保存
-            let fallback_content =
-                "[Tool execution limit reached. Please try again.]".to_string();
+            let fallback_content = "[Tool execution limit reached. Please try again.]".to_string();
             let assistant_msg_id = uuid::Uuid::new_v4().to_string();
             let assistant_now = chrono::Utc::now().to_rfc3339();
 
@@ -1262,9 +1250,7 @@ impl ChatEngine for DefaultChatEngine {
                                     done: true,
                                 },
                             )
-                            .map_err(|e| {
-                                AppError::Io(format!("Failed to emit event: {}", e))
-                            })?;
+                            .map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
 
                         // アシスタントメッセージ保存 & セッションメタデータ更新
                         let assistant_msg_id = uuid::Uuid::new_v4().to_string();
@@ -1283,10 +1269,7 @@ impl ChatEngine for DefaultChatEngine {
 
                         {
                             let db = self.db.lock().map_err(|e| {
-                                AppError::Database(format!(
-                                    "Failed to acquire DB lock: {}",
-                                    e
-                                ))
+                                AppError::Database(format!("Failed to acquire DB lock: {}", e))
                             })?;
                             let conn = db.connection();
 
@@ -1343,10 +1326,7 @@ impl ChatEngine for DefaultChatEngine {
 
                         {
                             let db = self.db.lock().map_err(|e| {
-                                AppError::Database(format!(
-                                    "Failed to acquire DB lock: {}",
-                                    e
-                                ))
+                                AppError::Database(format!("Failed to acquire DB lock: {}", e))
                             })?;
                             let conn = db.connection();
                             chat_repo::insert_message(conn, &tc_assistant_message)?;
@@ -1394,10 +1374,7 @@ impl ChatEngine for DefaultChatEngine {
 
                             {
                                 let db = self.db.lock().map_err(|e| {
-                                    AppError::Database(format!(
-                                        "Failed to acquire DB lock: {}",
-                                        e
-                                    ))
+                                    AppError::Database(format!("Failed to acquire DB lock: {}", e))
                                 })?;
                                 let conn = db.connection();
                                 chat_repo::insert_message(conn, &tool_message)?;
@@ -1430,8 +1407,7 @@ impl ChatEngine for DefaultChatEngine {
                 .map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
 
             // 最大反復到達時はエラーメッセージをアシスタントとして保存
-            let fallback_content =
-                "[Tool execution limit reached. Please try again.]".to_string();
+            let fallback_content = "[Tool execution limit reached. Please try again.]".to_string();
             let assistant_msg_id = uuid::Uuid::new_v4().to_string();
             let assistant_now = chrono::Utc::now().to_rfc3339();
 
@@ -1780,9 +1756,7 @@ impl ChatEngine for DefaultChatEngine {
                                     done: true,
                                 },
                             )
-                            .map_err(|e| {
-                                AppError::Io(format!("Failed to emit event: {}", e))
-                            })?;
+                            .map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
 
                         // アシスタントメッセージ保存 & セッションメタデータ更新
                         let assistant_msg_id = uuid::Uuid::new_v4().to_string();
@@ -1801,10 +1775,7 @@ impl ChatEngine for DefaultChatEngine {
 
                         {
                             let db = self.db.lock().map_err(|e| {
-                                AppError::Database(format!(
-                                    "Failed to acquire DB lock: {}",
-                                    e
-                                ))
+                                AppError::Database(format!("Failed to acquire DB lock: {}", e))
                             })?;
                             let conn = db.connection();
 
@@ -1861,10 +1832,7 @@ impl ChatEngine for DefaultChatEngine {
 
                         {
                             let db = self.db.lock().map_err(|e| {
-                                AppError::Database(format!(
-                                    "Failed to acquire DB lock: {}",
-                                    e
-                                ))
+                                AppError::Database(format!("Failed to acquire DB lock: {}", e))
                             })?;
                             let conn = db.connection();
                             chat_repo::insert_message(conn, &tc_assistant_message)?;
@@ -1912,10 +1880,7 @@ impl ChatEngine for DefaultChatEngine {
 
                             {
                                 let db = self.db.lock().map_err(|e| {
-                                    AppError::Database(format!(
-                                        "Failed to acquire DB lock: {}",
-                                        e
-                                    ))
+                                    AppError::Database(format!("Failed to acquire DB lock: {}", e))
                                 })?;
                                 let conn = db.connection();
                                 chat_repo::insert_message(conn, &tool_message)?;
@@ -1948,8 +1913,7 @@ impl ChatEngine for DefaultChatEngine {
                 .map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
 
             // 最大反復到達時はエラーメッセージをアシスタントとして保存
-            let fallback_content =
-                "[Tool execution limit reached. Please try again.]".to_string();
+            let fallback_content = "[Tool execution limit reached. Please try again.]".to_string();
             let assistant_msg_id = uuid::Uuid::new_v4().to_string();
             let assistant_now = chrono::Utc::now().to_rfc3339();
 
@@ -2302,12 +2266,12 @@ impl DefaultChatEngine {
                 .unwrap_or_default();
             self.filter_tools_by_session_permissions(&session_id_owned, global)
         };
-        let tools_for_llm: Option<&[crate::models::ToolDefinition]> =
-            if tool_definitions.is_empty() {
-                None
-            } else {
-                Some(&tool_definitions)
-            };
+        let tools_for_llm: Option<&[crate::models::ToolDefinition]> = if tool_definitions.is_empty()
+        {
+            None
+        } else {
+            Some(&tool_definitions)
+        };
 
         let mut loop_messages = llm_messages;
         let mut iteration = 0;
@@ -2392,8 +2356,7 @@ impl DefaultChatEngine {
                         chat_repo::insert_message(conn, &tc_assistant_message)?;
                     }
 
-                    let tool_calls_json =
-                        serde_json::to_string(&tool_calls).unwrap_or_default();
+                    let tool_calls_json = serde_json::to_string(&tool_calls).unwrap_or_default();
                     loop_messages.push(ChatMessage {
                         role: MessageRole::Assistant,
                         content: tool_calls_json,
@@ -2433,10 +2396,7 @@ impl DefaultChatEngine {
 
                         {
                             let db = self.db.lock().map_err(|e| {
-                                AppError::Database(format!(
-                                    "Failed to acquire DB lock: {}",
-                                    e
-                                ))
+                                AppError::Database(format!("Failed to acquire DB lock: {}", e))
                             })?;
                             let conn = db.connection();
                             chat_repo::insert_message(conn, &tool_message)?;

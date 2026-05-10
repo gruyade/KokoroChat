@@ -353,10 +353,38 @@ mod tests {
             use crate::plugin::builtin::calculator::CalculatorPlugin;
             use crate::plugin::builtin::web_search::WebSearchPlugin;
             use crate::plugin::builtin::file_ops::FileOpsPlugin;
+            use crate::config::model_config::ModelConfigManager;
+            use crate::models::config::{
+                AppConfig, AttachmentConfig, MemoryConfig, ModelPurpose, ModelSettings,
+                PluginsConfig, SendKey, SpontaneousConfig, TTSGlobalConfig, Theme, ThoughtConfig,
+                UIConfig,
+            };
+            use std::collections::HashMap;
+
+            // テスト用の最小限 AppConfig
+            let mut models = HashMap::new();
+            models.insert(ModelPurpose::Chat, ModelSettings {
+                provider: None,
+                base_url: String::new(),
+                model: String::new(),
+                api_key: None,
+                temperature: 0.7,
+            });
+            let app_config = AppConfig {
+                models,
+                spontaneous: SpontaneousConfig { enabled: false, min_interval_seconds: 60, probability: 0.3 },
+                thought: ThoughtConfig { enabled: false, interval_minutes: 5, auto_delete_threshold_minutes: 1440 },
+                memory: MemoryConfig { compression_threshold: 50 },
+                tts: TTSGlobalConfig { enabled: false, voicepeak_path: None, timeout_seconds: 60, max_chunk_size: 140, irodori_base_url: None, irodori_caption_base_url: None, irodori_reference_audio_base_url: None },
+                ui: UIConfig { theme: Theme::Dark, language: "ja".to_string(), send_key: SendKey::default() },
+                plugins: PluginsConfig { enabled_plugins: vec![], plugin_settings: HashMap::new() },
+                attachment: AttachmentConfig { max_file_size_bytes: 10 * 1024 * 1024, allowed_extensions: vec!["txt".to_string()] },
+            };
+            let config_manager = Arc::new(ModelConfigManager::new_with_config(app_config));
 
             let plugins: Vec<Box<dyn PluginHandler>> = vec![
                 Box::new(CalculatorPlugin::new()),
-                Box::new(WebSearchPlugin::new()),
+                Box::new(WebSearchPlugin::new(config_manager)),
                 Box::new(FileOpsPlugin::new(std::path::PathBuf::from("."))),
             ];
 

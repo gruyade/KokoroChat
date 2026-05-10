@@ -770,15 +770,16 @@ impl LLMClient for OpenAICompatibleClient {
                     // Gemini: functionCall in parts を検出
                     if let Some(data) = line.strip_prefix("data: ") {
                         if let Ok(json) = serde_json::from_str::<Value>(data) {
-                            if let Some(parts) = json["candidates"][0]["content"]["parts"].as_array()
+                            if let Some(parts) =
+                                json["candidates"][0]["content"]["parts"].as_array()
                             {
                                 for part in parts {
                                     if let Some(fc) = part.get("functionCall") {
-                                        let name =
-                                            fc["name"].as_str().unwrap_or("").to_string();
-                                        let args = fc.get("args").cloned().unwrap_or(
-                                            Value::Object(serde_json::Map::new()),
-                                        );
+                                        let name = fc["name"].as_str().unwrap_or("").to_string();
+                                        let args = fc
+                                            .get("args")
+                                            .cloned()
+                                            .unwrap_or(Value::Object(serde_json::Map::new()));
                                         tool_calls.push(ToolCall {
                                             id: format!("gemini_call_{}", tool_calls.len()),
                                             name,
@@ -846,14 +847,11 @@ impl LLMClient for OpenAICompatibleClient {
 
                             match event_type {
                                 "content_block_start" => {
-                                    let index =
-                                        json["index"].as_u64().unwrap_or(0) as usize;
+                                    let index = json["index"].as_u64().unwrap_or(0) as usize;
                                     let content_block = &json["content_block"];
                                     if content_block["type"].as_str() == Some("tool_use") {
-                                        let id = content_block["id"]
-                                            .as_str()
-                                            .unwrap_or("")
-                                            .to_string();
+                                        let id =
+                                            content_block["id"].as_str().unwrap_or("").to_string();
                                         let name = content_block["name"]
                                             .as_str()
                                             .unwrap_or("")
@@ -863,13 +861,10 @@ impl LLMClient for OpenAICompatibleClient {
                                     }
                                 }
                                 "content_block_delta" => {
-                                    let index =
-                                        json["index"].as_u64().unwrap_or(0) as usize;
+                                    let index = json["index"].as_u64().unwrap_or(0) as usize;
                                     let delta = &json["delta"];
                                     if delta["type"].as_str() == Some("input_json_delta") {
-                                        let partial = delta["partial_json"]
-                                            .as_str()
-                                            .unwrap_or("");
+                                        let partial = delta["partial_json"].as_str().unwrap_or("");
                                         tool_buffer.process_input_delta(index, partial);
                                         continue;
                                     }

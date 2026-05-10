@@ -86,7 +86,7 @@ export const usePluginStore = create<PluginState>((set, get) => ({
       await invoke('register_custom_plugin', { request });
       // 再取得して最新状態を反映
       await get().fetchPlugins();
-    } catch (e) {
+    } catch {
       // バックエンドコマンドが未実装の場合はフロントエンドでローカル追加
       const { plugins } = get();
       const newPlugin: PluginInfo = {

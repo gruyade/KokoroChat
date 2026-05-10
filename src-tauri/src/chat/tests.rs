@@ -909,7 +909,10 @@ mod tests {
             if idx < responses.len() {
                 Ok(responses[idx].clone())
             } else {
-                Ok(responses.last().cloned().unwrap_or(LLMResponse::Text("done".to_string())))
+                Ok(responses
+                    .last()
+                    .cloned()
+                    .unwrap_or(LLMResponse::Text("done".to_string())))
             }
         }
 
@@ -927,7 +930,10 @@ mod tests {
             let response = if idx < responses.len() {
                 responses[idx].clone()
             } else {
-                responses.last().cloned().unwrap_or(LLMResponse::Text("done".to_string()))
+                responses
+                    .last()
+                    .cloned()
+                    .unwrap_or(LLMResponse::Text("done".to_string()))
             };
 
             match &response {
@@ -1155,7 +1161,9 @@ mod tests {
 
         // ツール結果がエラーメッセージを含むことを確認
         assert_eq!(messages[2].role, ChatRole::Tool);
-        assert!(messages[2].content.contains("Plugin system is not available"));
+        assert!(messages[2]
+            .content
+            .contains("Plugin system is not available"));
 
         // 最終応答
         assert_eq!(messages[3].role, ChatRole::Assistant);
@@ -1187,8 +1195,7 @@ mod tests {
             .register(Box::new(CalculatorPlugin::new()))
             .unwrap();
 
-        let plugin_system: Arc<dyn PluginSystem> =
-            Arc::new(DefaultPluginSystem::new(registry));
+        let plugin_system: Arc<dyn PluginSystem> = Arc::new(DefaultPluginSystem::new(registry));
 
         // LLMモック: 1回目=ToolCall, 2回目=テキスト応答
         let llm = Arc::new(SequentialMockLLMClient::new(vec![
@@ -1263,8 +1270,7 @@ mod tests {
             .register(Box::new(CalculatorPlugin::new()))
             .unwrap();
 
-        let plugin_system: Arc<dyn PluginSystem> =
-            Arc::new(DefaultPluginSystem::new(registry));
+        let plugin_system: Arc<dyn PluginSystem> = Arc::new(DefaultPluginSystem::new(registry));
 
         // LLMモック: 1回目=ゼロ除算のToolCall, 2回目=エラーを受けたテキスト応答
         let llm = Arc::new(SequentialMockLLMClient::new(vec![
@@ -1273,9 +1279,7 @@ mod tests {
                 name: "calculate".to_string(),
                 arguments: serde_json::json!({"expression": "10 / 0"}),
             }]),
-            LLMResponse::Text(
-                "I'm sorry, division by zero is not allowed.".to_string(),
-            ),
+            LLMResponse::Text("I'm sorry, division by zero is not allowed.".to_string()),
         ]));
 
         let engine = DefaultChatEngine::new(
@@ -1326,8 +1330,7 @@ mod tests {
             .register(Box::new(CalculatorPlugin::new()))
             .unwrap();
 
-        let plugin_system: Arc<dyn PluginSystem> =
-            Arc::new(DefaultPluginSystem::new(registry));
+        let plugin_system: Arc<dyn PluginSystem> = Arc::new(DefaultPluginSystem::new(registry));
 
         // LLMモック: 1回目=ToolCall(2+3), 2回目=ToolCall(5*4), 3回目=テキスト
         let llm = Arc::new(SequentialMockLLMClient::new(vec![

@@ -1,9 +1,21 @@
 import { useEffect, useState } from 'react';
-import { Settings, Save, Loader2, Plus, Trash2, Puzzle } from 'lucide-react';
+import { Settings, Save, Loader2, Plus, Trash2, Puzzle, Globe } from 'lucide-react';
+import { invoke } from '@tauri-apps/api/core';
 import { useConfigStore, usePluginStore, useUIStore } from '../../stores';
 import { ModelConfigForm } from './ModelConfigForm';
 import type { AppConfig, ModelPurpose, ModelSettings, SendKey } from '../../types';
 import type { CustomToolType } from '../../types/plugin';
+
+/** Web検索プロバイダ種別 */
+type SearchProvider = 'tavily' | 'brave';
+
+/** Web検索プラグイン設定 */
+interface WebSearchConfig {
+  provider: SearchProvider;
+  tavily_api_key: string | null;
+  brave_api_key: string | null;
+  allowed_domains: string[];
+}
 
 type SettingsTab = 'models' | 'tts' | 'spontaneous' | 'thought' | 'general' | 'tools';
 
@@ -47,6 +59,13 @@ export function SettingsView() {
   const [newToolEndpoint, setNewToolEndpoint] = useState('');
   const [newToolCommand, setNewToolCommand] = useState('');
 
+  // Web検索設定
+  const [webSearchProvider, setWebSearchProvider] = useState<SearchProvider>('tavily');
+  const [webSearchTavilyApiKey, setWebSearchTavilyApiKey] = useState('');
+  const [webSearchBraveApiKey, setWebSearchBraveApiKey] = useState('');
+  const [webSearchAllowedDomains, setWebSearchAllowedDomains] = useState('');
+  const [webSearchSaving, setWebSearchSaving] = useState(false);
+
   useEffect(() => {
     fetchConfig();
   }, [fetchConfig]);
@@ -61,6 +80,24 @@ export function SettingsView() {
     }
   }, [config]);
 
+  // Web検索設定の読み込み
+  useEffect(() => {
+    const loadWebSearchConfig = async () => {
+      try {
+        const cfg = await invoke<WebSearchConfig | null>('get_plugin_config', { name: 'web_search' });
+        if (cfg) {
+          setWebSearchProvider(cfg.provider ?? 'tavily');
+          setWebSearchTavilyApiKey(cfg.tavily_api_key ?? '');
+          setWebSearchBraveApiKey(cfg.brave_api_key ?? '');
+          setWebSearchAllowedDomains((cfg.allowed_domains ?? []).join('\n'));
+        }
+      } catch {
+        // プラグイン未登録時は無視
+      }
+    };
+    loadWebSearchConfig();
+  }, []);
+
   const handleSave = async () => {
     if (!draft) return;
     setSaving(true);
@@ -71,6 +108,27 @@ export function SettingsView() {
       showToast('設定の保存に失敗', 'error');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleSaveWebSearchConfig = async () => {
+    setWebSearchSaving(true);
+    try {
+      const config: WebSearchConfig = {
+        provider: webSearchProvider,
+        tavily_api_key: webSearchTavilyApiKey.trim() || null,
+        brave_api_key: webSearchBraveApiKey.trim() || null,
+        allowed_domains: webSearchAllowedDomains
+          .split('\n')
+          .map((d) => d.trim())
+          .filter((d) => d.length > 0),
+      };
+      await invoke('set_plugin_config', { name: 'web_search', config });
+      showToast('Web検索設定を保存した');
+    } catch {
+      showToast('Web検索設定の保存に失敗', 'error');
+    } finally {
+      setWebSearchSaving(false);
     }
   };
 
@@ -584,6 +642,94 @@ export function SettingsView() {
 
         {activeTab === 'tools' && (
           <div className="space-y-4">
+            {/* Web検索設定 */}
+            <div className="p-4 rounded-lg border border-border space-y-3">
+              <div className="flex items-center gap-2">
+                <Globe className="w-4 h-4 text-muted-foreground" />
+                <h3 className="text-sm font-medium">Web検索設定</h3>
+              </div>
+
+              {/* プロバイダ選択 */}
+              <div>
+                <label htmlFor="web-search-provider" className="block text-xs text-muted-foreground mb-1">
+                  検索プロバイダ
+                </label>
+                <select
+                  id="web-search-provider"
+                  value={webSearchProvider}
+                  onChange={(e) => setWebSearchProvider(e.target.value as SearchProvider)}
+                  className="w-full px-3 py-1.5 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                >
+                  <option value="tavily">Tavily</option>
+                  <option value="brave">Brave Search</option>
+                </select>
+              </div>
+
+              {/* API Key — Tavily */}
+              <div>
+                <label htmlFor="web-search-tavily-api-key" className="block text-xs text-muted-foreground mb-1">
+                  Tavily API Key
+                </label>
+                <input
+                  id="web-search-tavily-api-key"
+                  type="password"
+                  value={webSearchTavilyApiKey}
+                  onChange={(e) => setWebSearchTavilyApiKey(e.target.value)}
+                  placeholder="tvly-..."
+                  className="w-full px-3 py-1.5 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                />
+              </div>
+
+              {/* API Key — Brave */}
+              <div>
+                <label htmlFor="web-search-brave-api-key" className="block text-xs text-muted-foreground mb-1">
+                  Brave Search API Key
+                </label>
+                <input
+                  id="web-search-brave-api-key"
+                  type="password"
+                  value={webSearchBraveApiKey}
+                  onChange={(e) => setWebSearchBraveApiKey(e.target.value)}
+                  placeholder="BSA..."
+                  className="w-full px-3 py-1.5 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                />
+              </div>
+
+              {/* 許可ドメイン */}
+              <div>
+                <label htmlFor="web-search-domains" className="block text-xs text-muted-foreground mb-1">
+                  許可ドメイン（fetch_page 用ホワイトリスト）
+                </label>
+                <textarea
+                  id="web-search-domains"
+                  value={webSearchAllowedDomains}
+                  onChange={(e) => setWebSearchAllowedDomains(e.target.value)}
+                  placeholder={"example.com\nen.wikipedia.org\ndocs.rs"}
+                  rows={4}
+                  className="w-full px-3 py-1.5 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary resize-y"
+                />
+                <p className="mt-1 text-xs text-muted-foreground">
+                  1行に1ドメイン。fetch_page はここに記載されたドメインのみアクセス可能。
+                </p>
+              </div>
+
+              {/* 保存ボタン */}
+              <div className="flex justify-end">
+                <button
+                  onClick={handleSaveWebSearchConfig}
+                  disabled={webSearchSaving}
+                  className="px-3 py-1.5 text-xs rounded-md bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 flex items-center gap-1 transition-colors"
+                >
+                  {webSearchSaving ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Save className="w-3.5 h-3.5" />
+                  )}
+                  Web検索設定を保存
+                </button>
+              </div>
+            </div>
+
             {/* Header with Add button */}
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
