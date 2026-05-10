@@ -18,15 +18,22 @@ pub trait PluginHandler: Send + Sync {
     /// このプラグインが提供するツール一覧
     fn tools(&self) -> Vec<ToolDefinition>;
     /// ツール実行
-    async fn execute(&self, tool_call: &ToolCall) -> Result<ToolResult, AppError>;
+    async fn execute(
+        &self,
+        tool_call: &ToolCall,
+        app_handle: &tauri::AppHandle,
+    ) -> Result<ToolResult, AppError>;
 }
 
 /// プラグインシステムtrait — tool_callディスパッチと有効ツール一覧取得
 #[async_trait]
 pub trait PluginSystem: Send + Sync {
     /// tool_call群を対応するプラグインにディスパッチし、結果を収集
-    async fn handle_tool_calls(&self, tool_calls: &[ToolCall])
-        -> Result<Vec<ToolResult>, AppError>;
+    async fn handle_tool_calls(
+        &self,
+        tool_calls: &[ToolCall],
+        app_handle: &tauri::AppHandle,
+    ) -> Result<Vec<ToolResult>, AppError>;
     /// 有効なプラグインが提供する全ツール定義を取得
     fn get_enabled_tools(&self) -> Vec<ToolDefinition>;
 }
@@ -47,11 +54,12 @@ impl PluginSystem for DefaultPluginSystem {
     async fn handle_tool_calls(
         &self,
         tool_calls: &[ToolCall],
+        app_handle: &tauri::AppHandle,
     ) -> Result<Vec<ToolResult>, AppError> {
         let mut results = Vec::with_capacity(tool_calls.len());
 
         for tool_call in tool_calls {
-            let result = self.registry.execute_tool(tool_call).await;
+            let result = self.registry.execute_tool(tool_call, app_handle).await;
             match result {
                 Ok(tool_result) => results.push(tool_result),
                 Err(_) => {

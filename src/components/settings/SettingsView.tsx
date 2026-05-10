@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Settings, Save, Loader2, Plus, Trash2, Puzzle, Globe } from 'lucide-react';
+import { Settings, Save, Loader2, Plus, Trash2, Puzzle, Globe, ChevronRight } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { useConfigStore, usePluginStore, useUIStore } from '../../stores';
 import { ModelConfigForm } from './ModelConfigForm';
@@ -642,12 +642,14 @@ export function SettingsView() {
 
         {activeTab === 'tools' && (
           <div className="space-y-4">
-            {/* Web検索設定 */}
-            <div className="p-4 rounded-lg border border-border space-y-3">
-              <div className="flex items-center gap-2">
+            {/* Web検索設定（折り畳み可能） */}
+            <details className="rounded-lg border border-border group">
+              <summary className="flex items-center gap-2 px-4 py-3 cursor-pointer hover:bg-muted/40 transition-colors list-none">
+                <ChevronRight className="w-4 h-4 text-muted-foreground transition-transform group-open:rotate-90" />
                 <Globe className="w-4 h-4 text-muted-foreground" />
                 <h3 className="text-sm font-medium">Web検索設定</h3>
-              </div>
+              </summary>
+              <div className="px-4 pb-4 space-y-3 border-t border-border/50">
 
               {/* プロバイダ選択 */}
               <div>
@@ -728,7 +730,8 @@ export function SettingsView() {
                   Web検索設定を保存
                 </button>
               </div>
-            </div>
+              </div>
+            </details>
 
             {/* Header with Add button */}
             <div className="flex items-center justify-between">

@@ -420,7 +420,7 @@ impl PluginHandler for WebSearchPlugin {
         ]
     }
 
-    async fn execute(&self, tool_call: &ToolCall) -> Result<ToolResult, AppError> {
+    async fn execute(&self, tool_call: &ToolCall, _app_handle: &tauri::AppHandle) -> Result<ToolResult, AppError> {
         match tool_call.name.as_str() {
             "fetch_page" => return self.execute_fetch_page(tool_call).await,
             "search" => {}
@@ -496,6 +496,10 @@ mod tests {
         AppConfig, AttachmentConfig, MemoryConfig, ModelPurpose, ModelSettings, PluginsConfig,
         SendKey, SpontaneousConfig, TTSGlobalConfig, Theme, ThoughtConfig, UIConfig,
     };
+
+    fn make_mock_app() -> tauri::App {
+        tauri::test::mock_builder().build(tauri::generate_context!()).unwrap()
+    }
 
     /// テスト用のデフォルト AppConfig を生成
     fn test_app_config() -> AppConfig {
@@ -700,14 +704,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_no_api_key_returns_guidance() {
+        let app = make_mock_app();
         let plugin = WebSearchPlugin::new(test_config_manager_no_key());
         let tool_call = ToolCall {
             id: "call-1".to_string(),
             name: "search".to_string(),
             arguments: json!({ "query": "Rust programming" }),
+            context: None,
         };
 
-        let result = plugin.execute(&tool_call).await.unwrap();
+        let result = plugin.execute(&tool_call, app.handle()).await.unwrap();
         assert!(!result.is_error);
         assert_eq!(result.tool_call_id, "call-1");
         // APIキー未設定時はガイダンスメッセージを返す
@@ -717,15 +723,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_with_tavily_key_calls_api() {
+        let app = make_mock_app();
         // 無効なAPIキーでTavily APIを呼ぶとエラーが返る
         let plugin = WebSearchPlugin::new(test_config_manager_with_key("tvly-invalid-key"));
         let tool_call = ToolCall {
             id: "call-2".to_string(),
             name: "search".to_string(),
             arguments: json!({ "query": "Rust programming" }),
+            context: None,
         };
 
-        let result = plugin.execute(&tool_call).await.unwrap();
+        let result = plugin.execute(&tool_call, app.handle()).await.unwrap();
         assert_eq!(result.tool_call_id, "call-2");
         // 無効なキーなので is_error: true が返る（APIエラーまたはネットワークエラー）
         assert!(result.is_error);
@@ -734,27 +742,31 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_missing_query() {
+        let app = make_mock_app();
         let plugin = WebSearchPlugin::new(test_config_manager_no_key());
         let tool_call = ToolCall {
             id: "call-3".to_string(),
             name: "search".to_string(),
             arguments: json!({}),
+            context: None,
         };
 
-        let result = plugin.execute(&tool_call).await;
+        let result = plugin.execute(&tool_call, app.handle()).await;
         assert!(result.is_err());
     }
 
     #[tokio::test]
     async fn test_execute_with_japanese_query_no_key() {
+        let app = make_mock_app();
         let plugin = WebSearchPlugin::new(test_config_manager_no_key());
         let tool_call = ToolCall {
             id: "call-4".to_string(),
             name: "search".to_string(),
             arguments: json!({ "query": "人工知能" }),
+            context: None,
         };
 
-        let result = plugin.execute(&tool_call).await.unwrap();
+        let result = plugin.execute(&tool_call, app.handle()).await.unwrap();
         assert!(!result.is_error);
         // APIキー未設定なのでガイダンスが返る
         assert!(result.content.contains("APIキーを設定してください"));
@@ -762,14 +774,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_with_empty_api_key_returns_guidance() {
+        let app = make_mock_app();
         let plugin = WebSearchPlugin::new(test_config_manager_with_key(""));
         let tool_call = ToolCall {
             id: "call-5".to_string(),
             name: "search".to_string(),
             arguments: json!({ "query": "test" }),
+            context: None,
         };
 
-        let result = plugin.execute(&tool_call).await.unwrap();
+        let result = plugin.execute(&tool_call, app.handle()).await.unwrap();
         assert!(!result.is_error);
         // 空文字列のAPIキーもガイダンスを返す
         assert!(result.content.contains("APIキーを設定してください"));
@@ -794,15 +808,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_fetch_page_empty_allowed_domains_blocks() {
+        let app = make_mock_app();
         // allowed_domains が空の場合、全ドメインをブロック
         let plugin = WebSearchPlugin::new(test_config_manager_no_key());
         let tool_call = ToolCall {
             id: "fetch-1".to_string(),
             name: "fetch_page".to_string(),
             arguments: json!({ "url": "https://example.com/page" }),
+            context: None,
         };
 
-        let result = plugin.execute(&tool_call).await.unwrap();
+        let result = plugin.execute(&tool_call, app.handle()).await.unwrap();
         assert!(!result.is_error);
         assert!(result
             .content
@@ -812,15 +828,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_fetch_page_domain_not_in_whitelist_blocks() {
+        let app = make_mock_app();
         // ホワイトリストに含まれないドメインはブロック
         let plugin = WebSearchPlugin::new(test_config_manager_with_domains(vec!["allowed.com"]));
         let tool_call = ToolCall {
             id: "fetch-2".to_string(),
             name: "fetch_page".to_string(),
             arguments: json!({ "url": "https://blocked.com/page" }),
+            context: None,
         };
 
-        let result = plugin.execute(&tool_call).await.unwrap();
+        let result = plugin.execute(&tool_call, app.handle()).await.unwrap();
         assert!(!result.is_error);
         assert!(result
             .content
@@ -892,42 +910,48 @@ mod tests {
 
     #[tokio::test]
     async fn test_fetch_page_invalid_url() {
+        let app = make_mock_app();
         let plugin = WebSearchPlugin::new(test_config_manager_with_domains(vec!["example.com"]));
         let tool_call = ToolCall {
             id: "fetch-invalid".to_string(),
             name: "fetch_page".to_string(),
             arguments: json!({ "url": "not-a-valid-url" }),
+            context: None,
         };
 
-        let result = plugin.execute(&tool_call).await;
+        let result = plugin.execute(&tool_call, app.handle()).await;
         assert!(result.is_err());
     }
 
     #[tokio::test]
     async fn test_fetch_page_missing_url_param() {
+        let app = make_mock_app();
         let plugin = WebSearchPlugin::new(test_config_manager_with_domains(vec!["example.com"]));
         let tool_call = ToolCall {
             id: "fetch-no-url".to_string(),
             name: "fetch_page".to_string(),
             arguments: json!({}),
+            context: None,
         };
 
-        let result = plugin.execute(&tool_call).await;
+        let result = plugin.execute(&tool_call, app.handle()).await;
         assert!(result.is_err());
     }
 
     #[tokio::test]
     async fn test_fetch_page_allowed_domain_attempts_fetch() {
+        let app = make_mock_app();
         // 許可ドメインの場合、実際にHTTPリクエストを試みる（ネットワークエラーになる可能性あり）
         let plugin = WebSearchPlugin::new(test_config_manager_with_domains(vec!["example.com"]));
         let tool_call = ToolCall {
             id: "fetch-allowed".to_string(),
             name: "fetch_page".to_string(),
             arguments: json!({ "url": "https://example.com" }),
+            context: None,
         };
 
         // ドメインチェックは通過するので、ネットワークエラーか成功のどちらか
-        let result = plugin.execute(&tool_call).await;
+        let result = plugin.execute(&tool_call, app.handle()).await;
         // エラーにならない（ToolResult が返る）
         assert!(result.is_ok());
         let tool_result = result.unwrap();
@@ -939,14 +963,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_unknown_tool_name() {
+        let app = make_mock_app();
         let plugin = WebSearchPlugin::new(test_config_manager_no_key());
         let tool_call = ToolCall {
             id: "call-unknown".to_string(),
             name: "unknown_tool".to_string(),
             arguments: json!({}),
+            context: None,
         };
 
-        let result = plugin.execute(&tool_call).await;
+        let result = plugin.execute(&tool_call, app.handle()).await;
         assert!(result.is_err());
     }
 }

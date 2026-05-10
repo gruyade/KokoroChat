@@ -57,3 +57,27 @@ pub struct ChatToolPermission {
     pub is_enabled: bool,
     pub created_at: String,
 }
+
+/// チャットセッション単位のプラグイン設定（chat_plugin_configs テーブル対応）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatPluginConfig {
+    pub id: String,
+    pub session_id: String,
+    pub plugin_name: String,
+    pub config_json: String,
+    pub updated_at: String,
+}
+
+/// file_ops プラグインの設定（config_json のデシリアライズ用）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileOpsConfig {
+    pub directories: Vec<DirectoryPermission>,
+}
+
+/// ディレクトリごとの読み書き権限
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DirectoryPermission {
+    pub path: String,
+    pub allow_read: bool,
+    pub allow_write: bool,
+}

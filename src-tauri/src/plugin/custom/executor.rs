@@ -60,7 +60,7 @@ impl PluginHandler for HttpToolHandler {
         }]
     }
 
-    async fn execute(&self, tool_call: &ToolCall) -> Result<ToolResult, AppError> {
+    async fn execute(&self, tool_call: &ToolCall, _app_handle: &tauri::AppHandle) -> Result<ToolResult, AppError> {
         let payload = json!({
             "tool_call_id": tool_call.id,
             "name": tool_call.name,
@@ -176,7 +176,7 @@ impl PluginHandler for CliToolHandler {
         }]
     }
 
-    async fn execute(&self, tool_call: &ToolCall) -> Result<ToolResult, AppError> {
+    async fn execute(&self, tool_call: &ToolCall, _app_handle: &tauri::AppHandle) -> Result<ToolResult, AppError> {
         let expanded_args = self.expand_args(&self.config.args, &tool_call.arguments);
 
         let mut child = Command::new(&self.config.command)
@@ -410,6 +410,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_cli_handler_execute_echo() {
+        let app = tauri::test::mock_builder().build(tauri::generate_context!()).unwrap();
         let mut record = make_cli_record();
         // Windows では cmd /C echo を使用、Unix では echo を直接使用
         #[cfg(target_os = "windows")]
@@ -432,15 +433,17 @@ mod tests {
             id: "call-001".to_string(),
             name: "test_cli_tool".to_string(),
             arguments: json!({"message": "hello world"}),
+            context: None,
         };
 
-        let result = handler.execute(&tool_call).await.unwrap();
+        let result = handler.execute(&tool_call, app.handle()).await.unwrap();
         assert!(!result.is_error);
         assert!(result.content.contains("hello world"));
     }
 
     #[tokio::test]
     async fn test_cli_handler_execute_nonexistent_command() {
+        let app = tauri::test::mock_builder().build(tauri::generate_context!()).unwrap();
         let mut record = make_cli_record();
         record.config_json = json!({
             "command": "nonexistent_command_xyz_12345",
@@ -452,9 +455,10 @@ mod tests {
             id: "call-002".to_string(),
             name: "test_cli_tool".to_string(),
             arguments: json!({}),
+            context: None,
         };
 
-        let result = handler.execute(&tool_call).await;
+        let result = handler.execute(&tool_call, app.handle()).await;
         assert!(result.is_err());
     }
 }

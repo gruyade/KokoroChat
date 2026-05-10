@@ -61,7 +61,7 @@ mod tests {
             self.tool_defs.clone()
         }
 
-        async fn execute(&self, tool_call: &ToolCall) -> Result<ToolResult, AppError> {
+        async fn execute(&self, tool_call: &ToolCall, _app_handle: &tauri::AppHandle) -> Result<ToolResult, AppError> {
             let input = tool_call
                 .arguments
                 .get("input")
@@ -385,7 +385,12 @@ mod tests {
             let plugins: Vec<Box<dyn PluginHandler>> = vec![
                 Box::new(CalculatorPlugin::new()),
                 Box::new(WebSearchPlugin::new(config_manager)),
-                Box::new(FileOpsPlugin::new(std::path::PathBuf::from("."))),
+                Box::new(FileOpsPlugin::new(
+                    std::path::PathBuf::from("."),
+                    Arc::new(std::sync::Mutex::new(
+                        crate::db::database::Database::open_in_memory().unwrap()
+                    )),
+                )),
             ];
 
             for plugin in &plugins {
@@ -463,6 +468,7 @@ mod tests {
                     id: call_id.clone(),
                     name: tool_name,
                     arguments: json!({"input": "test_data"}),
+                    context: None,
                 }];
 
                 let results = system.handle_tool_calls(&tool_calls).await.unwrap();
@@ -499,6 +505,7 @@ mod tests {
                     id: call_id,
                     name: fake_tool.clone(),
                     arguments: json!({}),
+                    context: None,
                 }];
 
                 let results = system.handle_tool_calls(&tool_calls).await.unwrap();
@@ -533,6 +540,7 @@ mod tests {
                     id: call_id,
                     name: tool_name.clone(),
                     arguments: json!({"input": "test"}),
+                    context: None,
                 }];
 
                 let results = system.handle_tool_calls(&tool_calls).await.unwrap();
@@ -580,6 +588,7 @@ mod tests {
                     id: call_id.clone(),
                     name: tool_name,
                     arguments: json!({"input": "propagation_test"}),
+                    context: None,
                 }];
 
                 let results = system.handle_tool_calls(&tool_calls).await.unwrap();
@@ -618,6 +627,7 @@ mod tests {
                         id: id.clone(),
                         name: format!("{}_tool", name),
                         arguments: json!({"input": "multi_test"}),
+                        context: None,
                     })
                     .collect();
 
@@ -652,6 +662,7 @@ mod tests {
                     id: call_id.clone(),
                     name: "nonexistent_tool".to_string(),
                     arguments: json!({}),
+                    context: None,
                 }];
 
                 let results = system.handle_tool_calls(&tool_calls).await.unwrap();

@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react';
-import { Brain, MessageSquare, Volume2, VolumeX, Sparkles, Loader2 } from 'lucide-react';
+import { Brain, MessageSquare, Volume2, VolumeX, Sparkles, Loader2, Sun, Moon } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { create } from 'zustand';
 import { useAudioStore } from '../../hooks/useAudio';
@@ -26,6 +26,7 @@ export function ChatHeaderControls() {
   const { thoughtPaused, spontaneousPaused, setThoughtPaused, setSpontaneousPaused } = usePauseStore();
   const { volume, setVolume } = useAudioStore();
   const { config } = useConfigStore();
+  const { theme, toggleTheme } = useUIStore();
   const currentSessionId = useChatStore((s) => s.currentSessionId);
   const [error, setError] = useState<string | null>(null);
   const [memoryGenerating, setMemoryGenerating] = useState(false);
@@ -84,6 +85,16 @@ export function ChatHeaderControls() {
 
   return (
     <div className="flex items-center gap-1">
+      {/* テーマ切り替え */}
+      <button
+        onClick={toggleTheme}
+        title={theme === 'dark' ? 'ライトモードに切り替え' : 'ダークモードに切り替え'}
+        className="p-1.5 rounded-md transition-colors text-foreground hover:bg-muted/50"
+        aria-label="テーマ切り替え"
+      >
+        {theme === 'dark' ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+      </button>
+
       {/* ボリュームコントロール — TTS有効時のみ表示 */}
       {ttsEnabled && (
         <div className="flex items-center gap-1 mr-2">

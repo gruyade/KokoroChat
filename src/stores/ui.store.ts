@@ -15,6 +15,31 @@ export interface Toast {
   type: ToastType;
 }
 
+/** localStorageからテーマを復元、なければシステム設定を参照 */
+function getInitialTheme(): 'light' | 'dark' {
+  try {
+    const stored = localStorage.getItem('theme');
+    if (stored === 'light' || stored === 'dark') return stored;
+    if (typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches) return 'dark';
+  } catch {
+    // テスト環境等でlocalStorageが利用不可の場合
+  }
+  return 'dark'; // デフォルトはダーク
+}
+
+/** DOMにテーマクラスを反映 */
+function applyThemeToDOM(theme: 'light' | 'dark') {
+  try {
+    if (theme === 'dark') {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  } catch {
+    // テスト環境等でdocumentが利用不可の場合
+  }
+}
+
 interface UIState {
   theme: 'light' | 'dark';
   sidebarOpen: boolean;
@@ -31,15 +56,24 @@ interface UIState {
 
 let toastCounter = 0;
 
+// 初期テーマをDOMに即座に反映
+const initialTheme = getInitialTheme();
+applyThemeToDOM(initialTheme);
+
 export const useUIStore = create<UIState>((set) => ({
-  theme: 'dark',
+  theme: initialTheme,
   sidebarOpen: true,
   activeView: 'chat',
   sidebarTab: 'chat',
   toasts: [],
 
   toggleTheme: () => {
-    set((state) => ({ theme: state.theme === 'light' ? 'dark' : 'light' }));
+    set((state) => {
+      const newTheme = state.theme === 'light' ? 'dark' : 'light';
+      applyThemeToDOM(newTheme);
+      try { localStorage.setItem('theme', newTheme); } catch { /* noop */ }
+      return { theme: newTheme };
+    });
   },
 
   toggleSidebar: () => {

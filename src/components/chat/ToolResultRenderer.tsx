@@ -8,7 +8,8 @@ interface ToolResultRendererProps {
 /** パース結果の型 */
 type ParsedContent =
   | { kind: 'widget'; type: string; data: unknown }
-  | { kind: 'text'; text: string };
+  | { kind: 'text'; text: string }
+  | { kind: 'image'; base64: string };
 
 /**
  * ChatWidget タグの正規表現
@@ -45,6 +46,17 @@ function ToolResultSegment({ segment }: { segment: ParsedContent }) {
     );
   }
 
+  // 画像描画（[IMAGE_BASE64]: プレフィックスのツール結果）
+  if (segment.kind === 'image') {
+    return (
+      <img
+        src={`data:image/png;base64,${segment.base64}`}
+        alt="ツール取得画像"
+        className="max-w-full max-h-[300px] rounded-md border border-border object-contain"
+      />
+    );
+  }
+
   // ウィジェット描画
   const Widget = getWidget(segment.type);
   if (Widget) {
@@ -62,10 +74,20 @@ function ToolResultSegment({ segment }: { segment: ParsedContent }) {
   );
 }
 
+/** [IMAGE_BASE64]: プレフィックス */
+const IMAGE_BASE64_PREFIX = '[IMAGE_BASE64]:';
+
 /**
  * ツール結果文字列をパースし、描画セグメントの配列を返す。
  */
 function parseToolResult(content: string): ParsedContent[] {
+  // 0. [IMAGE_BASE64]: プレフィックスを持つ画像データを検出
+  const trimmedForImage = content.trim();
+  if (trimmedForImage.startsWith(IMAGE_BASE64_PREFIX)) {
+    const base64Data = trimmedForImage.slice(IMAGE_BASE64_PREFIX.length);
+    return [{ kind: 'image', base64: base64Data }];
+  }
+
   // 1. JSON全体がウィジェット形式かチェック
   const trimmed = content.trim();
   if (trimmed.startsWith('{') || trimmed.startsWith('[')) {

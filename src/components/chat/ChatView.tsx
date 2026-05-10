@@ -31,6 +31,9 @@ export function ChatView() {
 
   const [isDragOver, setIsDragOver] = useState(false);
   const [toolPaneOpen, setToolPaneOpen] = useState(false);
+  const [paneWidth, setPaneWidth] = useState(320);
+  const isResizingRef = useRef(false);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   // Tauri drag-drop イベント: ファイルパスを直接取得
   useEffect(() => {
@@ -52,6 +55,29 @@ export function ChatView() {
       unlistenLeave.then(fn => fn());
     };
   }, []);
+
+  // --- リサイズハンドル用イベントハンドラ ---
+  const handleResizeMove = useCallback((e: MouseEvent) => {
+    if (!isResizingRef.current) return;
+    const container = containerRef.current;
+    if (!container) return;
+    const containerRect = container.getBoundingClientRect();
+    const newWidth = containerRect.right - e.clientX;
+    setPaneWidth(Math.max(200, Math.min(600, newWidth)));
+  }, []);
+
+  const handleResizeEnd = useCallback(() => {
+    isResizingRef.current = false;
+    document.removeEventListener('mousemove', handleResizeMove);
+    document.removeEventListener('mouseup', handleResizeEnd);
+  }, [handleResizeMove]);
+
+  const handleResizeStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    isResizingRef.current = true;
+    document.addEventListener('mousemove', handleResizeMove);
+    document.addEventListener('mouseup', handleResizeEnd);
+  }, [handleResizeMove, handleResizeEnd]);
 
   // スクロールイベントでオートスクロール状態を更新
   // isProgrammaticScrollRef はscrollイベント経由の更新のみブロック（ユーザー操作イベントはブロックしない）
@@ -269,7 +295,7 @@ export function ChatView() {
   };
 
   return (
-    <div className="relative flex-1 flex overflow-hidden">
+    <div ref={containerRef} className="relative flex-1 flex overflow-hidden">
       {/* Main chat area */}
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* Drag-drop overlay */}
@@ -351,9 +377,19 @@ export function ChatView() {
         />
       </div>
 
-      {/* Tool management pane (right side) */}
+      {/* Tool management pane (right side) with resize handle */}
       {toolPaneOpen && (
-        <ToolManagementPane onClose={() => setToolPaneOpen(false)} />
+        <>
+          {/* Resize handle */}
+          <div
+            onMouseDown={handleResizeStart}
+            className="w-1 hover:w-1.5 bg-border hover:bg-primary/50 cursor-col-resize transition-colors flex-shrink-0"
+          />
+          {/* Tool pane with dynamic width */}
+          <div style={{ width: paneWidth }} className="flex-shrink-0 overflow-hidden">
+            <ToolManagementPane onClose={() => setToolPaneOpen(false)} />
+          </div>
+        </>
       )}
     </div>
   );

@@ -38,7 +38,7 @@ pub trait PluginRegistry: Send + Sync {
     /// 有効なプラグインの全ツール定義を取得
     fn get_enabled_tools(&self) -> Vec<ToolDefinition>;
     /// tool_callを対応するプラグインで実行
-    async fn execute_tool(&self, tool_call: &ToolCall) -> Result<ToolResult, AppError>;
+    async fn execute_tool(&self, tool_call: &ToolCall, app_handle: &tauri::AppHandle) -> Result<ToolResult, AppError>;
 }
 
 /// デフォルトのPluginRegistry実装（RwLockによるスレッドセーフ管理）
@@ -174,7 +174,7 @@ impl PluginRegistry for DefaultPluginRegistry {
             .collect()
     }
 
-    async fn execute_tool(&self, tool_call: &ToolCall) -> Result<ToolResult, AppError> {
+    async fn execute_tool(&self, tool_call: &ToolCall, app_handle: &tauri::AppHandle) -> Result<ToolResult, AppError> {
         // ツール名からプラグインを検索し、Arcクローンを取得してからロックを解放
         let handler: Option<Arc<dyn PluginHandler>> = {
             let plugins = self
@@ -196,7 +196,7 @@ impl PluginRegistry for DefaultPluginRegistry {
         };
 
         match handler {
-            Some(h) => h.execute(tool_call).await,
+            Some(h) => h.execute(tool_call, app_handle).await,
             None => Err(AppError::NotFound(format!(
                 "No enabled plugin provides tool '{}'",
                 tool_call.name

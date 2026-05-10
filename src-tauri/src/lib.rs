@@ -29,7 +29,7 @@ use memory::manager::DefaultMemoryManager;
 use plugin::builtin::{CalculatorPlugin, FileOpsPlugin, WebSearchPlugin};
 use plugin::registry::{DefaultPluginRegistry, PluginRegistry};
 use plugin::system::DefaultPluginSystem;
-use state::AppState;
+use state::{AppState, FileOpsStateManager};
 use thought::engine::DefaultThoughtEngine;
 use tts::connector::DefaultTTSConnector;
 use tts::flow_controller::TTSFlowController;
@@ -107,6 +107,7 @@ pub fn run() {
             plugin_registry
                 .register(Box::new(FileOpsPlugin::new(
                     app_data_dir.join("plugin_files"),
+                    db_for_chat.clone(),
                 )))
                 .ok();
 
@@ -174,6 +175,7 @@ pub fn run() {
             };
 
             app.manage(app_state);
+            app.manage(FileOpsStateManager::default());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -217,6 +219,9 @@ pub fn run() {
             commands::plugin::disable_plugin,
             commands::plugin::get_plugin_config,
             commands::plugin::set_plugin_config,
+            commands::plugin::get_session_plugin_config,
+            commands::plugin::update_session_plugin_config,
+            commands::plugin::resolve_file_ops_access,
             commands::thought::get_thoughts,
             commands::thought::start_thought_engine,
             commands::thought::stop_thought_engine,

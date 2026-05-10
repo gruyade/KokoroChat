@@ -49,7 +49,7 @@ impl PluginHandler for MockPlugin {
         }]
     }
 
-    async fn execute(&self, tool_call: &ToolCall) -> Result<ToolResult, AppError> {
+    async fn execute(&self, tool_call: &ToolCall, _app_handle: &tauri::AppHandle) -> Result<ToolResult, AppError> {
         let input = tool_call
             .arguments
             .get("input")
@@ -85,7 +85,7 @@ impl PluginHandler for ErrorPlugin {
         }]
     }
 
-    async fn execute(&self, tool_call: &ToolCall) -> Result<ToolResult, AppError> {
+    async fn execute(&self, tool_call: &ToolCall, _app_handle: &tauri::AppHandle) -> Result<ToolResult, AppError> {
         Ok(ToolResult {
             tool_call_id: tool_call.id.clone(),
             content: "execution failed".to_string(),
@@ -267,6 +267,7 @@ async fn test_handle_tool_calls_success() {
         id: "call_1".to_string(),
         name: "calc_tool".to_string(),
         arguments: json!({"input": "2+2"}),
+        context: None,
     }];
 
     let results = system.handle_tool_calls(&tool_calls).await.unwrap();
@@ -285,6 +286,7 @@ async fn test_handle_tool_calls_not_found() {
         id: "call_x".to_string(),
         name: "nonexistent_tool".to_string(),
         arguments: json!({}),
+        context: None,
     }];
 
     let results = system.handle_tool_calls(&tool_calls).await.unwrap();
@@ -308,11 +310,13 @@ async fn test_handle_multiple_tool_calls() {
             id: "c1".to_string(),
             name: "alpha_tool".to_string(),
             arguments: json!({"input": "hello"}),
+            context: None,
         },
         ToolCall {
             id: "c2".to_string(),
             name: "beta_tool".to_string(),
             arguments: json!({"input": "world"}),
+            context: None,
         },
     ];
 
@@ -337,6 +341,7 @@ async fn test_handle_tool_calls_disabled_plugin() {
         id: "c_dis".to_string(),
         name: "disabled_one_tool".to_string(),
         arguments: json!({"input": "test"}),
+        context: None,
     }];
 
     let results = system.handle_tool_calls(&tool_calls).await.unwrap();
@@ -369,6 +374,7 @@ async fn test_execute_tool_with_error_plugin() {
         id: "err_call".to_string(),
         name: "error_tool".to_string(),
         arguments: json!({}),
+        context: None,
     }];
 
     let results = system.handle_tool_calls(&tool_calls).await.unwrap();

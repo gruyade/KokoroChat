@@ -84,6 +84,7 @@ mod tests {
                 id: "call_001".to_string(),
                 name: "calculator".to_string(),
                 arguments: serde_json::json!({"expression": "2+2"}),
+                context: None,
             }]))
         }
 
@@ -869,7 +870,7 @@ mod tests {
     // Tool Execution Loop Tests
     //
     // send_message のツール実行ループを検証するテスト群。
-    // DefaultChatEngine::send_message_for_test を使用（AppHandle不要のテスト専用メソッド）。
+    // DefaultChatEngine::send_message_for_test を使用。
     // =========================================================================
 
     use crate::models::plugin::ToolResult;
@@ -979,6 +980,7 @@ mod tests {
         async fn handle_tool_calls(
             &self,
             tool_calls: &[crate::models::ToolCall],
+            _app_handle: &tauri::AppHandle,
         ) -> Result<Vec<ToolResult>, AppError> {
             let results = tool_calls
                 .iter()
@@ -1007,6 +1009,7 @@ mod tests {
                 id: "call_001".to_string(),
                 name: "calculator".to_string(),
                 arguments: serde_json::json!({"expression": "2+2"}),
+                context: None,
             }]),
             // 2回目: テキストを返す
             LLMResponse::Text("The answer is 4.".to_string()),
@@ -1075,6 +1078,7 @@ mod tests {
                     id: format!("call_{:03}", i + 1),
                     name: "calculator".to_string(),
                     arguments: serde_json::json!({"expression": "loop"}),
+                    context: None,
                 }])
             })
             .collect();
@@ -1124,6 +1128,7 @@ mod tests {
                 id: "call_001".to_string(),
                 name: "calculator".to_string(),
                 arguments: serde_json::json!({"expression": "2+2"}),
+                context: None,
             }]),
             // 2回目: テキストを返す（エラー結果を受けてLLMが応答）
             LLMResponse::Text("Sorry, the tool is not available.".to_string()),
@@ -1203,6 +1208,7 @@ mod tests {
                 id: "call_calc_001".to_string(),
                 name: "calculate".to_string(),
                 arguments: serde_json::json!({"expression": "3 + 5 * 2"}),
+                context: None,
             }]),
             LLMResponse::Text("The result of 3 + 5 * 2 is 13.".to_string()),
         ]));
@@ -1278,6 +1284,7 @@ mod tests {
                 id: "call_div_zero".to_string(),
                 name: "calculate".to_string(),
                 arguments: serde_json::json!({"expression": "10 / 0"}),
+                context: None,
             }]),
             LLMResponse::Text("I'm sorry, division by zero is not allowed.".to_string()),
         ]));
@@ -1338,11 +1345,13 @@ mod tests {
                 id: "call_step1".to_string(),
                 name: "calculate".to_string(),
                 arguments: serde_json::json!({"expression": "2 + 3"}),
+                context: None,
             }]),
             LLMResponse::ToolCalls(vec![ToolCall {
                 id: "call_step2".to_string(),
                 name: "calculate".to_string(),
                 arguments: serde_json::json!({"expression": "5 * 4"}),
+                context: None,
             }]),
             LLMResponse::Text("First: 5, Second: 20. Total: 25.".to_string()),
         ]));

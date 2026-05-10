@@ -1,7 +1,10 @@
 // Application State — Tauri managed state
 
+use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
+
+use tokio::sync::{Mutex as TokioMutex, oneshot};
 
 use crate::attachment::processor::AttachmentProcessor;
 use crate::character::creator::CharacterCreator;
@@ -42,5 +45,18 @@ impl AppState {
     /// DB接続を取得（デバッグコマンド用）
     pub fn chat_engine_db(&self) -> Result<std::sync::MutexGuard<'_, Database>, String> {
         self.db.lock().map_err(|e| format!("DB lock failed: {}", e))
+    }
+}
+
+/// ファイル操作プラグインのアクセス許可リクエスト待機状態を管理する構造体
+pub struct FileOpsStateManager {
+    pub pending_requests: TokioMutex<HashMap<String, oneshot::Sender<bool>>>,
+}
+
+impl Default for FileOpsStateManager {
+    fn default() -> Self {
+        Self {
+            pending_requests: TokioMutex::new(HashMap::new()),
+        }
     }
 }
