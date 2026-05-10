@@ -5,6 +5,7 @@ use std::sync::{Arc, RwLock};
 
 use async_trait::async_trait;
 use serde_json::Value;
+use tauri::Runtime;
 
 use crate::error::AppError;
 use crate::models::plugin::{PluginInfo, ToolCall, ToolDefinition, ToolResult};
@@ -12,17 +13,17 @@ use crate::models::plugin::{PluginInfo, ToolCall, ToolDefinition, ToolResult};
 use super::system::PluginHandler;
 
 /// プラグインエントリ（ハンドラ + 状態）
-struct PluginEntry {
-    handler: Arc<dyn PluginHandler>,
+struct PluginEntry<R: Runtime = tauri::Wry> {
+    handler: Arc<dyn PluginHandler<R>>,
     enabled: bool,
     config: Option<Value>,
 }
 
 /// プラグインレジストリtrait — 登録・管理・ディスパッチ
 #[async_trait]
-pub trait PluginRegistry: Send + Sync {
+pub trait PluginRegistry<R: Runtime = tauri::Wry>: Send + Sync {
     /// プラグインを登録
-    fn register(&self, handler: Box<dyn PluginHandler>) -> Result<(), AppError>;
+    fn register(&self, handler: Box<dyn PluginHandler<R>>) -> Result<(), AppError>;
     /// プラグインを登録解除
     fn unregister(&self, name: &str) -> Result<(), AppError>;
     /// 登録済みプラグイン一覧を取得
@@ -38,15 +39,19 @@ pub trait PluginRegistry: Send + Sync {
     /// 有効なプラグインの全ツール定義を取得
     fn get_enabled_tools(&self) -> Vec<ToolDefinition>;
     /// tool_callを対応するプラグインで実行
-    async fn execute_tool(&self, tool_call: &ToolCall) -> Result<ToolResult, AppError>;
+    async fn execute_tool(
+        &self,
+        tool_call: &ToolCall,
+        app_handle: &tauri::AppHandle<R>,
+    ) -> Result<ToolResult, AppError>;
 }
 
 /// デフォルトのPluginRegistry実装（RwLockによるスレッドセーフ管理）
-pub struct DefaultPluginRegistry {
-    plugins: RwLock<HashMap<String, PluginEntry>>,
+pub struct DefaultPluginRegistry<R: Runtime = tauri::Wry> {
+    plugins: RwLock<HashMap<String, PluginEntry<R>>>,
 }
 
-impl DefaultPluginRegistry {
+impl<R: Runtime> DefaultPluginRegistry<R> {
     pub fn new() -> Self {
         Self {
             plugins: RwLock::new(HashMap::new()),
@@ -54,15 +59,15 @@ impl DefaultPluginRegistry {
     }
 }
 
-impl Default for DefaultPluginRegistry {
+impl<R: Runtime> Default for DefaultPluginRegistry<R> {
     fn default() -> Self {
         Self::new()
     }
 }
 
 #[async_trait]
-impl PluginRegistry for DefaultPluginRegistry {
-    fn register(&self, handler: Box<dyn PluginHandler>) -> Result<(), AppError> {
+impl<R: Runtime> PluginRegistry<R> for DefaultPluginRegistry<R> {
+    fn register(&self, handler: Box<dyn PluginHandler<R>>) -> Result<(), AppError> {
         let name = handler.name().to_string();
         let mut plugins = self
             .plugins
@@ -174,9 +179,13 @@ impl PluginRegistry for DefaultPluginRegistry {
             .collect()
     }
 
-    async fn execute_tool(&self, tool_call: &ToolCall) -> Result<ToolResult, AppError> {
+    async fn execute_tool(
+        &self,
+        tool_call: &ToolCall,
+        app_handle: &tauri::AppHandle<R>,
+    ) -> Result<ToolResult, AppError> {
         // ツール名からプラグインを検索し、Arcクローンを取得してからロックを解放
-        let handler: Option<Arc<dyn PluginHandler>> = {
+        let handler: Option<Arc<dyn PluginHandler<R>>> = {
             let plugins = self
                 .plugins
                 .read()
@@ -196,7 +205,7 @@ impl PluginRegistry for DefaultPluginRegistry {
         };
 
         match handler {
-            Some(h) => h.execute(tool_call).await,
+            Some(h) => h.execute(tool_call, app_handle).await,
             None => Err(AppError::NotFound(format!(
                 "No enabled plugin provides tool '{}'",
                 tool_call.name

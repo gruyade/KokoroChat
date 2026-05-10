@@ -43,7 +43,7 @@ impl HttpToolHandler {
 }
 
 #[async_trait]
-impl PluginHandler for HttpToolHandler {
+impl<R: tauri::Runtime> PluginHandler<R> for HttpToolHandler {
     fn name(&self) -> &str {
         &self.record.name
     }
@@ -60,7 +60,11 @@ impl PluginHandler for HttpToolHandler {
         }]
     }
 
-    async fn execute(&self, tool_call: &ToolCall) -> Result<ToolResult, AppError> {
+    async fn execute(
+        &self,
+        tool_call: &ToolCall,
+        _app_handle: &tauri::AppHandle<R>,
+    ) -> Result<ToolResult, AppError> {
         let payload = json!({
             "tool_call_id": tool_call.id,
             "name": tool_call.name,
@@ -159,7 +163,7 @@ impl CliToolHandler {
 }
 
 #[async_trait]
-impl PluginHandler for CliToolHandler {
+impl<R: tauri::Runtime> PluginHandler<R> for CliToolHandler {
     fn name(&self) -> &str {
         &self.record.name
     }
@@ -176,7 +180,11 @@ impl PluginHandler for CliToolHandler {
         }]
     }
 
-    async fn execute(&self, tool_call: &ToolCall) -> Result<ToolResult, AppError> {
+    async fn execute(
+        &self,
+        tool_call: &ToolCall,
+        _app_handle: &tauri::AppHandle<R>,
+    ) -> Result<ToolResult, AppError> {
         let expanded_args = self.expand_args(&self.config.args, &tool_call.arguments);
 
         let mut child = Command::new(&self.config.command)
@@ -325,9 +333,10 @@ mod tests {
     fn test_http_handler_creation() {
         let record = make_http_record();
         let handler = HttpToolHandler::new(record).unwrap();
-        assert_eq!(handler.name(), "test_http_tool");
-        assert_eq!(handler.tools().len(), 1);
-        assert_eq!(handler.tools()[0].name, "test_http_tool");
+        let h: &dyn PluginHandler<tauri::test::MockRuntime> = &handler;
+        assert_eq!(h.name(), "test_http_tool");
+        assert_eq!(h.tools().len(), 1);
+        assert_eq!(h.tools()[0].name, "test_http_tool");
     }
 
     #[test]
@@ -342,8 +351,9 @@ mod tests {
     fn test_cli_handler_creation() {
         let record = make_cli_record();
         let handler = CliToolHandler::new(record).unwrap();
-        assert_eq!(handler.name(), "test_cli_tool");
-        assert_eq!(handler.tools().len(), 1);
+        let h: &dyn PluginHandler<tauri::test::MockRuntime> = &handler;
+        assert_eq!(h.name(), "test_cli_tool");
+        assert_eq!(h.tools().len(), 1);
     }
 
     #[test]
@@ -410,6 +420,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_cli_handler_execute_echo() {
+        let app = tauri::test::mock_builder()
+            .build(tauri::generate_context!())
+            .unwrap();
         let mut record = make_cli_record();
         // Windows では cmd /C echo を使用、Unix では echo を直接使用
         #[cfg(target_os = "windows")]
@@ -432,15 +445,19 @@ mod tests {
             id: "call-001".to_string(),
             name: "test_cli_tool".to_string(),
             arguments: json!({"message": "hello world"}),
+            context: None,
         };
 
-        let result = handler.execute(&tool_call).await.unwrap();
+        let result = handler.execute(&tool_call, app.handle()).await.unwrap();
         assert!(!result.is_error);
         assert!(result.content.contains("hello world"));
     }
 
     #[tokio::test]
     async fn test_cli_handler_execute_nonexistent_command() {
+        let app = tauri::test::mock_builder()
+            .build(tauri::generate_context!())
+            .unwrap();
         let mut record = make_cli_record();
         record.config_json = json!({
             "command": "nonexistent_command_xyz_12345",
@@ -452,9 +469,10 @@ mod tests {
             id: "call-002".to_string(),
             name: "test_cli_tool".to_string(),
             arguments: json!({}),
+            context: None,
         };
 
-        let result = handler.execute(&tool_call).await;
+        let result = handler.execute(&tool_call, app.handle()).await;
         assert!(result.is_err());
     }
 }

@@ -472,6 +472,7 @@ mod tests {
                 id: "call-001".to_string(),
                 name: "calculator".to_string(),
                 arguments: serde_json::json!({"expression": "1+1"}),
+                context: None,
             }]),
             tool_call_id: None,
             created_at: "2024-01-01T10:00:00Z".to_string(),

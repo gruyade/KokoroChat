@@ -336,45 +336,81 @@ impl OpenAICompatibleClient {
     ) -> Value {
         let messages_json: Vec<Value> = messages
             .iter()
-            .map(|msg| {
-                let mut obj = if let Some(ref images) = msg.images {
-                    if !images.is_empty() {
-                        // Vision API形式: content を配列にする
-                        let mut content_parts: Vec<Value> = Vec::new();
-                        if !msg.content.is_empty() {
-                            content_parts.push(serde_json::json!({
-                                "type": "text",
-                                "text": msg.content,
-                            }));
+            .flat_map(|msg| {
+                let is_tool = matches!(msg.role, MessageRole::Tool);
+
+                if is_tool {
+                    // OpenAI互換API仕様: role=tool のメッセージは文字列contentのみ許可
+                    // 画像が含まれる場合は別途 role=user のメッセージとして追加する
+                    let mut tool_obj = serde_json::json!({
+                        "role": msg.role,
+                        "content": msg.content,
+                    });
+                    if let Some(ref tool_call_id) = msg.tool_call_id {
+                        tool_obj["tool_call_id"] = Value::String(tool_call_id.clone());
+                    }
+
+                    if let Some(ref images) = msg.images {
+                        if !images.is_empty() {
+                            let image_parts: Vec<Value> = images
+                                .iter()
+                                .map(|img_base64| {
+                                    serde_json::json!({
+                                        "type": "image_url",
+                                        "image_url": {
+                                            "url": format!("data:image/png;base64,{}", img_base64),
+                                        }
+                                    })
+                                })
+                                .collect();
+                            let user_img_obj = serde_json::json!({
+                                "role": "user",
+                                "content": image_parts,
+                            });
+                            return vec![tool_obj, user_img_obj];
                         }
-                        for img_base64 in images {
-                            content_parts.push(serde_json::json!({
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": format!("data:image/png;base64,{}", img_base64),
-                                }
-                            }));
+                    }
+                    vec![tool_obj]
+                } else {
+                    let mut obj = if let Some(ref images) = msg.images {
+                        if !images.is_empty() {
+                            // Vision API形式: content を配列にする
+                            let mut content_parts: Vec<Value> = Vec::new();
+                            if !msg.content.is_empty() {
+                                content_parts.push(serde_json::json!({
+                                    "type": "text",
+                                    "text": msg.content,
+                                }));
+                            }
+                            for img_base64 in images {
+                                content_parts.push(serde_json::json!({
+                                    "type": "image_url",
+                                    "image_url": {
+                                        "url": format!("data:image/png;base64,{}", img_base64),
+                                    }
+                                }));
+                            }
+                            serde_json::json!({
+                                "role": msg.role,
+                                "content": content_parts,
+                            })
+                        } else {
+                            serde_json::json!({
+                                "role": msg.role,
+                                "content": msg.content,
+                            })
                         }
-                        serde_json::json!({
-                            "role": msg.role,
-                            "content": content_parts,
-                        })
                     } else {
                         serde_json::json!({
                             "role": msg.role,
                             "content": msg.content,
                         })
+                    };
+                    if let Some(ref tool_call_id) = msg.tool_call_id {
+                        obj["tool_call_id"] = Value::String(tool_call_id.clone());
                     }
-                } else {
-                    serde_json::json!({
-                        "role": msg.role,
-                        "content": msg.content,
-                    })
-                };
-                if let Some(ref tool_call_id) = msg.tool_call_id {
-                    obj["tool_call_id"] = Value::String(tool_call_id.clone());
+                    vec![obj]
                 }
-                obj
             })
             .collect();
 
@@ -453,6 +489,7 @@ impl OpenAICompatibleClient {
                             id,
                             name,
                             arguments,
+                            context: None,
                         }
                     })
                     .collect();
@@ -564,6 +601,7 @@ impl OpenAIToolCallBuffer {
                     id,
                     name,
                     arguments,
+                    context: None,
                 }
             })
             .collect()
@@ -618,6 +656,7 @@ impl AnthropicToolCallBuffer {
                     id,
                     name,
                     arguments,
+                    context: None,
                 }
             })
             .collect()
@@ -784,6 +823,7 @@ impl LLMClient for OpenAICompatibleClient {
                                             id: format!("gemini_call_{}", tool_calls.len()),
                                             name,
                                             arguments: args,
+                                            context: None,
                                         });
                                     }
                                 }
@@ -1448,6 +1488,7 @@ mod tests {
             id: "call_1".to_string(),
             name: "search".to_string(),
             arguments: serde_json::json!({"query": "test"}),
+            context: None,
         }]);
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("ToolCalls"));

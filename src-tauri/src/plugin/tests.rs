@@ -26,7 +26,7 @@ impl MockPlugin {
 }
 
 #[async_trait]
-impl PluginHandler for MockPlugin {
+impl<R: tauri::Runtime> PluginHandler<R> for MockPlugin {
     fn name(&self) -> &str {
         &self.name
     }
@@ -49,7 +49,11 @@ impl PluginHandler for MockPlugin {
         }]
     }
 
-    async fn execute(&self, tool_call: &ToolCall) -> Result<ToolResult, AppError> {
+    async fn execute(
+        &self,
+        tool_call: &ToolCall,
+        _app_handle: &tauri::AppHandle<R>,
+    ) -> Result<ToolResult, AppError> {
         let input = tool_call
             .arguments
             .get("input")
@@ -68,7 +72,7 @@ impl PluginHandler for MockPlugin {
 struct ErrorPlugin;
 
 #[async_trait]
-impl PluginHandler for ErrorPlugin {
+impl<R: tauri::Runtime> PluginHandler<R> for ErrorPlugin {
     fn name(&self) -> &str {
         "error_plugin"
     }
@@ -85,7 +89,11 @@ impl PluginHandler for ErrorPlugin {
         }]
     }
 
-    async fn execute(&self, tool_call: &ToolCall) -> Result<ToolResult, AppError> {
+    async fn execute(
+        &self,
+        tool_call: &ToolCall,
+        _app_handle: &tauri::AppHandle<R>,
+    ) -> Result<ToolResult, AppError> {
         Ok(ToolResult {
             tool_call_id: tool_call.id.clone(),
             content: "execution failed".to_string(),
@@ -94,11 +102,19 @@ impl PluginHandler for ErrorPlugin {
     }
 }
 
+fn make_mock_app() -> tauri::App<tauri::test::MockRuntime> {
+    tauri::test::mock_builder()
+        .build(tauri::generate_context!())
+        .unwrap()
+}
+
 // --- Registry Tests ---
+
+type TestRegistry = DefaultPluginRegistry<tauri::test::MockRuntime>;
 
 #[test]
 fn test_register_plugin() {
-    let registry = DefaultPluginRegistry::new();
+    let registry = TestRegistry::new();
     let plugin = MockPlugin::new("test_plugin", "A test plugin");
 
     let result = registry.register(Box::new(plugin));
@@ -113,7 +129,7 @@ fn test_register_plugin() {
 
 #[test]
 fn test_register_duplicate_plugin_fails() {
-    let registry = DefaultPluginRegistry::new();
+    let registry = TestRegistry::new();
     let plugin1 = MockPlugin::new("dup_plugin", "First");
     let plugin2 = MockPlugin::new("dup_plugin", "Second");
 
@@ -129,7 +145,7 @@ fn test_register_duplicate_plugin_fails() {
 
 #[test]
 fn test_unregister_plugin() {
-    let registry = DefaultPluginRegistry::new();
+    let registry = TestRegistry::new();
     let plugin = MockPlugin::new("removable", "To be removed");
 
     registry.register(Box::new(plugin)).unwrap();
@@ -142,7 +158,7 @@ fn test_unregister_plugin() {
 
 #[test]
 fn test_unregister_nonexistent_plugin_fails() {
-    let registry = DefaultPluginRegistry::new();
+    let registry = TestRegistry::new();
     let result = registry.unregister("nonexistent");
     assert!(result.is_err());
 
@@ -154,7 +170,7 @@ fn test_unregister_nonexistent_plugin_fails() {
 
 #[test]
 fn test_enable_disable_plugin() {
-    let registry = DefaultPluginRegistry::new();
+    let registry = TestRegistry::new();
     let plugin = MockPlugin::new("toggle_plugin", "Toggleable");
 
     registry.register(Box::new(plugin)).unwrap();
@@ -176,21 +192,21 @@ fn test_enable_disable_plugin() {
 
 #[test]
 fn test_enable_nonexistent_plugin_fails() {
-    let registry = DefaultPluginRegistry::new();
+    let registry = TestRegistry::new();
     let result = registry.enable_plugin("ghost");
     assert!(result.is_err());
 }
 
 #[test]
 fn test_disable_nonexistent_plugin_fails() {
-    let registry = DefaultPluginRegistry::new();
+    let registry = TestRegistry::new();
     let result = registry.disable_plugin("ghost");
     assert!(result.is_err());
 }
 
 #[test]
 fn test_plugin_config_management() {
-    let registry = DefaultPluginRegistry::new();
+    let registry = TestRegistry::new();
     let plugin = MockPlugin::new("configurable", "Has config");
 
     registry.register(Box::new(plugin)).unwrap();
@@ -211,14 +227,14 @@ fn test_plugin_config_management() {
 
 #[test]
 fn test_set_config_nonexistent_plugin_fails() {
-    let registry = DefaultPluginRegistry::new();
+    let registry = TestRegistry::new();
     let result = registry.set_plugin_config("ghost", json!({}));
     assert!(result.is_err());
 }
 
 #[test]
 fn test_get_enabled_tools() {
-    let registry = DefaultPluginRegistry::new();
+    let registry = TestRegistry::new();
     let plugin1 = MockPlugin::new("plugin_a", "Plugin A");
     let plugin2 = MockPlugin::new("plugin_b", "Plugin B");
 
@@ -238,7 +254,7 @@ fn test_get_enabled_tools() {
 
 #[test]
 fn test_list_plugins_shows_all() {
-    let registry = DefaultPluginRegistry::new();
+    let registry = TestRegistry::new();
     let plugin1 = MockPlugin::new("p1", "Plugin 1");
     let plugin2 = MockPlugin::new("p2", "Plugin 2");
     let plugin3 = MockPlugin::new("p3", "Plugin 3");
@@ -257,7 +273,8 @@ fn test_list_plugins_shows_all() {
 
 #[tokio::test]
 async fn test_handle_tool_calls_success() {
-    let registry = Arc::new(DefaultPluginRegistry::new());
+    let app = make_mock_app();
+    let registry = Arc::new(DefaultPluginRegistry::<tauri::test::MockRuntime>::new());
     let plugin = MockPlugin::new("calc", "Calculator");
     registry.register(Box::new(plugin)).unwrap();
 
@@ -267,9 +284,13 @@ async fn test_handle_tool_calls_success() {
         id: "call_1".to_string(),
         name: "calc_tool".to_string(),
         arguments: json!({"input": "2+2"}),
+        context: None,
     }];
 
-    let results = system.handle_tool_calls(&tool_calls).await.unwrap();
+    let results = system
+        .handle_tool_calls(&tool_calls, app.handle())
+        .await
+        .unwrap();
     assert_eq!(results.len(), 1);
     assert_eq!(results[0].tool_call_id, "call_1");
     assert!(!results[0].is_error);
@@ -278,16 +299,21 @@ async fn test_handle_tool_calls_success() {
 
 #[tokio::test]
 async fn test_handle_tool_calls_not_found() {
-    let registry = Arc::new(DefaultPluginRegistry::new());
+    let app = make_mock_app();
+    let registry = Arc::new(DefaultPluginRegistry::<tauri::test::MockRuntime>::new());
     let system = DefaultPluginSystem::new(registry);
 
     let tool_calls = vec![ToolCall {
         id: "call_x".to_string(),
         name: "nonexistent_tool".to_string(),
         arguments: json!({}),
+        context: None,
     }];
 
-    let results = system.handle_tool_calls(&tool_calls).await.unwrap();
+    let results = system
+        .handle_tool_calls(&tool_calls, app.handle())
+        .await
+        .unwrap();
     assert_eq!(results.len(), 1);
     assert!(results[0].is_error);
     assert!(results[0].content.contains("not found"));
@@ -295,7 +321,8 @@ async fn test_handle_tool_calls_not_found() {
 
 #[tokio::test]
 async fn test_handle_multiple_tool_calls() {
-    let registry = Arc::new(DefaultPluginRegistry::new());
+    let app = make_mock_app();
+    let registry = Arc::new(DefaultPluginRegistry::<tauri::test::MockRuntime>::new());
     let plugin_a = MockPlugin::new("alpha", "Alpha plugin");
     let plugin_b = MockPlugin::new("beta", "Beta plugin");
     registry.register(Box::new(plugin_a)).unwrap();
@@ -308,15 +335,20 @@ async fn test_handle_multiple_tool_calls() {
             id: "c1".to_string(),
             name: "alpha_tool".to_string(),
             arguments: json!({"input": "hello"}),
+            context: None,
         },
         ToolCall {
             id: "c2".to_string(),
             name: "beta_tool".to_string(),
             arguments: json!({"input": "world"}),
+            context: None,
         },
     ];
 
-    let results = system.handle_tool_calls(&tool_calls).await.unwrap();
+    let results = system
+        .handle_tool_calls(&tool_calls, app.handle())
+        .await
+        .unwrap();
     assert_eq!(results.len(), 2);
     assert!(!results[0].is_error);
     assert!(!results[1].is_error);
@@ -326,7 +358,8 @@ async fn test_handle_multiple_tool_calls() {
 
 #[tokio::test]
 async fn test_handle_tool_calls_disabled_plugin() {
-    let registry = Arc::new(DefaultPluginRegistry::new());
+    let app = make_mock_app();
+    let registry = Arc::new(DefaultPluginRegistry::<tauri::test::MockRuntime>::new());
     let plugin = MockPlugin::new("disabled_one", "Will be disabled");
     registry.register(Box::new(plugin)).unwrap();
     registry.disable_plugin("disabled_one").unwrap();
@@ -337,9 +370,13 @@ async fn test_handle_tool_calls_disabled_plugin() {
         id: "c_dis".to_string(),
         name: "disabled_one_tool".to_string(),
         arguments: json!({"input": "test"}),
+        context: None,
     }];
 
-    let results = system.handle_tool_calls(&tool_calls).await.unwrap();
+    let results = system
+        .handle_tool_calls(&tool_calls, app.handle())
+        .await
+        .unwrap();
     assert_eq!(results.len(), 1);
     assert!(results[0].is_error);
     assert!(results[0].content.contains("not found"));
@@ -347,7 +384,7 @@ async fn test_handle_tool_calls_disabled_plugin() {
 
 #[tokio::test]
 async fn test_get_enabled_tools_via_system() {
-    let registry = Arc::new(DefaultPluginRegistry::new());
+    let registry = Arc::new(DefaultPluginRegistry::<tauri::test::MockRuntime>::new());
     let plugin = MockPlugin::new("sys_plugin", "System plugin");
     registry.register(Box::new(plugin)).unwrap();
 
@@ -360,7 +397,8 @@ async fn test_get_enabled_tools_via_system() {
 
 #[tokio::test]
 async fn test_execute_tool_with_error_plugin() {
-    let registry = Arc::new(DefaultPluginRegistry::new());
+    let app = make_mock_app();
+    let registry = Arc::new(DefaultPluginRegistry::<tauri::test::MockRuntime>::new());
     registry.register(Box::new(ErrorPlugin)).unwrap();
 
     let system = DefaultPluginSystem::new(registry);
@@ -369,9 +407,13 @@ async fn test_execute_tool_with_error_plugin() {
         id: "err_call".to_string(),
         name: "error_tool".to_string(),
         arguments: json!({}),
+        context: None,
     }];
 
-    let results = system.handle_tool_calls(&tool_calls).await.unwrap();
+    let results = system
+        .handle_tool_calls(&tool_calls, app.handle())
+        .await
+        .unwrap();
     assert_eq!(results.len(), 1);
     assert!(results[0].is_error);
     assert_eq!(results[0].content, "execution failed");
@@ -379,9 +421,10 @@ async fn test_execute_tool_with_error_plugin() {
 
 #[tokio::test]
 async fn test_handle_empty_tool_calls() {
-    let registry = Arc::new(DefaultPluginRegistry::new());
+    let app = make_mock_app();
+    let registry = Arc::new(DefaultPluginRegistry::<tauri::test::MockRuntime>::new());
     let system = DefaultPluginSystem::new(registry);
 
-    let results = system.handle_tool_calls(&[]).await.unwrap();
+    let results = system.handle_tool_calls(&[], app.handle()).await.unwrap();
     assert!(results.is_empty());
 }

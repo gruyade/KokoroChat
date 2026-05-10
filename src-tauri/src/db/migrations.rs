@@ -94,6 +94,16 @@ CREATE TABLE IF NOT EXISTS custom_tools (
   enabled INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS chat_plugin_configs (
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL,
+  plugin_name TEXT NOT NULL,
+  config_json TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY(session_id) REFERENCES chat_sessions(id) ON DELETE CASCADE,
+  UNIQUE(session_id, plugin_name)
+);
 "#
 }
 
@@ -108,6 +118,7 @@ CREATE INDEX IF NOT EXISTS idx_thoughts_character ON thoughts(character_id);
 CREATE INDEX IF NOT EXISTS idx_attachments_message ON attachments(message_id);
 CREATE INDEX IF NOT EXISTS idx_chat_tool_permissions_session ON chat_tool_permissions(session_id);
 CREATE INDEX IF NOT EXISTS idx_custom_tools_name ON custom_tools(name);
+CREATE INDEX IF NOT EXISTS idx_chat_plugin_configs_session ON chat_plugin_configs(session_id);
 "#
 }
 
@@ -128,6 +139,7 @@ mod tests {
         assert!(sql.contains("CREATE TABLE IF NOT EXISTS attachments"));
         assert!(sql.contains("CREATE TABLE IF NOT EXISTS chat_tool_permissions"));
         assert!(sql.contains("CREATE TABLE IF NOT EXISTS custom_tools"));
+        assert!(sql.contains("CREATE TABLE IF NOT EXISTS chat_plugin_configs"));
     }
 
     #[test]
@@ -141,6 +153,7 @@ mod tests {
         assert!(sql.contains("idx_attachments_message"));
         assert!(sql.contains("idx_chat_tool_permissions_session"));
         assert!(sql.contains("idx_custom_tools_name"));
+        assert!(sql.contains("idx_chat_plugin_configs_session"));
     }
 
     #[test]

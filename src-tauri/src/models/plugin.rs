@@ -83,12 +83,24 @@ pub struct ToolDefinition {
     pub parameters: Value,
 }
 
+/// ツール実行時のコンテキスト情報
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ToolExecutionContext {
+    /// 実行元のセッションID
+    pub session_id: Option<String>,
+    /// セッション固有のプラグイン設定JSON（chat_plugin_configs.config_json）
+    pub plugin_config_json: Option<String>,
+}
+
 /// LLMからのtool_callリクエスト
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolCall {
     pub id: String,
     pub name: String,
     pub arguments: Value,
+    /// 実行コンテキスト（LLMレスポンスには含まれない、内部で付与）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<ToolExecutionContext>,
 }
 
 /// ツール実行結果

@@ -191,7 +191,7 @@ enum Token {
 }
 
 #[async_trait]
-impl PluginHandler for CalculatorPlugin {
+impl<R: tauri::Runtime> PluginHandler<R> for CalculatorPlugin {
     fn name(&self) -> &str {
         "calculator"
     }
@@ -217,7 +217,11 @@ impl PluginHandler for CalculatorPlugin {
         }]
     }
 
-    async fn execute(&self, tool_call: &ToolCall) -> Result<ToolResult, AppError> {
+    async fn execute(
+        &self,
+        tool_call: &ToolCall,
+        _app_handle: &tauri::AppHandle<R>,
+    ) -> Result<ToolResult, AppError> {
         let expression = tool_call
             .arguments
             .get("expression")
@@ -250,16 +254,24 @@ mod tests {
             id: "test-call-1".to_string(),
             name: "calculate".to_string(),
             arguments: json!({ "expression": expression }),
+            context: None,
         }
+    }
+
+    fn make_mock_app() -> tauri::App<tauri::test::MockRuntime> {
+        tauri::test::mock_builder()
+            .build(tauri::generate_context!())
+            .unwrap()
     }
 
     #[test]
     fn test_plugin_metadata() {
         let plugin = CalculatorPlugin::new();
-        assert_eq!(plugin.name(), "calculator");
-        assert_eq!(plugin.description(), "数式を計算する");
-        assert_eq!(plugin.tools().len(), 1);
-        assert_eq!(plugin.tools()[0].name, "calculate");
+        let handler: &dyn PluginHandler<tauri::test::MockRuntime> = &plugin;
+        assert_eq!(handler.name(), "calculator");
+        assert_eq!(handler.description(), "数式を計算する");
+        assert_eq!(handler.tools().len(), 1);
+        assert_eq!(handler.tools()[0].name, "calculate");
     }
 
     #[test]
@@ -300,31 +312,35 @@ mod tests {
 
     #[tokio::test]
     async fn test_execute_success() {
+        let app = make_mock_app();
         let plugin = CalculatorPlugin::new();
         let tool_call = make_tool_call("2 + 3");
-        let result = plugin.execute(&tool_call).await.unwrap();
+        let result = plugin.execute(&tool_call, app.handle()).await.unwrap();
         assert_eq!(result.content, "5");
         assert!(!result.is_error);
     }
 
     #[tokio::test]
     async fn test_execute_error() {
+        let app = make_mock_app();
         let plugin = CalculatorPlugin::new();
         let tool_call = make_tool_call("1 / 0");
-        let result = plugin.execute(&tool_call).await.unwrap();
+        let result = plugin.execute(&tool_call, app.handle()).await.unwrap();
         assert!(result.is_error);
         assert!(result.content.contains("計算エラー"));
     }
 
     #[tokio::test]
     async fn test_execute_missing_param() {
+        let app = make_mock_app();
         let plugin = CalculatorPlugin::new();
         let tool_call = ToolCall {
             id: "test-call-2".to_string(),
             name: "calculate".to_string(),
             arguments: json!({}),
+            context: None,
         };
-        let result = plugin.execute(&tool_call).await;
+        let result = plugin.execute(&tool_call, app.handle()).await;
         assert!(result.is_err());
     }
 }

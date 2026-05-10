@@ -10,6 +10,7 @@ import { useChatStore, useCharacterStore, useConfigStore } from '../../stores';
 import { useAudioStore } from '../../hooks/useAudio';
 import { AvatarImage } from '../common/AvatarImage';
 
+
 interface MessageBubbleProps {
   message: ChatMessageRecord;
   onRegenerate?: (messageId: string) => void;
@@ -82,7 +83,6 @@ function CollapsibleToolCall({ toolCall }: { toolCall: ToolCall }) {
 /** 折り畳み可能なツール実行結果表示（role=tool メッセージ） */
 function CollapsibleToolResult({ message }: { message: ChatMessageRecord }) {
   const [expanded, setExpanded] = useState(false);
-  // tool_call_id からツール名を推測（IDの形式: "call_xxx" など）
   const summary = message.content.length > 80
     ? message.content.slice(0, 80) + '…'
     : message.content;
@@ -277,7 +277,7 @@ export function MessageBubble({ message, onRegenerate, onDelete }: MessageBubble
                     className={`prose prose-sm max-w-none prose-p:my-1 prose-headings:my-2 prose-ul:my-1 prose-ol:my-1 prose-pre:my-2 prose-code:text-xs ${
                       message.role === 'user'
                         ? 'prose-p:text-primary-foreground prose-headings:text-primary-foreground prose-strong:text-primary-foreground prose-code:text-primary-foreground prose-li:text-primary-foreground text-primary-foreground'
-                        : 'prose-invert'
+                        : 'prose-headings:text-card-foreground prose-p:text-card-foreground prose-strong:text-card-foreground prose-code:text-card-foreground prose-li:text-card-foreground text-card-foreground'
                     }`}
                   />
                 </div>

@@ -776,6 +776,7 @@ mod caption_generator_tests {
                     id: "call_1".to_string(),
                     name: "some_tool".to_string(),
                     arguments: serde_json::Value::Object(serde_json::Map::new()),
+                    context: None,
                 }])),
             }
         }

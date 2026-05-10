@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { MessageSquare, UploadCloud, Wrench } from 'lucide-react';
+import { MessageSquare, UploadCloud, Wrench, Shield } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { useChatStore, useCharacterStore } from '../../stores';
@@ -9,6 +9,21 @@ import { StreamingIndicator } from './StreamingIndicator';
 import { ChatHeaderControls } from './ChatHeaderControls';
 import { ToolManagementPane } from './ToolManagementPane';
 import { ToolCallIndicator } from './ToolCallIndicator';
+
+/** file_ops アクセス許可リクエストのイベントペイロード */
+interface FileOpsAccessRequestPayload {
+  session_id: string;
+  request_id: string;
+  path: string;
+  requires_write: boolean;
+}
+
+/** 保留中のアクセス許可リクエスト */
+interface PendingAccessRequest {
+  requestId: string;
+  path: string;
+  requiresWrite: boolean;
+}
 
 /**
  * オートスクロール判定: 底から200px以内ならtrue
@@ -31,6 +46,10 @@ export function ChatView() {
 
   const [isDragOver, setIsDragOver] = useState(false);
   const [toolPaneOpen, setToolPaneOpen] = useState(false);
+  const [pendingAccessRequests, setPendingAccessRequests] = useState<PendingAccessRequest[]>([]);
+  const [paneWidth, setPaneWidth] = useState(320);
+  const isResizingRef = useRef(false);
+  const containerRef = useRef<HTMLDivElement>(null);
 
   // Tauri drag-drop イベント: ファイルパスを直接取得
   useEffect(() => {
@@ -52,6 +71,53 @@ export function ChatView() {
       unlistenLeave.then(fn => fn());
     };
   }, []);
+
+  // file_ops:request_access イベントリスナー（常時マウント）
+  useEffect(() => {
+    const unlisten = listen<FileOpsAccessRequestPayload>('file_ops:request_access', (event) => {
+      const { request_id, path, requires_write } = event.payload;
+      setPendingAccessRequests((prev) => [
+        ...prev,
+        { requestId: request_id, path, requiresWrite: requires_write },
+      ]);
+    });
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, []);
+
+  // アクセス許可/拒否を解決
+  const resolveAccessRequest = useCallback(async (requestId: string, granted: boolean) => {
+    try {
+      await invoke('resolve_file_ops_access', { requestId, granted });
+    } catch {
+      // エラー時も UI から除去
+    }
+    setPendingAccessRequests((prev) => prev.filter((r) => r.requestId !== requestId));
+  }, []);
+
+  // --- リサイズハンドル用イベントハンドラ ---
+  const handleResizeMove = useCallback((e: MouseEvent) => {
+    if (!isResizingRef.current) return;
+    const container = containerRef.current;
+    if (!container) return;
+    const containerRect = container.getBoundingClientRect();
+    const newWidth = containerRect.right - e.clientX;
+    setPaneWidth(Math.max(200, Math.min(600, newWidth)));
+  }, []);
+
+  const handleResizeEnd = useCallback(() => {
+    isResizingRef.current = false;
+    document.removeEventListener('mousemove', handleResizeMove);
+    document.removeEventListener('mouseup', handleResizeEnd);
+  }, [handleResizeMove]);
+
+  const handleResizeStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    isResizingRef.current = true;
+    document.addEventListener('mousemove', handleResizeMove);
+    document.addEventListener('mouseup', handleResizeEnd);
+  }, [handleResizeMove, handleResizeEnd]);
 
   // スクロールイベントでオートスクロール状態を更新
   // isProgrammaticScrollRef はscrollイベント経由の更新のみブロック（ユーザー操作イベントはブロックしない）
@@ -269,7 +335,7 @@ export function ChatView() {
   };
 
   return (
-    <div className="relative flex-1 flex overflow-hidden">
+    <div ref={containerRef} className="relative flex-1 flex overflow-hidden">
       {/* Main chat area */}
       <div className="flex-1 flex flex-col overflow-hidden">
         {/* Drag-drop overlay */}
@@ -332,6 +398,42 @@ export function ChatView() {
           )}
         </div>
 
+        {/* File ops permission request dialog */}
+        {pendingAccessRequests.length > 0 && (
+          <div className="absolute inset-0 bg-background/60 backdrop-blur-sm z-40 flex items-center justify-center">
+            <div className="bg-background border border-border rounded-lg shadow-lg p-5 w-80 space-y-3">
+              {pendingAccessRequests.slice(0, 1).map((req) => (
+                <div key={req.requestId} className="space-y-3">
+                  <div className="flex items-center gap-2">
+                    <Shield className="w-5 h-5 text-amber-500 flex-shrink-0" />
+                    <span className="text-sm font-semibold">ファイルアクセス許可</span>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    AIが以下のパスへの{req.requiresWrite ? '読み書き' : '読み取り'}アクセスを要求しています:
+                  </p>
+                  <div className="text-xs font-mono bg-muted rounded px-2 py-1.5 break-all">
+                    {req.path}
+                  </div>
+                  <div className="flex gap-2 pt-1">
+                    <button
+                      onClick={() => resolveAccessRequest(req.requestId, true)}
+                      className="flex-1 px-3 py-1.5 text-sm rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+                    >
+                      許可
+                    </button>
+                    <button
+                      onClick={() => resolveAccessRequest(req.requestId, false)}
+                      className="flex-1 px-3 py-1.5 text-sm rounded-md bg-muted text-muted-foreground hover:bg-destructive/20 hover:text-destructive transition-colors"
+                    >
+                      拒否
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* Error display */}
         {error && (
           <div className="px-4 py-2 bg-destructive/10 border-t border-destructive/20 text-destructive text-sm">
@@ -351,9 +453,19 @@ export function ChatView() {
         />
       </div>
 
-      {/* Tool management pane (right side) */}
+      {/* Tool management pane (right side) with resize handle */}
       {toolPaneOpen && (
-        <ToolManagementPane onClose={() => setToolPaneOpen(false)} />
+        <>
+          {/* Resize handle */}
+          <div
+            onMouseDown={handleResizeStart}
+            className="w-1 hover:w-1.5 bg-border hover:bg-primary/50 cursor-col-resize transition-colors flex-shrink-0"
+          />
+          {/* Tool pane with dynamic width */}
+          <div style={{ width: paneWidth }} className="flex-shrink-0 overflow-hidden">
+            <ToolManagementPane onClose={() => setToolPaneOpen(false)} />
+          </div>
+        </>
       )}
     </div>
   );
