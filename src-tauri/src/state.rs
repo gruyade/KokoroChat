@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
-use tokio::sync::{Mutex as TokioMutex, oneshot};
+use tokio::sync::{oneshot, Mutex as TokioMutex};
 
 use crate::attachment::processor::AttachmentProcessor;
 use crate::character::creator::CharacterCreator;

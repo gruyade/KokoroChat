@@ -56,8 +56,7 @@ impl FileOpsPlugin {
         }
 
         // パスがディレクトリと完全一致、またはディレクトリ配下にある
-        norm_path == norm_dir.trim_end_matches('/')
-            || norm_path.starts_with(&norm_dir)
+        norm_path == norm_dir.trim_end_matches('/') || norm_path.starts_with(&norm_dir)
     }
 
     /// ACLリストに基づくパス検証
@@ -93,7 +92,11 @@ impl FileOpsPlugin {
             }
         }
 
-        let op = if require_write { "書き込み" } else { "読み取り" };
+        let op = if require_write {
+            "書き込み"
+        } else {
+            "読み取り"
+        };
         Err(format!(
             "アクセス拒否: '{}' は許可されたディレクトリ内にない（{}権限なし）",
             path_str, op
@@ -148,7 +151,8 @@ impl FileOpsPlugin {
 
     /// 画像ファイルの拡張子かどうか判定
     fn is_image_extension(path: &Path) -> bool {
-        const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "svg"];
+        const IMAGE_EXTENSIONS: &[&str] =
+            &["png", "jpg", "jpeg", "gif", "webp", "bmp", "ico", "svg"];
         path.extension()
             .and_then(|ext| ext.to_str())
             .map(|ext| IMAGE_EXTENSIONS.contains(&ext.to_lowercase().as_str()))
@@ -202,13 +206,15 @@ impl FileOpsPlugin {
             return Err(format!("'{}' はディレクトリではない", path_str));
         }
 
-        let entries = std::fs::read_dir(&path)
-            .map_err(|e| format!("ディレクトリ読み込みエラー: {}", e))?;
+        let entries =
+            std::fs::read_dir(&path).map_err(|e| format!("ディレクトリ読み込みエラー: {}", e))?;
 
         let mut items: Vec<String> = Vec::new();
         for entry in entries {
             let entry = entry.map_err(|e| format!("エントリ読み込みエラー: {}", e))?;
-            let file_type = entry.file_type().map_err(|e| format!("タイプ取得エラー: {}", e))?;
+            let file_type = entry
+                .file_type()
+                .map_err(|e| format!("タイプ取得エラー: {}", e))?;
             let name = entry.file_name().to_string_lossy().to_string();
             let prefix = if file_type.is_dir() { "[DIR] " } else { "" };
             items.push(format!("{}{}", prefix, name));
@@ -244,8 +250,8 @@ impl FileOpsPlugin {
         pattern: &str,
         matches: &mut Vec<String>,
     ) -> Result<(), String> {
-        let entries = std::fs::read_dir(dir)
-            .map_err(|e| format!("ディレクトリ読み込みエラー: {}", e))?;
+        let entries =
+            std::fs::read_dir(dir).map_err(|e| format!("ディレクトリ読み込みエラー: {}", e))?;
 
         let pattern_lower = pattern.to_lowercase();
 
@@ -280,9 +286,9 @@ impl FileOpsPlugin {
     /// アクセス拒否時にUIへ許可リクエストを発行し、ユーザー応答を待機する。
     /// 許可された場合はDBのACLを更新して `Ok(())` を返す。
     /// 拒否またはチャネルエラーの場合は `Err(original_error)` を返す。
-    async fn request_permission_and_wait(
+    async fn request_permission_and_wait<R: tauri::Runtime>(
         &self,
-        app_handle: &tauri::AppHandle,
+        app_handle: &tauri::AppHandle<R>,
         session_id: &str,
         path_str: &str,
         requires_write: bool,
@@ -348,9 +354,12 @@ impl FileOpsPlugin {
             .map_err(|e| format!("設定取得エラー: {}", e))?;
 
         let mut config: FileOpsConfig = match &existing {
-            Some(record) => serde_json::from_str(&record.config_json)
-                .unwrap_or(FileOpsConfig { directories: vec![] }),
-            None => FileOpsConfig { directories: vec![] },
+            Some(record) => serde_json::from_str(&record.config_json).unwrap_or(FileOpsConfig {
+                directories: vec![],
+            }),
+            None => FileOpsConfig {
+                directories: vec![],
+            },
         };
 
         // パスの親ディレクトリを許可対象として追加（ファイルパスの場合は親を使う）
@@ -388,8 +397,8 @@ impl FileOpsPlugin {
         }
 
         // DB に書き戻し
-        let config_json = serde_json::to_string(&config)
-            .map_err(|e| format!("設定シリアライズエラー: {}", e))?;
+        let config_json =
+            serde_json::to_string(&config).map_err(|e| format!("設定シリアライズエラー: {}", e))?;
 
         chat_plugin_config::upsert_config(conn, session_id, "file_ops", &config_json)
             .map_err(|e| format!("設定更新エラー: {}", e))?;
@@ -407,9 +416,8 @@ struct FileOpsAccessRequestPayload {
     requires_write: bool,
 }
 
-
 #[async_trait]
-impl PluginHandler for FileOpsPlugin {
+impl<R: tauri::Runtime> PluginHandler<R> for FileOpsPlugin {
     fn name(&self) -> &str {
         "file_ops"
     }
@@ -488,7 +496,11 @@ impl PluginHandler for FileOpsPlugin {
         ]
     }
 
-    async fn execute(&self, tool_call: &ToolCall, app_handle: &tauri::AppHandle) -> Result<ToolResult, AppError> {
+    async fn execute(
+        &self,
+        tool_call: &ToolCall,
+        app_handle: &tauri::AppHandle<R>,
+    ) -> Result<ToolResult, AppError> {
         let acl = Self::extract_acl(&tool_call.context);
         let session_id = tool_call
             .context
@@ -660,9 +672,7 @@ impl PluginHandler for FileOpsPlugin {
                     .arguments
                     .get("pattern")
                     .and_then(Value::as_str)
-                    .ok_or_else(|| {
-                        AppError::Plugin("'pattern' パラメータが必要".to_string())
-                    })?;
+                    .ok_or_else(|| AppError::Plugin("'pattern' パラメータが必要".to_string()))?;
 
                 let result = match self.search_files(path, pattern, &acl) {
                     Ok(content) => ToolResult {
@@ -714,7 +724,6 @@ impl PluginHandler for FileOpsPlugin {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -727,8 +736,10 @@ mod tests {
         (plugin, tmp)
     }
 
-    fn make_mock_app() -> tauri::App {
-        tauri::test::mock_builder().build(tauri::generate_context!()).unwrap()
+    fn make_mock_app() -> tauri::App<tauri::test::MockRuntime> {
+        tauri::test::mock_builder()
+            .build(tauri::generate_context!())
+            .unwrap()
     }
 
     fn make_acl(dirs: Vec<(&str, bool, bool)>) -> Vec<DirectoryPermission> {
@@ -746,10 +757,11 @@ mod tests {
     #[test]
     fn test_plugin_metadata() {
         let (plugin, _tmp) = setup();
-        assert_eq!(plugin.name(), "file_ops");
-        assert_eq!(plugin.description(), "ユーザーが許可したディレクトリ内のファイルを読み書きする。絶対パスで指定可能。アクセス許可が必要な場合は自動的にユーザーに確認される。");
+        let handler: &dyn PluginHandler<tauri::test::MockRuntime> = &plugin;
+        assert_eq!(handler.name(), "file_ops");
+        assert_eq!(handler.description(), "ユーザーが許可したディレクトリ内のファイルを読み書きする。絶対パスで指定可能。アクセス許可が必要な場合は自動的にユーザーに確認される。");
 
-        let tools = plugin.tools();
+        let tools = handler.tools();
         let tool_names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
         assert!(tool_names.contains(&"read_file"));
         assert!(tool_names.contains(&"write_file"));
@@ -1019,7 +1031,9 @@ mod tests {
         let app = make_mock_app();
         let (plugin, _tmp) = setup();
 
-        plugin.write_file("test.txt", "test content", &None).unwrap();
+        plugin
+            .write_file("test.txt", "test content", &None)
+            .unwrap();
 
         let tool_call = ToolCall {
             id: "call-1".to_string(),

@@ -378,7 +378,7 @@ impl WebSearchPlugin {
 }
 
 #[async_trait]
-impl PluginHandler for WebSearchPlugin {
+impl<R: tauri::Runtime> PluginHandler<R> for WebSearchPlugin {
     fn name(&self) -> &str {
         "web_search"
     }
@@ -420,7 +420,11 @@ impl PluginHandler for WebSearchPlugin {
         ]
     }
 
-    async fn execute(&self, tool_call: &ToolCall, _app_handle: &tauri::AppHandle) -> Result<ToolResult, AppError> {
+    async fn execute(
+        &self,
+        tool_call: &ToolCall,
+        _app_handle: &tauri::AppHandle<R>,
+    ) -> Result<ToolResult, AppError> {
         match tool_call.name.as_str() {
             "fetch_page" => return self.execute_fetch_page(tool_call).await,
             "search" => {}
@@ -497,8 +501,10 @@ mod tests {
         SendKey, SpontaneousConfig, TTSGlobalConfig, Theme, ThoughtConfig, UIConfig,
     };
 
-    fn make_mock_app() -> tauri::App {
-        tauri::test::mock_builder().build(tauri::generate_context!()).unwrap()
+    fn make_mock_app() -> tauri::App<tauri::test::MockRuntime> {
+        tauri::test::mock_builder()
+            .build(tauri::generate_context!())
+            .unwrap()
     }
 
     /// テスト用のデフォルト AppConfig を生成
@@ -695,11 +701,12 @@ mod tests {
     #[test]
     fn test_plugin_metadata() {
         let plugin = WebSearchPlugin::new(test_config_manager_no_key());
-        assert_eq!(plugin.name(), "web_search");
-        assert_eq!(plugin.description(), "Web検索を行う");
-        assert_eq!(plugin.tools().len(), 2);
-        assert_eq!(plugin.tools()[0].name, "search");
-        assert_eq!(plugin.tools()[1].name, "fetch_page");
+        let handler: &dyn PluginHandler<tauri::test::MockRuntime> = &plugin;
+        assert_eq!(handler.name(), "web_search");
+        assert_eq!(handler.description(), "Web検索を行う");
+        assert_eq!(handler.tools().len(), 2);
+        assert_eq!(handler.tools()[0].name, "search");
+        assert_eq!(handler.tools()[1].name, "fetch_page");
     }
 
     #[tokio::test]

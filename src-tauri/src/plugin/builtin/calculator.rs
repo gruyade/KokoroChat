@@ -191,7 +191,7 @@ enum Token {
 }
 
 #[async_trait]
-impl PluginHandler for CalculatorPlugin {
+impl<R: tauri::Runtime> PluginHandler<R> for CalculatorPlugin {
     fn name(&self) -> &str {
         "calculator"
     }
@@ -217,7 +217,11 @@ impl PluginHandler for CalculatorPlugin {
         }]
     }
 
-    async fn execute(&self, tool_call: &ToolCall, _app_handle: &tauri::AppHandle) -> Result<ToolResult, AppError> {
+    async fn execute(
+        &self,
+        tool_call: &ToolCall,
+        _app_handle: &tauri::AppHandle<R>,
+    ) -> Result<ToolResult, AppError> {
         let expression = tool_call
             .arguments
             .get("expression")
@@ -254,17 +258,20 @@ mod tests {
         }
     }
 
-    fn make_mock_app() -> tauri::App {
-        tauri::test::mock_builder().build(tauri::generate_context!()).unwrap()
+    fn make_mock_app() -> tauri::App<tauri::test::MockRuntime> {
+        tauri::test::mock_builder()
+            .build(tauri::generate_context!())
+            .unwrap()
     }
 
     #[test]
     fn test_plugin_metadata() {
         let plugin = CalculatorPlugin::new();
-        assert_eq!(plugin.name(), "calculator");
-        assert_eq!(plugin.description(), "数式を計算する");
-        assert_eq!(plugin.tools().len(), 1);
-        assert_eq!(plugin.tools()[0].name, "calculate");
+        let handler: &dyn PluginHandler<tauri::test::MockRuntime> = &plugin;
+        assert_eq!(handler.name(), "calculator");
+        assert_eq!(handler.description(), "数式を計算する");
+        assert_eq!(handler.tools().len(), 1);
+        assert_eq!(handler.tools()[0].name, "calculate");
     }
 
     #[test]

@@ -76,7 +76,6 @@ pub async fn set_plugin_config(
     Ok(())
 }
 
-
 /// セッション固有プラグイン設定取得（chat_plugin_configs テーブル）
 #[tauri::command]
 pub async fn get_session_plugin_config(
