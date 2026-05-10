@@ -28,4 +28,8 @@ pub struct CharacterUpdate {
     pub system_prompt: Option<String>,
     pub avatar_path: Option<String>,
     pub tts_config: Option<TTSConfig>,
+    /// trueの場合、avatar_pathをNULLに更新する
+    pub clear_avatar: Option<bool>,
+    /// trueの場合、tts_configをNULLに更新する
+    pub clear_tts: Option<bool>,
 }

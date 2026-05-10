@@ -132,11 +132,15 @@ pub fn update_character(
         set_clauses.push("system_prompt = ?");
         param_values.push(Box::new(system_prompt.clone()));
     }
-    if let Some(ref avatar_path) = updates.avatar_path {
+    if let Some(true) = updates.clear_avatar {
+        set_clauses.push("avatar_path = NULL");
+    } else if let Some(ref avatar_path) = updates.avatar_path {
         set_clauses.push("avatar_path = ?");
         param_values.push(Box::new(avatar_path.clone()));
     }
-    if let Some(ref tts_config) = updates.tts_config {
+    if let Some(true) = updates.clear_tts {
+        set_clauses.push("tts_config = NULL");
+    } else if let Some(ref tts_config) = updates.tts_config {
         set_clauses.push("tts_config = ?");
         let json = serde_json::to_string(tts_config)?;
         param_values.push(Box::new(json));
@@ -286,6 +290,8 @@ mod tests {
             system_prompt: None,
             avatar_path: Some("/path/to/avatar.png".to_string()),
             tts_config: None,
+            clear_avatar: None,
+            clear_tts: None,
         };
 
         update_character(conn, "char-001", &updates).unwrap();
@@ -310,6 +316,8 @@ mod tests {
             system_prompt: None,
             avatar_path: None,
             tts_config: None,
+            clear_avatar: None,
+            clear_tts: None,
         };
 
         // 空の更新はエラーにならない

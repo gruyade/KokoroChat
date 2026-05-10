@@ -1,6 +1,6 @@
 [package]
 name = "kokoro-chat"
-version = "0.1.2"
+version = "0.2.0"
 description = "KokoroChat Desktop Application"
 authors = ["KokoroChat Contributors"]
 edition = "2021"
@@ -32,6 +32,8 @@ futures = "0.3"
 dotenvy = "0.15"
 rand = "0.8"
 tempfile = "3"
+url = "2"
+regex = "1"
 
 [dev-dependencies]
 proptest = "1"

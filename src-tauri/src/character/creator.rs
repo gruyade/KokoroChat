@@ -198,9 +198,10 @@ mod tests {
             &self,
             _messages: &[ChatMessage],
             _config: &LLMClientConfig,
+            _tools: Option<&[ToolDefinition]>,
             _callback: Box<dyn Fn(String) + Send>,
-        ) -> Result<String, AppError> {
-            Ok(self.response.clone())
+        ) -> Result<LLMResponse, AppError> {
+            Ok(LLMResponse::Text(self.response.clone()))
         }
 
         async fn test_connection(&self, _config: &LLMClientConfig) -> Result<(), AppError> {
@@ -378,6 +379,8 @@ mod tests {
             system_prompt: Some("新しいプロンプト".to_string()),
             avatar_path: None,
             tts_config: None,
+            clear_avatar: None,
+            clear_tts: None,
         };
 
         creator.update_character(&id, updates).await.unwrap();

@@ -20,6 +20,20 @@ export interface ToolResult {
   is_error: boolean;
 }
 
+/** カスタムツールの実行方式 */
+export type CustomToolType = 'http' | 'cli';
+
+/** カスタムツール登録リクエスト */
+export interface CustomToolRequest {
+  name: string;
+  description: string;
+  type: CustomToolType;
+  /** HTTP方式の場合のエンドポイントURL */
+  endpoint?: string;
+  /** CLI方式の場合のコマンド */
+  command?: string;
+}
+
 /** プラグインメタデータ */
 export interface PluginInfo {
   name: string;
@@ -29,4 +43,6 @@ export interface PluginInfo {
   tools: ToolDefinition[];
   /** プラグイン固有設定 */
   config?: Record<string, unknown>;
+  /** 組み込みプラグインかどうか（trueの場合削除不可） */
+  builtin?: boolean;
 }

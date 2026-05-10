@@ -46,9 +46,10 @@ mod tests {
             &self,
             _messages: &[ChatMessage],
             _config: &LLMClientConfig,
+            _tools: Option<&[ToolDefinition]>,
             _callback: Box<dyn Fn(String) + Send>,
-        ) -> Result<String, AppError> {
-            Ok("mock stream".to_string())
+        ) -> Result<LLMResponse, AppError> {
+            Ok(LLMResponse::Text("mock stream".to_string()))
         }
 
         async fn test_connection(&self, _config: &LLMClientConfig) -> Result<(), AppError> {

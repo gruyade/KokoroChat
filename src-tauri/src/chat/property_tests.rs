@@ -40,9 +40,10 @@ mod tests {
             &self,
             _messages: &[ChatMessage],
             _config: &LLMClientConfig,
+            _tools: Option<&[ToolDefinition]>,
             _callback: Box<dyn Fn(String) + Send>,
-        ) -> Result<String, AppError> {
-            Ok("mock".to_string())
+        ) -> Result<LLMResponse, AppError> {
+            Ok(LLMResponse::Text("mock".to_string()))
         }
 
         async fn test_connection(&self, _config: &LLMClientConfig) -> Result<(), AppError> {
@@ -240,6 +241,7 @@ mod tests {
             config_manager,
             llm_lock,
             tts_connector,
+            None,
             None,
         )
     }

@@ -39,10 +39,11 @@ impl LLMClient for MockLLMClient {
         &self,
         _messages: &[ChatMessage],
         _config: &LLMClientConfig,
+        _tools: Option<&[ToolDefinition]>,
         _callback: Box<dyn Fn(String) + Send>,
-    ) -> Result<String, AppError> {
+    ) -> Result<LLMResponse, AppError> {
         let resp = self.response.lock().unwrap().clone();
-        Ok(resp)
+        Ok(LLMResponse::Text(resp))
     }
 
     async fn test_connection(&self, _config: &LLMClientConfig) -> Result<(), AppError> {

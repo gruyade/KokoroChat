@@ -1,10 +1,23 @@
 import { useEffect, useState } from 'react';
-import { Settings, Save, Loader2 } from 'lucide-react';
-import { useConfigStore, useUIStore } from '../../stores';
+import { Settings, Save, Loader2, Plus, Trash2, Puzzle, Globe } from 'lucide-react';
+import { invoke } from '@tauri-apps/api/core';
+import { useConfigStore, usePluginStore, useUIStore } from '../../stores';
 import { ModelConfigForm } from './ModelConfigForm';
 import type { AppConfig, ModelPurpose, ModelSettings, SendKey } from '../../types';
+import type { CustomToolType } from '../../types/plugin';
 
-type SettingsTab = 'models' | 'tts' | 'spontaneous' | 'thought' | 'general';
+/** Web検索プロバイダ種別 */
+type SearchProvider = 'tavily' | 'brave';
+
+/** Web検索プラグイン設定 */
+interface WebSearchConfig {
+  provider: SearchProvider;
+  tavily_api_key: string | null;
+  brave_api_key: string | null;
+  allowed_domains: string[];
+}
+
+type SettingsTab = 'models' | 'tts' | 'spontaneous' | 'thought' | 'general' | 'tools';
 
 const TABS: { id: SettingsTab; label: string; badge?: string }[] = [
   { id: 'models', label: 'モデル設定' },
@@ -12,6 +25,7 @@ const TABS: { id: SettingsTab; label: string; badge?: string }[] = [
   { id: 'spontaneous', label: '自発的発話' },
   { id: 'thought', label: '思考' },
   { id: 'general', label: '一般' },
+  { id: 'tools', label: 'ツール管理' },
 ];
 
 const MODEL_PURPOSES: { purpose: ModelPurpose; label: string }[] = [
@@ -23,20 +37,66 @@ const MODEL_PURPOSES: { purpose: ModelPurpose; label: string }[] = [
 
 export function SettingsView() {
   const { config, loading, error, fetchConfig, updateConfig } = useConfigStore();
+  const {
+    plugins,
+    loading: pluginsLoading,
+    error: pluginsError,
+    fetchPlugins,
+    enablePlugin,
+    disablePlugin,
+    registerCustomPlugin,
+    removePlugin,
+    isBuiltinPlugin,
+  } = usePluginStore();
   const { showToast } = useUIStore();
   const [activeTab, setActiveTab] = useState<SettingsTab>('models');
   const [draft, setDraft] = useState<AppConfig | null>(null);
   const [saving, setSaving] = useState(false);
+  const [showAddToolForm, setShowAddToolForm] = useState(false);
+  const [newToolName, setNewToolName] = useState('');
+  const [newToolDescription, setNewToolDescription] = useState('');
+  const [newToolType, setNewToolType] = useState<CustomToolType>('http');
+  const [newToolEndpoint, setNewToolEndpoint] = useState('');
+  const [newToolCommand, setNewToolCommand] = useState('');
+
+  // Web検索設定
+  const [webSearchProvider, setWebSearchProvider] = useState<SearchProvider>('tavily');
+  const [webSearchTavilyApiKey, setWebSearchTavilyApiKey] = useState('');
+  const [webSearchBraveApiKey, setWebSearchBraveApiKey] = useState('');
+  const [webSearchAllowedDomains, setWebSearchAllowedDomains] = useState('');
+  const [webSearchSaving, setWebSearchSaving] = useState(false);
 
   useEffect(() => {
     fetchConfig();
   }, [fetchConfig]);
 
   useEffect(() => {
+    fetchPlugins();
+  }, [fetchPlugins]);
+
+  useEffect(() => {
     if (config) {
       setDraft(structuredClone(config));
     }
   }, [config]);
+
+  // Web検索設定の読み込み
+  useEffect(() => {
+    const loadWebSearchConfig = async () => {
+      try {
+        const cfg = await invoke<WebSearchConfig | null>('get_plugin_config', { name: 'web_search' });
+        if (cfg) {
+          setWebSearchProvider(cfg.provider ?? 'tavily');
+          setWebSearchTavilyApiKey(cfg.tavily_api_key ?? '');
+          setWebSearchBraveApiKey(cfg.brave_api_key ?? '');
+          setWebSearchAllowedDomains((cfg.allowed_domains ?? []).join('\n'));
+        }
+      } catch {
+        // プラグイン未登録時は無視
+      }
+    };
+    loadWebSearchConfig();
+  }, []);
 
   const handleSave = async () => {
     if (!draft) return;
@@ -48,6 +108,81 @@ export function SettingsView() {
       showToast('設定の保存に失敗', 'error');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleSaveWebSearchConfig = async () => {
+    setWebSearchSaving(true);
+    try {
+      const config: WebSearchConfig = {
+        provider: webSearchProvider,
+        tavily_api_key: webSearchTavilyApiKey.trim() || null,
+        brave_api_key: webSearchBraveApiKey.trim() || null,
+        allowed_domains: webSearchAllowedDomains
+          .split('\n')
+          .map((d) => d.trim())
+          .filter((d) => d.length > 0),
+      };
+      await invoke('set_plugin_config', { name: 'web_search', config });
+      showToast('Web検索設定を保存した');
+    } catch {
+      showToast('Web検索設定の保存に失敗', 'error');
+    } finally {
+      setWebSearchSaving(false);
+    }
+  };
+
+  const handleAddCustomTool = async () => {
+    if (!newToolName.trim() || !newToolDescription.trim()) {
+      showToast('名前と説明は必須', 'error');
+      return;
+    }
+    if (newToolType === 'http' && !newToolEndpoint.trim()) {
+      showToast('エンドポイントURLは必須', 'error');
+      return;
+    }
+    if (newToolType === 'cli' && !newToolCommand.trim()) {
+      showToast('コマンドは必須', 'error');
+      return;
+    }
+    try {
+      await registerCustomPlugin({
+        name: newToolName.trim(),
+        description: newToolDescription.trim(),
+        type: newToolType,
+        endpoint: newToolType === 'http' ? newToolEndpoint.trim() : undefined,
+        command: newToolType === 'cli' ? newToolCommand.trim() : undefined,
+      });
+      showToast('カスタムツールを追加した');
+      setShowAddToolForm(false);
+      setNewToolName('');
+      setNewToolDescription('');
+      setNewToolType('http');
+      setNewToolEndpoint('');
+      setNewToolCommand('');
+    } catch {
+      showToast('カスタムツールの追加に失敗', 'error');
+    }
+  };
+
+  const handleRemovePlugin = async (name: string) => {
+    try {
+      await removePlugin(name);
+      showToast('プラグインを削除した');
+    } catch {
+      showToast('プラグインの削除に失敗', 'error');
+    }
+  };
+
+  const handleTogglePlugin = async (name: string, enabled: boolean) => {
+    try {
+      if (enabled) {
+        await enablePlugin(name);
+      } else {
+        await disablePlugin(name);
+      }
+    } catch {
+      showToast('プラグインの切り替えに失敗', 'error');
     }
   };
 
@@ -502,6 +637,282 @@ export function SettingsView() {
                 </p>
               </div>
             </div>
+          </div>
+        )}
+
+        {activeTab === 'tools' && (
+          <div className="space-y-4">
+            {/* Web検索設定 */}
+            <div className="p-4 rounded-lg border border-border space-y-3">
+              <div className="flex items-center gap-2">
+                <Globe className="w-4 h-4 text-muted-foreground" />
+                <h3 className="text-sm font-medium">Web検索設定</h3>
+              </div>
+
+              {/* プロバイダ選択 */}
+              <div>
+                <label htmlFor="web-search-provider" className="block text-xs text-muted-foreground mb-1">
+                  検索プロバイダ
+                </label>
+                <select
+                  id="web-search-provider"
+                  value={webSearchProvider}
+                  onChange={(e) => setWebSearchProvider(e.target.value as SearchProvider)}
+                  className="w-full px-3 py-1.5 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                >
+                  <option value="tavily">Tavily</option>
+                  <option value="brave">Brave Search</option>
+                </select>
+              </div>
+
+              {/* API Key — Tavily */}
+              <div>
+                <label htmlFor="web-search-tavily-api-key" className="block text-xs text-muted-foreground mb-1">
+                  Tavily API Key
+                </label>
+                <input
+                  id="web-search-tavily-api-key"
+                  type="password"
+                  value={webSearchTavilyApiKey}
+                  onChange={(e) => setWebSearchTavilyApiKey(e.target.value)}
+                  placeholder="tvly-..."
+                  className="w-full px-3 py-1.5 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                />
+              </div>
+
+              {/* API Key — Brave */}
+              <div>
+                <label htmlFor="web-search-brave-api-key" className="block text-xs text-muted-foreground mb-1">
+                  Brave Search API Key
+                </label>
+                <input
+                  id="web-search-brave-api-key"
+                  type="password"
+                  value={webSearchBraveApiKey}
+                  onChange={(e) => setWebSearchBraveApiKey(e.target.value)}
+                  placeholder="BSA..."
+                  className="w-full px-3 py-1.5 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                />
+              </div>
+
+              {/* 許可ドメイン */}
+              <div>
+                <label htmlFor="web-search-domains" className="block text-xs text-muted-foreground mb-1">
+                  許可ドメイン（fetch_page 用ホワイトリスト）
+                </label>
+                <textarea
+                  id="web-search-domains"
+                  value={webSearchAllowedDomains}
+                  onChange={(e) => setWebSearchAllowedDomains(e.target.value)}
+                  placeholder={"example.com\nen.wikipedia.org\ndocs.rs"}
+                  rows={4}
+                  className="w-full px-3 py-1.5 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary resize-y"
+                />
+                <p className="mt-1 text-xs text-muted-foreground">
+                  1行に1ドメイン。fetch_page はここに記載されたドメインのみアクセス可能。
+                </p>
+              </div>
+
+              {/* 保存ボタン */}
+              <div className="flex justify-end">
+                <button
+                  onClick={handleSaveWebSearchConfig}
+                  disabled={webSearchSaving}
+                  className="px-3 py-1.5 text-xs rounded-md bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 flex items-center gap-1 transition-colors"
+                >
+                  {webSearchSaving ? (
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Save className="w-3.5 h-3.5" />
+                  )}
+                  Web検索設定を保存
+                </button>
+              </div>
+            </div>
+
+            {/* Header with Add button */}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Puzzle className="w-4 h-4 text-muted-foreground" />
+                <h3 className="text-sm font-medium">登録済みプラグイン / ツール</h3>
+              </div>
+              <button
+                onClick={() => setShowAddToolForm(true)}
+                className="px-3 py-1.5 text-xs rounded-md bg-primary text-primary-foreground hover:bg-primary/90 flex items-center gap-1 transition-colors"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                カスタムツール追加
+              </button>
+            </div>
+
+            {/* Error */}
+            {pluginsError && (
+              <div className="p-3 rounded-md bg-destructive/10 text-destructive text-sm">
+                {pluginsError}
+              </div>
+            )}
+
+            {/* Add Custom Tool Form */}
+            {showAddToolForm && (
+              <div className="p-4 rounded-lg border border-primary/30 bg-primary/5 space-y-3">
+                <h4 className="text-sm font-medium">カスタムツール追加</h4>
+                <div>
+                  <label htmlFor="new-tool-name" className="block text-xs text-muted-foreground mb-1">
+                    ツール名
+                  </label>
+                  <input
+                    id="new-tool-name"
+                    type="text"
+                    value={newToolName}
+                    onChange={(e) => setNewToolName(e.target.value)}
+                    placeholder="my_custom_tool"
+                    className="w-full px-3 py-1.5 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="new-tool-desc" className="block text-xs text-muted-foreground mb-1">
+                    説明
+                  </label>
+                  <input
+                    id="new-tool-desc"
+                    type="text"
+                    value={newToolDescription}
+                    onChange={(e) => setNewToolDescription(e.target.value)}
+                    placeholder="ツールの説明"
+                    className="w-full px-3 py-1.5 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="new-tool-type" className="block text-xs text-muted-foreground mb-1">
+                    タイプ
+                  </label>
+                  <select
+                    id="new-tool-type"
+                    value={newToolType}
+                    onChange={(e) => setNewToolType(e.target.value as CustomToolType)}
+                    className="w-full px-3 py-1.5 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                  >
+                    <option value="http">HTTP Webhook</option>
+                    <option value="cli">CLI コマンド</option>
+                  </select>
+                </div>
+                {newToolType === 'http' ? (
+                  <div>
+                    <label htmlFor="new-tool-endpoint" className="block text-xs text-muted-foreground mb-1">
+                      エンドポイントURL
+                    </label>
+                    <input
+                      id="new-tool-endpoint"
+                      type="text"
+                      value={newToolEndpoint}
+                      onChange={(e) => setNewToolEndpoint(e.target.value)}
+                      placeholder="https://api.example.com/tool"
+                      className="w-full px-3 py-1.5 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                    />
+                  </div>
+                ) : (
+                  <div>
+                    <label htmlFor="new-tool-command" className="block text-xs text-muted-foreground mb-1">
+                      コマンド
+                    </label>
+                    <input
+                      id="new-tool-command"
+                      type="text"
+                      value={newToolCommand}
+                      onChange={(e) => setNewToolCommand(e.target.value)}
+                      placeholder="python /path/to/script.py"
+                      className="w-full px-3 py-1.5 rounded-md border border-border bg-background text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                    />
+                  </div>
+                )}
+                <div className="flex gap-2 pt-1">
+                  <button
+                    onClick={handleAddCustomTool}
+                    className="px-3 py-1.5 text-xs rounded-md bg-primary text-primary-foreground hover:bg-primary/90 transition-colors"
+                  >
+                    追加
+                  </button>
+                  <button
+                    onClick={() => setShowAddToolForm(false)}
+                    className="px-3 py-1.5 text-xs rounded-md border border-border text-muted-foreground hover:text-foreground transition-colors"
+                  >
+                    キャンセル
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Plugin List */}
+            {pluginsLoading && plugins.length === 0 ? (
+              <div className="flex items-center justify-center h-32 text-muted-foreground text-sm">
+                <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                読み込み中...
+              </div>
+            ) : plugins.length === 0 ? (
+              <div className="flex flex-col items-center justify-center h-32 text-muted-foreground gap-2">
+                <Puzzle className="w-8 h-8" />
+                <p className="text-sm">プラグインが登録されていない</p>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {plugins.map((plugin) => {
+                  const builtin = isBuiltinPlugin(plugin.name);
+                  return (
+                    <div
+                      key={plugin.name}
+                      className="p-3 rounded-lg border border-border bg-card flex items-center gap-3"
+                    >
+                      {/* Icon */}
+                      <div className="w-8 h-8 rounded-md bg-muted flex items-center justify-center flex-shrink-0">
+                        <Puzzle className="w-4 h-4 text-muted-foreground" />
+                      </div>
+
+                      {/* Info */}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium text-sm truncate">{plugin.name}</span>
+                          {builtin && (
+                            <span className="px-1.5 py-0.5 text-[10px] rounded bg-blue-500/20 text-blue-600">
+                              組み込み
+                            </span>
+                          )}
+                          <span className="text-xs text-muted-foreground">v{plugin.version}</span>
+                        </div>
+                        <p className="text-xs text-muted-foreground truncate">{plugin.description}</p>
+                      </div>
+
+                      {/* Toggle */}
+                      <label className="flex items-center gap-2 cursor-pointer flex-shrink-0">
+                        <input
+                          type="checkbox"
+                          checked={plugin.enabled}
+                          onChange={(e) => handleTogglePlugin(plugin.name, e.target.checked)}
+                          className="rounded"
+                        />
+                        <span className="text-xs text-muted-foreground">
+                          {plugin.enabled ? '有効' : '無効'}
+                        </span>
+                      </label>
+
+                      {/* Delete button (custom plugins only) */}
+                      {!builtin && (
+                        <button
+                          onClick={() => handleRemovePlugin(plugin.name)}
+                          className="p-1.5 rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors flex-shrink-0"
+                          title="削除"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            <p className="text-xs text-muted-foreground">
+              組み込みプラグインは無効化のみ可能（削除不可）。カスタムツールは追加・削除が可能。
+            </p>
           </div>
         )}
       </div>

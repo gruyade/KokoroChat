@@ -52,6 +52,8 @@ export function CharacterView() {
           system_prompt: data.system_prompt,
           avatar_path: data.avatar_path,
           tts_config: data.tts_config,
+          clear_avatar: !data.avatar_path,
+          clear_tts: !data.tts_config,
         });
       } else {
         const created = await createCharacter(data.name, data.description, data.system_prompt || undefined);

@@ -42,4 +42,4 @@ export type {
 export type { Attachment, AttachmentType } from './attachment';
 
 // Plugin types
-export type { PluginInfo, ToolDefinition, ToolCall, ToolResult } from './plugin';
+export type { PluginInfo, ToolDefinition, ToolCall, ToolResult, CustomToolType, CustomToolRequest } from './plugin';

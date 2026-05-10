@@ -24,3 +24,7 @@ cc 28b81c1f359af1cbd6cf116ca1738f65eeb0c2274692e59097eb950b494c5c6f # shrinks to
 cc 14dd9aa9ba34aa5ee14eae58b3e3997e2f744bf1e45f254241c7cdbc35877f60 # shrinks to env_model = "jagmt-4b"
 cc 9acc63f9a5b4e31b1bd4bd1a83397c2784fb00300f4d8d1f55e8893654b7e904 # shrinks to env_model = "uii-76b"
 cc f4e0644bd56c99729ca1c6a8a2039b8499454a69b0bd7837089cde6cad5ae8da # shrinks to env_api_key = "sk-swgN96l83J4NON0"
+cc 198758359b541936576ab70bc7aa37933b9f0b80b962e0cade9634324ca59032 # shrinks to env_api_key = "sk-8QhcI60Dhuc"
+cc 7e9433d3459958a4212e7b748a3039ac9f8e6da2d1cdbcf8fa5c614c878eb70e # shrinks to env_model = "hmdltq-0b"
+cc 2831cfe075e734e9acd02f592ca1073f23c05ec8f9b3ae5d2d6dd567ef68e3b0 # shrinks to env_base_url = "http://dqalboi:4693/v7", env_model = "cieege-27b", env_api_key = "sk-6hk2I7FOW2Lbrjva"
+cc 1021e07b5cbce3fdf3fc3728d90baaef0dd9755b53f14d1a1d2c94a80b2a16a2 # shrinks to env_api_key = "sk-dYh7zDB0E9PtebC"

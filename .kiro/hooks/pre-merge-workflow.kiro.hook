@@ -1,0 +1,13 @@
+{
+  "enabled": true,
+  "name": "マージ前ワークフロー自動適用",
+  "description": "ユーザーがmasterへのマージを依頼した際に、merge-workflowステアリングの手順を自動で適用するよう促す",
+  "version": "1",
+  "when": {
+    "type": "promptSubmit"
+  },
+  "then": {
+    "type": "askAgent",
+    "prompt": "ユーザーのメッセージに「マージ」「merge」「master」「main」「リリース」「release」のいずれかのキーワードが含まれている場合、.kiro/steering/merge-workflow.md の手順に従ってマージワークフローを実行すること。キーワードが含まれていない場合は何もしない。"
+  }
+}

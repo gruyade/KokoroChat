@@ -45,8 +45,9 @@ mod emotion_generator_tests {
             &self,
             _messages: &[ChatMessage],
             _config: &LLMClientConfig,
+            _tools: Option<&[ToolDefinition]>,
             _callback: Box<dyn Fn(String) + Send>,
-        ) -> Result<String, AppError> {
+        ) -> Result<LLMResponse, AppError> {
             unimplemented!("not used in emotion generator tests")
         }
 
@@ -798,8 +799,9 @@ mod caption_generator_tests {
             &self,
             _messages: &[ChatMessage],
             _config: &LLMClientConfig,
+            _tools: Option<&[ToolDefinition]>,
             _callback: Box<dyn Fn(String) + Send>,
-        ) -> Result<String, AppError> {
+        ) -> Result<LLMResponse, AppError> {
             unimplemented!("not used in caption generator tests")
         }
 
@@ -1027,8 +1029,9 @@ mod flow_controller_tests {
             &self,
             _messages: &[ChatMessage],
             _config: &LLMClientConfig,
+            _tools: Option<&[ToolDefinition]>,
             _callback: Box<dyn Fn(String) + Send>,
-        ) -> Result<String, AppError> {
+        ) -> Result<LLMResponse, AppError> {
             unimplemented!("not used in flow controller tests")
         }
 
@@ -1261,8 +1264,9 @@ mod flow_controller_tests {
             &self,
             _messages: &[ChatMessage],
             _config: &LLMClientConfig,
+            _tools: Option<&[ToolDefinition]>,
             _callback: Box<dyn Fn(String) + Send>,
-        ) -> Result<String, AppError> {
+        ) -> Result<LLMResponse, AppError> {
             unimplemented!("not used in flow controller tests")
         }
 

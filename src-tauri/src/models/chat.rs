@@ -47,3 +47,13 @@ pub struct MessageAttachment {
     pub extracted_text: Option<String>,
     pub base64_data: Option<String>,
 }
+
+/// チャットセッション単位のツール許可設定
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatToolPermission {
+    pub id: String,
+    pub session_id: String,
+    pub tool_name: String,
+    pub is_enabled: bool,
+    pub created_at: String,
+}

@@ -52,7 +52,11 @@ pub fn is_default_endpoint(base_url: &str, provider: LLMProvider) -> bool {
 }
 
 /// Gemini APIリクエストボディを構築
-pub fn build_gemini_request(messages: &[ChatMessage], config: &LLMClientConfig) -> Value {
+pub fn build_gemini_request(
+    messages: &[ChatMessage],
+    config: &LLMClientConfig,
+    tools: Option<&[ToolDefinition]>,
+) -> Value {
     let contents: Vec<Value> = messages
         .iter()
         .filter(|m| m.role != MessageRole::System)
@@ -85,6 +89,24 @@ pub fn build_gemini_request(messages: &[ChatMessage], config: &LLMClientConfig) 
         body["systemInstruction"] = si;
     }
 
+    if let Some(tool_defs) = tools {
+        if !tool_defs.is_empty() {
+            let function_declarations: Vec<Value> = tool_defs
+                .iter()
+                .map(|t| {
+                    serde_json::json!({
+                        "name": t.name,
+                        "description": t.description,
+                        "parameters": t.parameters,
+                    })
+                })
+                .collect();
+            body["tools"] = serde_json::json!([{
+                "function_declarations": function_declarations
+            }]);
+        }
+    }
+
     body
 }
 
@@ -112,7 +134,11 @@ pub fn build_gemini_stream_url(config: &LLMClientConfig) -> String {
 }
 
 /// Anthropic Messages APIリクエストボディを構築
-pub fn build_anthropic_request(messages: &[ChatMessage], config: &LLMClientConfig) -> Value {
+pub fn build_anthropic_request(
+    messages: &[ChatMessage],
+    config: &LLMClientConfig,
+    tools: Option<&[ToolDefinition]>,
+) -> Value {
     let system_text = messages
         .iter()
         .filter(|m| m.role == MessageRole::System)
@@ -145,6 +171,22 @@ pub fn build_anthropic_request(messages: &[ChatMessage], config: &LLMClientConfi
 
     if !system_text.is_empty() {
         body["system"] = Value::String(system_text);
+    }
+
+    if let Some(tool_defs) = tools {
+        if !tool_defs.is_empty() {
+            let tools_json: Vec<Value> = tool_defs
+                .iter()
+                .map(|t| {
+                    serde_json::json!({
+                        "name": t.name,
+                        "description": t.description,
+                        "input_schema": t.parameters,
+                    })
+                })
+                .collect();
+            body["tools"] = Value::Array(tools_json);
+        }
     }
 
     body
@@ -223,6 +265,29 @@ pub enum LLMResponse {
     ToolCalls(Vec<ToolCall>),
 }
 
+impl LLMResponse {
+    /// テキストを取得（ToolCallsの場合は空文字列を返す）
+    pub fn text(&self) -> &str {
+        match self {
+            LLMResponse::Text(s) => s,
+            LLMResponse::ToolCalls(_) => "",
+        }
+    }
+
+    /// テキストを消費して取得（ToolCallsの場合は空文字列を返す）
+    pub fn into_text(self) -> String {
+        match self {
+            LLMResponse::Text(s) => s,
+            LLMResponse::ToolCalls(_) => String::new(),
+        }
+    }
+
+    /// ToolCallsかどうか
+    pub fn is_tool_calls(&self) -> bool {
+        matches!(self, LLMResponse::ToolCalls(_))
+    }
+}
+
 /// LLMクライアントtrait
 #[async_trait]
 pub trait LLMClient: Send + Sync {
@@ -235,12 +300,15 @@ pub trait LLMClient: Send + Sync {
     ) -> Result<LLMResponse, AppError>;
 
     /// ストリーミングチャット補完（コールバックでチャンクを受信）
+    /// テキストチャンクはコールバックで逐次送信し、Tool Callはバッファリングして最終結果として返す。
+    /// 戻り値: LLMResponse::Text(全テキスト) または LLMResponse::ToolCalls(バッファされたツール呼び出し)
     async fn chat_stream(
         &self,
         messages: &[ChatMessage],
         config: &LLMClientConfig,
+        tools: Option<&[ToolDefinition]>,
         callback: Box<dyn Fn(String) + Send>,
-    ) -> Result<String, AppError>;
+    ) -> Result<LLMResponse, AppError>;
 
     /// 接続テスト
     async fn test_connection(&self, config: &LLMClientConfig) -> Result<(), AppError>;
@@ -436,6 +504,126 @@ impl OpenAICompatibleClient {
     }
 }
 
+/// ストリーミング中のTool Callバッファ（OpenAI形式）
+/// OpenAIのSSEでは tool_calls が delta.tool_calls 配列として index 付きで送られる
+#[derive(Debug, Default)]
+struct OpenAIToolCallBuffer {
+    /// index -> (id, function_name, arguments_buffer)
+    entries: std::collections::HashMap<usize, (String, String, String)>,
+}
+
+impl OpenAIToolCallBuffer {
+    fn new() -> Self {
+        Self {
+            entries: std::collections::HashMap::new(),
+        }
+    }
+
+    /// SSEチャンクの delta.tool_calls 配列を処理してバッファに蓄積
+    fn process_delta(&mut self, tool_calls_arr: &[Value]) {
+        for tc in tool_calls_arr {
+            let index = tc["index"].as_u64().unwrap_or(0) as usize;
+            let entry = self
+                .entries
+                .entry(index)
+                .or_insert_with(|| (String::new(), String::new(), String::new()));
+
+            if let Some(id) = tc["id"].as_str() {
+                if !id.is_empty() {
+                    entry.0 = id.to_string();
+                }
+            }
+            if let Some(name) = tc["function"]["name"].as_str() {
+                if !name.is_empty() {
+                    entry.1 = name.to_string();
+                }
+            }
+            if let Some(args) = tc["function"]["arguments"].as_str() {
+                entry.2.push_str(args);
+            }
+        }
+    }
+
+    /// バッファされたデータが存在するか
+    fn has_tool_calls(&self) -> bool {
+        !self.entries.is_empty()
+    }
+
+    /// バッファからToolCallのVecを生成
+    fn into_tool_calls(self) -> Vec<ToolCall> {
+        let mut entries: Vec<(usize, (String, String, String))> =
+            self.entries.into_iter().collect();
+        entries.sort_by_key(|(idx, _)| *idx);
+
+        entries
+            .into_iter()
+            .map(|(_, (id, name, arguments_str))| {
+                let arguments: Value = serde_json::from_str(&arguments_str)
+                    .unwrap_or(Value::Object(serde_json::Map::new()));
+                ToolCall {
+                    id,
+                    name,
+                    arguments,
+                }
+            })
+            .collect()
+    }
+}
+
+/// ストリーミング中のTool Callバッファ（Anthropic形式）
+/// Anthropicでは content_block_start (type: tool_use) と content_block_delta (type: input_json_delta) で送られる
+#[derive(Debug, Default)]
+struct AnthropicToolCallBuffer {
+    /// index -> (id, name, input_json_buffer)
+    entries: std::collections::HashMap<usize, (String, String, String)>,
+}
+
+impl AnthropicToolCallBuffer {
+    fn new() -> Self {
+        Self {
+            entries: std::collections::HashMap::new(),
+        }
+    }
+
+    /// content_block_start イベントを処理
+    fn process_block_start(&mut self, index: usize, id: &str, name: &str) {
+        self.entries
+            .insert(index, (id.to_string(), name.to_string(), String::new()));
+    }
+
+    /// content_block_delta (input_json_delta) イベントを処理
+    fn process_input_delta(&mut self, index: usize, partial_json: &str) {
+        if let Some(entry) = self.entries.get_mut(&index) {
+            entry.2.push_str(partial_json);
+        }
+    }
+
+    /// バッファされたデータが存在するか
+    fn has_tool_calls(&self) -> bool {
+        !self.entries.is_empty()
+    }
+
+    /// バッファからToolCallのVecを生成
+    fn into_tool_calls(self) -> Vec<ToolCall> {
+        let mut entries: Vec<(usize, (String, String, String))> =
+            self.entries.into_iter().collect();
+        entries.sort_by_key(|(idx, _)| *idx);
+
+        entries
+            .into_iter()
+            .map(|(_, (id, name, input_str))| {
+                let arguments: Value = serde_json::from_str(&input_str)
+                    .unwrap_or(Value::Object(serde_json::Map::new()));
+                ToolCall {
+                    id,
+                    name,
+                    arguments,
+                }
+            })
+            .collect()
+    }
+}
+
 impl Default for OpenAICompatibleClient {
     fn default() -> Self {
         Self::new()
@@ -455,7 +643,7 @@ impl LLMClient for OpenAICompatibleClient {
         match strategy {
             ApiStrategy::Gemini => {
                 let url = build_gemini_url(config);
-                let body = build_gemini_request(messages, config);
+                let body = build_gemini_request(messages, config, tools);
 
                 let api_key = config.api_key.as_deref().unwrap_or("");
                 let url_with_key = format!("{}?key={}", url, api_key);
@@ -481,7 +669,7 @@ impl LLMClient for OpenAICompatibleClient {
             }
             ApiStrategy::Anthropic => {
                 let url = build_anthropic_url(config);
-                let body = build_anthropic_request(messages, config);
+                let body = build_anthropic_request(messages, config, tools);
 
                 let api_key = config.api_key.as_deref().unwrap_or("");
                 let response = self
@@ -539,14 +727,15 @@ impl LLMClient for OpenAICompatibleClient {
         &self,
         messages: &[ChatMessage],
         config: &LLMClientConfig,
+        tools: Option<&[ToolDefinition]>,
         callback: Box<dyn Fn(String) + Send>,
-    ) -> Result<String, AppError> {
+    ) -> Result<LLMResponse, AppError> {
         let strategy = resolve_api_strategy(config);
 
         match strategy {
             ApiStrategy::Gemini => {
                 let url = build_gemini_stream_url(config);
-                let body = build_gemini_request(messages, config);
+                let body = build_gemini_request(messages, config, tools);
 
                 let api_key = config.api_key.as_deref().unwrap_or("");
                 let url_with_key = format!("{}&key={}", url, api_key);
@@ -568,6 +757,7 @@ impl LLMClient for OpenAICompatibleClient {
                 }
 
                 let mut full_text = String::new();
+                let mut tool_calls: Vec<ToolCall> = Vec::new();
                 let bytes = response.bytes().await?;
                 let text = String::from_utf8_lossy(&bytes);
 
@@ -577,17 +767,45 @@ impl LLMClient for OpenAICompatibleClient {
                         continue;
                     }
 
+                    // Gemini: functionCall in parts を検出
+                    if let Some(data) = line.strip_prefix("data: ") {
+                        if let Ok(json) = serde_json::from_str::<Value>(data) {
+                            if let Some(parts) =
+                                json["candidates"][0]["content"]["parts"].as_array()
+                            {
+                                for part in parts {
+                                    if let Some(fc) = part.get("functionCall") {
+                                        let name = fc["name"].as_str().unwrap_or("").to_string();
+                                        let args = fc
+                                            .get("args")
+                                            .cloned()
+                                            .unwrap_or(Value::Object(serde_json::Map::new()));
+                                        tool_calls.push(ToolCall {
+                                            id: format!("gemini_call_{}", tool_calls.len()),
+                                            name,
+                                            arguments: args,
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     if let Some(chunk) = Self::parse_gemini_sse_line(line) {
                         full_text.push_str(&chunk);
                         callback(chunk);
                     }
                 }
 
-                Ok(full_text)
+                if !tool_calls.is_empty() {
+                    Ok(LLMResponse::ToolCalls(tool_calls))
+                } else {
+                    Ok(LLMResponse::Text(full_text))
+                }
             }
             ApiStrategy::Anthropic => {
                 let url = build_anthropic_url(config);
-                let mut body = build_anthropic_request(messages, config);
+                let mut body = build_anthropic_request(messages, config, tools);
                 // ストリーミング有効化
                 body["stream"] = Value::Bool(true);
 
@@ -612,6 +830,7 @@ impl LLMClient for OpenAICompatibleClient {
                 }
 
                 let mut full_text = String::new();
+                let mut tool_buffer = AnthropicToolCallBuffer::new();
                 let bytes = response.bytes().await?;
                 let text = String::from_utf8_lossy(&bytes);
 
@@ -621,17 +840,55 @@ impl LLMClient for OpenAICompatibleClient {
                         continue;
                     }
 
+                    // Tool Call バッファリング処理
+                    if let Some(data) = line.strip_prefix("data: ") {
+                        if let Ok(json) = serde_json::from_str::<Value>(data) {
+                            let event_type = json["type"].as_str().unwrap_or("");
+
+                            match event_type {
+                                "content_block_start" => {
+                                    let index = json["index"].as_u64().unwrap_or(0) as usize;
+                                    let content_block = &json["content_block"];
+                                    if content_block["type"].as_str() == Some("tool_use") {
+                                        let id =
+                                            content_block["id"].as_str().unwrap_or("").to_string();
+                                        let name = content_block["name"]
+                                            .as_str()
+                                            .unwrap_or("")
+                                            .to_string();
+                                        tool_buffer.process_block_start(index, &id, &name);
+                                        continue;
+                                    }
+                                }
+                                "content_block_delta" => {
+                                    let index = json["index"].as_u64().unwrap_or(0) as usize;
+                                    let delta = &json["delta"];
+                                    if delta["type"].as_str() == Some("input_json_delta") {
+                                        let partial = delta["partial_json"].as_str().unwrap_or("");
+                                        tool_buffer.process_input_delta(index, partial);
+                                        continue;
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+
                     if let Some(chunk) = Self::parse_anthropic_sse_line(line) {
                         full_text.push_str(&chunk);
                         callback(chunk);
                     }
                 }
 
-                Ok(full_text)
+                if tool_buffer.has_tool_calls() {
+                    Ok(LLMResponse::ToolCalls(tool_buffer.into_tool_calls()))
+                } else {
+                    Ok(LLMResponse::Text(full_text))
+                }
             }
             ApiStrategy::OpenAI => {
                 let url = Self::build_url(config);
-                let body = self.build_request_body(messages, config, None, true);
+                let body = self.build_request_body(messages, config, tools, true);
 
                 let mut request = self.http_client.post(&url).json(&body);
 
@@ -654,6 +911,7 @@ impl LLMClient for OpenAICompatibleClient {
 
                 let mut full_text = String::new();
                 let mut buffer = String::new();
+                let mut tool_buffer = OpenAIToolCallBuffer::new();
 
                 let bytes = response.bytes().await?;
                 let text = String::from_utf8_lossy(&bytes);
@@ -664,6 +922,19 @@ impl LLMClient for OpenAICompatibleClient {
                         continue;
                     }
 
+                    // Tool Call バッファリング処理
+                    if let Some(data) = line.strip_prefix("data: ") {
+                        if data.trim() != "[DONE]" {
+                            if let Ok(json) = serde_json::from_str::<Value>(data) {
+                                let delta = &json["choices"][0]["delta"];
+                                if let Some(tool_calls_arr) = delta["tool_calls"].as_array() {
+                                    tool_buffer.process_delta(tool_calls_arr);
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+
                     if let Some(chunk) = Self::parse_sse_line(line) {
                         full_text.push_str(&chunk);
                         buffer.push_str(&chunk);
@@ -672,7 +943,11 @@ impl LLMClient for OpenAICompatibleClient {
                     }
                 }
 
-                Ok(full_text)
+                if tool_buffer.has_tool_calls() {
+                    Ok(LLMResponse::ToolCalls(tool_buffer.into_tool_calls()))
+                } else {
+                    Ok(LLMResponse::Text(full_text))
+                }
             }
         }
     }
@@ -1232,7 +1507,7 @@ mod tests {
             provider: Some(LLMProvider::Google),
         };
 
-        let body = build_gemini_request(&messages, &config);
+        let body = build_gemini_request(&messages, &config, None);
 
         // contentsにはSystemメッセージが含まれない
         let contents = body["contents"].as_array().unwrap();
@@ -1269,7 +1544,7 @@ mod tests {
             provider: Some(LLMProvider::Google),
         };
 
-        let body = build_gemini_request(&messages, &config);
+        let body = build_gemini_request(&messages, &config, None);
 
         let contents = body["contents"].as_array().unwrap();
         assert_eq!(contents.len(), 1);
@@ -1400,7 +1675,7 @@ mod tests {
             provider: Some(LLMProvider::Anthropic),
         };
 
-        let body = build_anthropic_request(&messages, &config);
+        let body = build_anthropic_request(&messages, &config, None);
 
         // modelが設定される
         assert_eq!(body["model"], "claude-3-5-sonnet-20241022");
@@ -1440,7 +1715,7 @@ mod tests {
             provider: Some(LLMProvider::Anthropic),
         };
 
-        let body = build_anthropic_request(&messages, &config);
+        let body = build_anthropic_request(&messages, &config, None);
 
         let msgs = body["messages"].as_array().unwrap();
         assert_eq!(msgs.len(), 1);
@@ -1480,7 +1755,7 @@ mod tests {
             provider: Some(LLMProvider::Anthropic),
         };
 
-        let body = build_anthropic_request(&messages, &config);
+        let body = build_anthropic_request(&messages, &config, None);
 
         // 複数のシステムメッセージが改行で結合される
         assert_eq!(body["system"], "First instruction.\nSecond instruction.");

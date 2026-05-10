@@ -12,6 +12,7 @@ use crate::db::database::Database;
 use crate::llm::client::LLMClient;
 use crate::memory::manager::MemoryManager;
 use crate::plugin::registry::PluginRegistry;
+use crate::plugin::system::PluginSystem;
 use crate::thought::engine::ThoughtEngine;
 use crate::tts::connector::TTSConnector;
 
@@ -25,6 +26,7 @@ pub struct AppState {
     pub llm_client: Arc<dyn LLMClient>,
     pub attachment_processor: Arc<dyn AttachmentProcessor>,
     pub plugin_registry: Arc<dyn PluginRegistry>,
+    pub plugin_system: Arc<dyn PluginSystem>,
     pub thought_engine: Arc<dyn ThoughtEngine>,
     /// LLMリクエスト直列化用グローバルロック
     pub llm_lock: Arc<tokio::sync::Mutex<()>>,

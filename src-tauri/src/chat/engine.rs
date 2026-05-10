@@ -9,7 +9,8 @@ use tauri::{AppHandle, Emitter};
 
 use crate::db::database::Database;
 use crate::db::repositories::{
-    character as char_repo, chat as chat_repo, memory as mem_repo, thought as thought_repo,
+    character as char_repo, chat as chat_repo, chat_tool_permission as perm_repo,
+    memory as mem_repo, thought as thought_repo,
 };
 use crate::error::AppError;
 use crate::llm::client::{ChatMessage, LLMClient, LLMClientConfig, LLMResponse, MessageRole};
@@ -17,6 +18,7 @@ use crate::models::tts::{TTSCompleteEvent, TTSErrorEvent, TTSGeneratingEvent};
 use crate::models::{
     Attachment, ChatMessageRecord, ChatRole, ChatSession, MessageAttachment, Thought,
 };
+use crate::plugin::system::PluginSystem;
 use crate::tts::connector::TTSConnector;
 use crate::tts::flow_controller::TTSFlowController;
 
@@ -95,6 +97,8 @@ pub struct DefaultChatEngine {
     tts_connector: Arc<dyn TTSConnector>,
     /// TTS Flow Controller（TTS有効時の音声生成オーケストレーター）
     tts_flow_controller: Option<Arc<TTSFlowController>>,
+    /// プラグインシステム（ツール実行ディスパッチ）
+    plugin_system: Option<Arc<dyn PluginSystem>>,
 }
 
 impl DefaultChatEngine {
@@ -105,6 +109,7 @@ impl DefaultChatEngine {
         llm_lock: Arc<tokio::sync::Mutex<()>>,
         tts_connector: Arc<dyn TTSConnector>,
         tts_flow_controller: Option<Arc<TTSFlowController>>,
+        plugin_system: Option<Arc<dyn PluginSystem>>,
     ) -> Self {
         Self {
             db,
@@ -113,6 +118,7 @@ impl DefaultChatEngine {
             llm_lock,
             tts_connector,
             tts_flow_controller,
+            plugin_system,
         }
     }
 
@@ -288,6 +294,45 @@ impl DefaultChatEngine {
         });
 
         messages
+    }
+
+    /// セッション単位のツール許可設定を加味して、LLMに渡すツール定義をフィルタリング
+    /// design.md の許可優先順位:
+    ///   1. グローバルで disabled → 常に使用不可（get_enabled_tools() で既に除外済み）
+    ///   2. グローバルで enabled かつ チャットで disabled → 使用不可
+    ///   3. グローバルで enabled かつ チャットで enabled → 使用可能
+    pub(crate) fn filter_tools_by_session_permissions(
+        &self,
+        session_id: &str,
+        global_tools: Vec<crate::models::ToolDefinition>,
+    ) -> Vec<crate::models::ToolDefinition> {
+        let permissions = {
+            let db = match self.db.lock() {
+                Ok(db) => db,
+                Err(_) => return global_tools, // ロック取得失敗時はフィルタなしで返す
+            };
+            match perm_repo::get_session_tool_permissions(db.connection(), session_id) {
+                Ok(perms) => perms,
+                Err(_) => return global_tools, // DB読み取り失敗時はフィルタなしで返す
+            }
+        };
+
+        // 許可設定が空（未初期化）の場合はグローバル設定をそのまま使用
+        if permissions.is_empty() {
+            return global_tools;
+        }
+
+        // セッションで無効化されたツールを除外
+        let disabled_tools: std::collections::HashSet<&str> = permissions
+            .iter()
+            .filter(|p| !p.is_enabled)
+            .map(|p| p.tool_name.as_str())
+            .collect();
+
+        global_tools
+            .into_iter()
+            .filter(|t| !disabled_tools.contains(t.name.as_str()))
+            .collect()
     }
 
     /// 添付ファイルから抽出テキストを結合
@@ -490,7 +535,7 @@ impl ChatEngine for DefaultChatEngine {
 
         let session_id_owned = session_id.to_string();
 
-        let full_response = if tts_enabled {
+        if tts_enabled {
             // === TTS有効パス: ストリーミングチャンクをフロントに送らず内部蓄積 ===
             let accumulator = partial_content_accumulator.clone();
             let callback = Box::new(move |chunk: String| {
@@ -505,8 +550,9 @@ impl ChatEngine for DefaultChatEngine {
             let _llm_guard = self.llm_lock.lock().await;
             let response = self
                 .llm_client
-                .chat_stream(&llm_messages, &self.current_llm_config(), callback)
-                .await?;
+                .chat_stream(&llm_messages, &self.current_llm_config(), None, callback)
+                .await?
+                .into_text();
             drop(_llm_guard);
 
             // LLM応答をJSONパース: {"display": "...", "speech": "..."}
@@ -600,38 +646,260 @@ impl ChatEngine for DefaultChatEngine {
                     .map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
             }
 
-            // DB保存用はdisplayテキスト
-            display_text
+            // アシスタントメッセージ保存（TTS時はdisplayテキスト）
+            let assistant_msg_id = uuid::Uuid::new_v4().to_string();
+            let assistant_now = chrono::Utc::now().to_rfc3339();
+
+            let assistant_message = ChatMessageRecord {
+                id: assistant_msg_id,
+                session_id: session_id_owned.clone(),
+                role: ChatRole::Assistant,
+                content: display_text.clone(),
+                attachments: None,
+                tool_calls: None,
+                tool_call_id: None,
+                created_at: assistant_now.clone(),
+            };
+
+            {
+                let db = self
+                    .db
+                    .lock()
+                    .map_err(|e| AppError::Database(format!("Failed to acquire DB lock: {}", e)))?;
+                let conn = db.connection();
+
+                chat_repo::insert_message(conn, &assistant_message)?;
+
+                let preview = truncate_str(&display_text, 50);
+                chat_repo::update_session_metadata(conn, session_id, &assistant_now, &preview)?;
+            }
+
+            return Ok(());
         } else {
-            // === TTS無効パス: 既存のストリーミングフロー（変更なし） ===
-            let app_handle_clone = app_handle.clone();
-            let session_id_for_callback = session_id_owned.clone();
-            let accumulator = partial_content_accumulator.clone();
-            let callback = Box::new(move |chunk: String| {
-                // 部分コンテンツ蓄積
-                if let Some(ref acc) = accumulator {
-                    if let Ok(mut content) = acc.lock() {
-                        content.push_str(&chunk);
+            // === TTS無効パス: ツール実行ループ付きストリーミングフロー ===
+            const MAX_TOOL_ITERATIONS: usize = 10;
+
+            // 有効なツール定義を取得（セッション単位の許可設定でフィルタ）
+            let tool_definitions = {
+                let global = self
+                    .plugin_system
+                    .as_ref()
+                    .map(|ps| ps.get_enabled_tools())
+                    .unwrap_or_default();
+                self.filter_tools_by_session_permissions(&session_id_owned, global)
+            };
+            let tools_for_llm: Option<&[crate::models::ToolDefinition]> =
+                if tool_definitions.is_empty() {
+                    None
+                } else {
+                    Some(&tool_definitions)
+                };
+
+            // ツール実行ループ用のコンテキスト（可変）
+            let mut loop_messages = llm_messages;
+            let mut iteration = 0;
+
+            loop {
+                iteration += 1;
+                if iteration > MAX_TOOL_ITERATIONS {
+                    println!(
+                        "[ToolLoop] Max iterations ({}) reached, stopping",
+                        MAX_TOOL_ITERATIONS
+                    );
+                    break;
+                }
+
+                let app_handle_clone = app_handle.clone();
+                let session_id_for_callback = session_id_owned.clone();
+                let accumulator = partial_content_accumulator.clone();
+                let callback = Box::new(move |chunk: String| {
+                    // 部分コンテンツ蓄積
+                    if let Some(ref acc) = accumulator {
+                        if let Ok(mut content) = acc.lock() {
+                            content.push_str(&chunk);
+                        }
+                    }
+                    let _ = app_handle_clone.emit(
+                        "chat:stream",
+                        ChatStreamEvent {
+                            session_id: session_id_for_callback.clone(),
+                            chunk,
+                            done: false,
+                        },
+                    );
+                });
+
+                let _llm_guard = self.llm_lock.lock().await;
+                let llm_response = self
+                    .llm_client
+                    .chat_stream(
+                        &loop_messages,
+                        &self.current_llm_config(),
+                        tools_for_llm,
+                        callback,
+                    )
+                    .await?;
+                drop(_llm_guard);
+
+                match llm_response {
+                    LLMResponse::Text(text) => {
+                        // テキスト応答 — ストリーミング完了イベントを送信してループ終了
+                        app_handle
+                            .emit(
+                                "chat:stream",
+                                ChatStreamEvent {
+                                    session_id: session_id_owned.clone(),
+                                    chunk: String::new(),
+                                    done: true,
+                                },
+                            )
+                            .map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
+
+                        // アシスタントメッセージ保存 & セッションメタデータ更新
+                        let assistant_msg_id = uuid::Uuid::new_v4().to_string();
+                        let assistant_now = chrono::Utc::now().to_rfc3339();
+
+                        let assistant_message = ChatMessageRecord {
+                            id: assistant_msg_id,
+                            session_id: session_id_owned.clone(),
+                            role: ChatRole::Assistant,
+                            content: text.clone(),
+                            attachments: None,
+                            tool_calls: None,
+                            tool_call_id: None,
+                            created_at: assistant_now.clone(),
+                        };
+
+                        {
+                            let db = self.db.lock().map_err(|e| {
+                                AppError::Database(format!("Failed to acquire DB lock: {}", e))
+                            })?;
+                            let conn = db.connection();
+
+                            chat_repo::insert_message(conn, &assistant_message)?;
+
+                            let preview = truncate_str(&text, 50);
+                            chat_repo::update_session_metadata(
+                                conn,
+                                session_id,
+                                &assistant_now,
+                                &preview,
+                            )?;
+                        }
+
+                        return Ok(());
+                    }
+                    LLMResponse::ToolCalls(tool_calls) => {
+                        // ツール呼び出し応答 — 実行してループ継続
+                        println!(
+                            "[ToolLoop] Iteration {}: {} tool call(s)",
+                            iteration,
+                            tool_calls.len()
+                        );
+
+                        // 1. tool:executing イベントをフロントエンドに送信
+                        for tc in &tool_calls {
+                            app_handle
+                                .emit(
+                                    "tool:executing",
+                                    ToolExecutingEvent {
+                                        session_id: session_id_owned.clone(),
+                                        tool_name: tc.name.clone(),
+                                    },
+                                )
+                                .map_err(|e| {
+                                    AppError::Io(format!("Failed to emit event: {}", e))
+                                })?;
+                        }
+
+                        // 2. アシスタントメッセージ（tool_calls含む）をDB保存
+                        let tc_msg_id = uuid::Uuid::new_v4().to_string();
+                        let tc_now = chrono::Utc::now().to_rfc3339();
+
+                        let tc_assistant_message = ChatMessageRecord {
+                            id: tc_msg_id,
+                            session_id: session_id_owned.clone(),
+                            role: ChatRole::Assistant,
+                            content: String::new(),
+                            attachments: None,
+                            tool_calls: Some(tool_calls.clone()),
+                            tool_call_id: None,
+                            created_at: tc_now.clone(),
+                        };
+
+                        {
+                            let db = self.db.lock().map_err(|e| {
+                                AppError::Database(format!("Failed to acquire DB lock: {}", e))
+                            })?;
+                            let conn = db.connection();
+                            chat_repo::insert_message(conn, &tc_assistant_message)?;
+                        }
+
+                        // コンテキストにアシスタントのtool_callメッセージを追加
+                        // （tool_callsの内容をJSON文字列としてcontentに含める）
+                        let tool_calls_json =
+                            serde_json::to_string(&tool_calls).unwrap_or_default();
+                        loop_messages.push(ChatMessage {
+                            role: MessageRole::Assistant,
+                            content: tool_calls_json,
+                            tool_call_id: None,
+                            images: None,
+                        });
+
+                        // 3. PluginSystem::handle_tool_calls でツール実行
+                        let tool_results = if let Some(ref ps) = self.plugin_system {
+                            ps.handle_tool_calls(&tool_calls).await?
+                        } else {
+                            // PluginSystem未設定の場合はエラー結果を返す
+                            tool_calls
+                                .iter()
+                                .map(|tc| crate::models::plugin::ToolResult {
+                                    tool_call_id: tc.id.clone(),
+                                    content: "Plugin system is not available".to_string(),
+                                    is_error: true,
+                                })
+                                .collect()
+                        };
+
+                        // 4. ツール実行結果をDB保存 & コンテキストに追加
+                        for result in &tool_results {
+                            let tool_msg_id = uuid::Uuid::new_v4().to_string();
+                            let tool_now = chrono::Utc::now().to_rfc3339();
+
+                            let tool_message = ChatMessageRecord {
+                                id: tool_msg_id,
+                                session_id: session_id_owned.clone(),
+                                role: ChatRole::Tool,
+                                content: result.content.clone(),
+                                attachments: None,
+                                tool_calls: None,
+                                tool_call_id: Some(result.tool_call_id.clone()),
+                                created_at: tool_now,
+                            };
+
+                            {
+                                let db = self.db.lock().map_err(|e| {
+                                    AppError::Database(format!("Failed to acquire DB lock: {}", e))
+                                })?;
+                                let conn = db.connection();
+                                chat_repo::insert_message(conn, &tool_message)?;
+                            }
+
+                            // コンテキストにツール結果を追加
+                            loop_messages.push(ChatMessage {
+                                role: MessageRole::Tool,
+                                content: result.content.clone(),
+                                tool_call_id: Some(result.tool_call_id.clone()),
+                                images: None,
+                            });
+                        }
+
+                        // ループ継続 — 再度LLMを呼び出す
                     }
                 }
-                let _ = app_handle_clone.emit(
-                    "chat:stream",
-                    ChatStreamEvent {
-                        session_id: session_id_for_callback.clone(),
-                        chunk,
-                        done: false,
-                    },
-                );
-            });
+            }
 
-            let _llm_guard = self.llm_lock.lock().await;
-            let response = self
-                .llm_client
-                .chat_stream(&llm_messages, &self.current_llm_config(), callback)
-                .await?;
-            drop(_llm_guard);
-
-            // ストリーミング完了イベント
+            // MAX_TOOL_ITERATIONS到達時のフォールバック: ストリーミング完了を通知
             app_handle
                 .emit(
                     "chat:stream",
@@ -643,36 +911,34 @@ impl ChatEngine for DefaultChatEngine {
                 )
                 .map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
 
-            response
-        };
+            // 最大反復到達時はエラーメッセージをアシスタントとして保存
+            let fallback_content = "[Tool execution limit reached. Please try again.]".to_string();
+            let assistant_msg_id = uuid::Uuid::new_v4().to_string();
+            let assistant_now = chrono::Utc::now().to_rfc3339();
 
-        // アシスタントメッセージ保存 & セッションメタデータ更新
-        let assistant_msg_id = uuid::Uuid::new_v4().to_string();
-        let assistant_now = chrono::Utc::now().to_rfc3339();
+            let assistant_message = ChatMessageRecord {
+                id: assistant_msg_id,
+                session_id: session_id_owned.clone(),
+                role: ChatRole::Assistant,
+                content: fallback_content.clone(),
+                attachments: None,
+                tool_calls: None,
+                tool_call_id: None,
+                created_at: assistant_now.clone(),
+            };
 
-        let assistant_message = ChatMessageRecord {
-            id: assistant_msg_id,
-            session_id: session_id_owned.clone(),
-            role: ChatRole::Assistant,
-            content: full_response.clone(),
-            attachments: None,
-            tool_calls: None,
-            tool_call_id: None,
-            created_at: assistant_now.clone(),
-        };
+            {
+                let db = self
+                    .db
+                    .lock()
+                    .map_err(|e| AppError::Database(format!("Failed to acquire DB lock: {}", e)))?;
+                let conn = db.connection();
 
-        {
-            let db = self
-                .db
-                .lock()
-                .map_err(|e| AppError::Database(format!("Failed to acquire DB lock: {}", e)))?;
-            let conn = db.connection();
+                chat_repo::insert_message(conn, &assistant_message)?;
 
-            chat_repo::insert_message(conn, &assistant_message)?;
-
-            // セッションメタデータ更新
-            let preview = truncate_str(&full_response, 50);
-            chat_repo::update_session_metadata(conn, session_id, &assistant_now, &preview)?;
+                let preview = truncate_str(&fallback_content, 50);
+                chat_repo::update_session_metadata(conn, session_id, &assistant_now, &preview)?;
+            }
         }
 
         Ok(())
@@ -797,7 +1063,7 @@ impl ChatEngine for DefaultChatEngine {
 
         let session_id_owned = session_id.to_string();
 
-        let full_response = if tts_enabled {
+        if tts_enabled {
             // === TTS有効パス: ストリーミングチャンクをフロントに送らず内部蓄積 ===
             let accumulator = partial_content_accumulator.clone();
             let callback = Box::new(move |chunk: String| {
@@ -811,8 +1077,9 @@ impl ChatEngine for DefaultChatEngine {
             let _llm_guard = self.llm_lock.lock().await;
             let response = self
                 .llm_client
-                .chat_stream(&llm_messages, &self.current_llm_config(), callback)
-                .await?;
+                .chat_stream(&llm_messages, &self.current_llm_config(), None, callback)
+                .await?
+                .into_text();
             drop(_llm_guard);
 
             // tts:generating イベント発行
@@ -876,36 +1143,258 @@ impl ChatEngine for DefaultChatEngine {
                     .map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
             }
 
-            response
+            // アシスタントメッセージ保存（TTS時）
+            let assistant_msg_id = uuid::Uuid::new_v4().to_string();
+            let assistant_now = chrono::Utc::now().to_rfc3339();
+
+            let assistant_message = ChatMessageRecord {
+                id: assistant_msg_id,
+                session_id: session_id_owned.clone(),
+                role: ChatRole::Assistant,
+                content: response.clone(),
+                attachments: None,
+                tool_calls: None,
+                tool_call_id: None,
+                created_at: assistant_now.clone(),
+            };
+
+            {
+                let db = self
+                    .db
+                    .lock()
+                    .map_err(|e| AppError::Database(format!("Failed to acquire DB lock: {}", e)))?;
+                let conn = db.connection();
+
+                chat_repo::insert_message(conn, &assistant_message)?;
+
+                let preview = truncate_str(&response, 50);
+                chat_repo::update_session_metadata(conn, session_id, &assistant_now, &preview)?;
+            }
+
+            return Ok(());
         } else {
-            // === TTS無効パス: 既存のストリーミングフロー ===
-            let app_handle_clone = app_handle.clone();
-            let session_id_for_callback = session_id_owned.clone();
-            let accumulator = partial_content_accumulator.clone();
-            let callback = Box::new(move |chunk: String| {
-                if let Some(ref acc) = accumulator {
-                    if let Ok(mut content) = acc.lock() {
-                        content.push_str(&chunk);
+            // === TTS無効パス: ツール実行ループ付きストリーミングフロー ===
+            const MAX_TOOL_ITERATIONS: usize = 10;
+
+            // 有効なツール定義を取得（セッション単位の許可設定でフィルタ）
+            let tool_definitions = {
+                let global = self
+                    .plugin_system
+                    .as_ref()
+                    .map(|ps| ps.get_enabled_tools())
+                    .unwrap_or_default();
+                self.filter_tools_by_session_permissions(&session_id_owned, global)
+            };
+            let tools_for_llm: Option<&[crate::models::ToolDefinition]> =
+                if tool_definitions.is_empty() {
+                    None
+                } else {
+                    Some(&tool_definitions)
+                };
+
+            // ツール実行ループ用のコンテキスト（可変）
+            let mut loop_messages = llm_messages;
+            let mut iteration = 0;
+
+            loop {
+                iteration += 1;
+                if iteration > MAX_TOOL_ITERATIONS {
+                    println!(
+                        "[ToolLoop] Max iterations ({}) reached, stopping",
+                        MAX_TOOL_ITERATIONS
+                    );
+                    break;
+                }
+
+                let app_handle_clone = app_handle.clone();
+                let session_id_for_callback = session_id_owned.clone();
+                let accumulator = partial_content_accumulator.clone();
+                let callback = Box::new(move |chunk: String| {
+                    // 部分コンテンツ蓄積
+                    if let Some(ref acc) = accumulator {
+                        if let Ok(mut content) = acc.lock() {
+                            content.push_str(&chunk);
+                        }
+                    }
+                    let _ = app_handle_clone.emit(
+                        "chat:stream",
+                        ChatStreamEvent {
+                            session_id: session_id_for_callback.clone(),
+                            chunk,
+                            done: false,
+                        },
+                    );
+                });
+
+                let _llm_guard = self.llm_lock.lock().await;
+                let llm_response = self
+                    .llm_client
+                    .chat_stream(
+                        &loop_messages,
+                        &self.current_llm_config(),
+                        tools_for_llm,
+                        callback,
+                    )
+                    .await?;
+                drop(_llm_guard);
+
+                match llm_response {
+                    LLMResponse::Text(text) => {
+                        // テキスト応答 — ストリーミング完了イベントを送信してループ終了
+                        app_handle
+                            .emit(
+                                "chat:stream",
+                                ChatStreamEvent {
+                                    session_id: session_id_owned.clone(),
+                                    chunk: String::new(),
+                                    done: true,
+                                },
+                            )
+                            .map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
+
+                        // アシスタントメッセージ保存 & セッションメタデータ更新
+                        let assistant_msg_id = uuid::Uuid::new_v4().to_string();
+                        let assistant_now = chrono::Utc::now().to_rfc3339();
+
+                        let assistant_message = ChatMessageRecord {
+                            id: assistant_msg_id,
+                            session_id: session_id_owned.clone(),
+                            role: ChatRole::Assistant,
+                            content: text.clone(),
+                            attachments: None,
+                            tool_calls: None,
+                            tool_call_id: None,
+                            created_at: assistant_now.clone(),
+                        };
+
+                        {
+                            let db = self.db.lock().map_err(|e| {
+                                AppError::Database(format!("Failed to acquire DB lock: {}", e))
+                            })?;
+                            let conn = db.connection();
+
+                            chat_repo::insert_message(conn, &assistant_message)?;
+
+                            let preview = truncate_str(&text, 50);
+                            chat_repo::update_session_metadata(
+                                conn,
+                                session_id,
+                                &assistant_now,
+                                &preview,
+                            )?;
+                        }
+
+                        return Ok(());
+                    }
+                    LLMResponse::ToolCalls(tool_calls) => {
+                        // ツール呼び出し応答 — 実行してループ継続
+                        println!(
+                            "[ToolLoop] regenerate iteration {}: {} tool call(s)",
+                            iteration,
+                            tool_calls.len()
+                        );
+
+                        // 1. tool:executing イベントをフロントエンドに送信
+                        for tc in &tool_calls {
+                            app_handle
+                                .emit(
+                                    "tool:executing",
+                                    ToolExecutingEvent {
+                                        session_id: session_id_owned.clone(),
+                                        tool_name: tc.name.clone(),
+                                    },
+                                )
+                                .map_err(|e| {
+                                    AppError::Io(format!("Failed to emit event: {}", e))
+                                })?;
+                        }
+
+                        // 2. アシスタントメッセージ（tool_calls含む）をDB保存
+                        let tc_msg_id = uuid::Uuid::new_v4().to_string();
+                        let tc_now = chrono::Utc::now().to_rfc3339();
+
+                        let tc_assistant_message = ChatMessageRecord {
+                            id: tc_msg_id,
+                            session_id: session_id_owned.clone(),
+                            role: ChatRole::Assistant,
+                            content: String::new(),
+                            attachments: None,
+                            tool_calls: Some(tool_calls.clone()),
+                            tool_call_id: None,
+                            created_at: tc_now.clone(),
+                        };
+
+                        {
+                            let db = self.db.lock().map_err(|e| {
+                                AppError::Database(format!("Failed to acquire DB lock: {}", e))
+                            })?;
+                            let conn = db.connection();
+                            chat_repo::insert_message(conn, &tc_assistant_message)?;
+                        }
+
+                        // コンテキストにアシスタントのtool_callメッセージを追加
+                        let tool_calls_json =
+                            serde_json::to_string(&tool_calls).unwrap_or_default();
+                        loop_messages.push(ChatMessage {
+                            role: MessageRole::Assistant,
+                            content: tool_calls_json,
+                            tool_call_id: None,
+                            images: None,
+                        });
+
+                        // 3. PluginSystem::handle_tool_calls でツール実行
+                        let tool_results = if let Some(ref ps) = self.plugin_system {
+                            ps.handle_tool_calls(&tool_calls).await?
+                        } else {
+                            tool_calls
+                                .iter()
+                                .map(|tc| crate::models::plugin::ToolResult {
+                                    tool_call_id: tc.id.clone(),
+                                    content: "Plugin system is not available".to_string(),
+                                    is_error: true,
+                                })
+                                .collect()
+                        };
+
+                        // 4. ツール実行結果をDB保存 & コンテキストに追加
+                        for result in &tool_results {
+                            let tool_msg_id = uuid::Uuid::new_v4().to_string();
+                            let tool_now = chrono::Utc::now().to_rfc3339();
+
+                            let tool_message = ChatMessageRecord {
+                                id: tool_msg_id,
+                                session_id: session_id_owned.clone(),
+                                role: ChatRole::Tool,
+                                content: result.content.clone(),
+                                attachments: None,
+                                tool_calls: None,
+                                tool_call_id: Some(result.tool_call_id.clone()),
+                                created_at: tool_now,
+                            };
+
+                            {
+                                let db = self.db.lock().map_err(|e| {
+                                    AppError::Database(format!("Failed to acquire DB lock: {}", e))
+                                })?;
+                                let conn = db.connection();
+                                chat_repo::insert_message(conn, &tool_message)?;
+                            }
+
+                            // コンテキストにツール結果を追加
+                            loop_messages.push(ChatMessage {
+                                role: MessageRole::Tool,
+                                content: result.content.clone(),
+                                tool_call_id: Some(result.tool_call_id.clone()),
+                                images: None,
+                            });
+                        }
+
+                        // ループ継続 — 再度LLMを呼び出す
                     }
                 }
-                let _ = app_handle_clone.emit(
-                    "chat:stream",
-                    ChatStreamEvent {
-                        session_id: session_id_for_callback.clone(),
-                        chunk,
-                        done: false,
-                    },
-                );
-            });
+            }
 
-            let _llm_guard = self.llm_lock.lock().await;
-            let response = self
-                .llm_client
-                .chat_stream(&llm_messages, &self.current_llm_config(), callback)
-                .await?;
-            drop(_llm_guard);
-
-            // ストリーミング完了イベント
+            // MAX_TOOL_ITERATIONS到達時のフォールバック: ストリーミング完了を通知
             app_handle
                 .emit(
                     "chat:stream",
@@ -917,35 +1406,34 @@ impl ChatEngine for DefaultChatEngine {
                 )
                 .map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
 
-            response
-        };
+            // 最大反復到達時はエラーメッセージをアシスタントとして保存
+            let fallback_content = "[Tool execution limit reached. Please try again.]".to_string();
+            let assistant_msg_id = uuid::Uuid::new_v4().to_string();
+            let assistant_now = chrono::Utc::now().to_rfc3339();
 
-        // 5. アシスタントメッセージ保存
-        let assistant_msg_id = uuid::Uuid::new_v4().to_string();
-        let assistant_now = chrono::Utc::now().to_rfc3339();
+            let assistant_message = ChatMessageRecord {
+                id: assistant_msg_id,
+                session_id: session_id_owned.clone(),
+                role: ChatRole::Assistant,
+                content: fallback_content.clone(),
+                attachments: None,
+                tool_calls: None,
+                tool_call_id: None,
+                created_at: assistant_now.clone(),
+            };
 
-        let assistant_message = ChatMessageRecord {
-            id: assistant_msg_id,
-            session_id: session_id_owned.clone(),
-            role: ChatRole::Assistant,
-            content: full_response.clone(),
-            attachments: None,
-            tool_calls: None,
-            tool_call_id: None,
-            created_at: assistant_now.clone(),
-        };
+            {
+                let db = self
+                    .db
+                    .lock()
+                    .map_err(|e| AppError::Database(format!("Failed to acquire DB lock: {}", e)))?;
+                let conn = db.connection();
 
-        {
-            let db = self
-                .db
-                .lock()
-                .map_err(|e| AppError::Database(format!("Failed to acquire DB lock: {}", e)))?;
-            let conn = db.connection();
+                chat_repo::insert_message(conn, &assistant_message)?;
 
-            chat_repo::insert_message(conn, &assistant_message)?;
-
-            let preview = truncate_str(&full_response, 50);
-            chat_repo::update_session_metadata(conn, session_id, &assistant_now, &preview)?;
+                let preview = truncate_str(&fallback_content, 50);
+                chat_repo::update_session_metadata(conn, session_id, &assistant_now, &preview)?;
+            }
         }
 
         Ok(())
@@ -1083,7 +1571,7 @@ impl ChatEngine for DefaultChatEngine {
 
         let session_id_owned = session_id.to_string();
 
-        let full_response = if tts_enabled {
+        if tts_enabled {
             // === TTS有効パス ===
             let accumulator = partial_content_accumulator.clone();
             let callback = Box::new(move |chunk: String| {
@@ -1097,8 +1585,9 @@ impl ChatEngine for DefaultChatEngine {
             let _llm_guard = self.llm_lock.lock().await;
             let response = self
                 .llm_client
-                .chat_stream(&llm_messages, &self.current_llm_config(), callback)
-                .await?;
+                .chat_stream(&llm_messages, &self.current_llm_config(), None, callback)
+                .await?
+                .into_text();
             drop(_llm_guard);
 
             app_handle
@@ -1160,35 +1649,258 @@ impl ChatEngine for DefaultChatEngine {
                     .map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
             }
 
-            response
+            // アシスタントメッセージ保存（TTS時）
+            let assistant_msg_id = uuid::Uuid::new_v4().to_string();
+            let assistant_now = chrono::Utc::now().to_rfc3339();
+
+            let assistant_message = ChatMessageRecord {
+                id: assistant_msg_id,
+                session_id: session_id_owned.clone(),
+                role: ChatRole::Assistant,
+                content: response.clone(),
+                attachments: None,
+                tool_calls: None,
+                tool_call_id: None,
+                created_at: assistant_now.clone(),
+            };
+
+            {
+                let db = self
+                    .db
+                    .lock()
+                    .map_err(|e| AppError::Database(format!("Failed to acquire DB lock: {}", e)))?;
+                let conn = db.connection();
+
+                chat_repo::insert_message(conn, &assistant_message)?;
+
+                let preview = truncate_str(&response, 50);
+                chat_repo::update_session_metadata(conn, session_id, &assistant_now, &preview)?;
+            }
+
+            return Ok(());
         } else {
-            // === TTS無効パス: 既存のストリーミングフロー ===
-            let app_handle_clone = app_handle.clone();
-            let session_id_for_callback = session_id_owned.clone();
-            let accumulator = partial_content_accumulator.clone();
-            let callback = Box::new(move |chunk: String| {
-                if let Some(ref acc) = accumulator {
-                    if let Ok(mut content) = acc.lock() {
-                        content.push_str(&chunk);
+            // === TTS無効パス: ツール実行ループ付きストリーミングフロー ===
+            const MAX_TOOL_ITERATIONS: usize = 10;
+
+            // 有効なツール定義を取得（セッション単位の許可設定でフィルタ）
+            let tool_definitions = {
+                let global = self
+                    .plugin_system
+                    .as_ref()
+                    .map(|ps| ps.get_enabled_tools())
+                    .unwrap_or_default();
+                self.filter_tools_by_session_permissions(&session_id_owned, global)
+            };
+            let tools_for_llm: Option<&[crate::models::ToolDefinition]> =
+                if tool_definitions.is_empty() {
+                    None
+                } else {
+                    Some(&tool_definitions)
+                };
+
+            // ツール実行ループ用のコンテキスト（可変）
+            let mut loop_messages = llm_messages;
+            let mut iteration = 0;
+
+            loop {
+                iteration += 1;
+                if iteration > MAX_TOOL_ITERATIONS {
+                    println!(
+                        "[ToolLoop] Max iterations ({}) reached, stopping",
+                        MAX_TOOL_ITERATIONS
+                    );
+                    break;
+                }
+
+                let app_handle_clone = app_handle.clone();
+                let session_id_for_callback = session_id_owned.clone();
+                let accumulator = partial_content_accumulator.clone();
+                let callback = Box::new(move |chunk: String| {
+                    // 部分コンテンツ蓄積
+                    if let Some(ref acc) = accumulator {
+                        if let Ok(mut content) = acc.lock() {
+                            content.push_str(&chunk);
+                        }
+                    }
+                    let _ = app_handle_clone.emit(
+                        "chat:stream",
+                        ChatStreamEvent {
+                            session_id: session_id_for_callback.clone(),
+                            chunk,
+                            done: false,
+                        },
+                    );
+                });
+
+                let _llm_guard = self.llm_lock.lock().await;
+                let llm_response = self
+                    .llm_client
+                    .chat_stream(
+                        &loop_messages,
+                        &self.current_llm_config(),
+                        tools_for_llm,
+                        callback,
+                    )
+                    .await?;
+                drop(_llm_guard);
+
+                match llm_response {
+                    LLMResponse::Text(text) => {
+                        // テキスト応答 — ストリーミング完了イベントを送信してループ終了
+                        app_handle
+                            .emit(
+                                "chat:stream",
+                                ChatStreamEvent {
+                                    session_id: session_id_owned.clone(),
+                                    chunk: String::new(),
+                                    done: true,
+                                },
+                            )
+                            .map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
+
+                        // アシスタントメッセージ保存 & セッションメタデータ更新
+                        let assistant_msg_id = uuid::Uuid::new_v4().to_string();
+                        let assistant_now = chrono::Utc::now().to_rfc3339();
+
+                        let assistant_message = ChatMessageRecord {
+                            id: assistant_msg_id,
+                            session_id: session_id_owned.clone(),
+                            role: ChatRole::Assistant,
+                            content: text.clone(),
+                            attachments: None,
+                            tool_calls: None,
+                            tool_call_id: None,
+                            created_at: assistant_now.clone(),
+                        };
+
+                        {
+                            let db = self.db.lock().map_err(|e| {
+                                AppError::Database(format!("Failed to acquire DB lock: {}", e))
+                            })?;
+                            let conn = db.connection();
+
+                            chat_repo::insert_message(conn, &assistant_message)?;
+
+                            let preview = truncate_str(&text, 50);
+                            chat_repo::update_session_metadata(
+                                conn,
+                                session_id,
+                                &assistant_now,
+                                &preview,
+                            )?;
+                        }
+
+                        return Ok(());
+                    }
+                    LLMResponse::ToolCalls(tool_calls) => {
+                        // ツール呼び出し応答 — 実行してループ継続
+                        println!(
+                            "[ToolLoop] edit_and_resend iteration {}: {} tool call(s)",
+                            iteration,
+                            tool_calls.len()
+                        );
+
+                        // 1. tool:executing イベントをフロントエンドに送信
+                        for tc in &tool_calls {
+                            app_handle
+                                .emit(
+                                    "tool:executing",
+                                    ToolExecutingEvent {
+                                        session_id: session_id_owned.clone(),
+                                        tool_name: tc.name.clone(),
+                                    },
+                                )
+                                .map_err(|e| {
+                                    AppError::Io(format!("Failed to emit event: {}", e))
+                                })?;
+                        }
+
+                        // 2. アシスタントメッセージ（tool_calls含む）をDB保存
+                        let tc_msg_id = uuid::Uuid::new_v4().to_string();
+                        let tc_now = chrono::Utc::now().to_rfc3339();
+
+                        let tc_assistant_message = ChatMessageRecord {
+                            id: tc_msg_id,
+                            session_id: session_id_owned.clone(),
+                            role: ChatRole::Assistant,
+                            content: String::new(),
+                            attachments: None,
+                            tool_calls: Some(tool_calls.clone()),
+                            tool_call_id: None,
+                            created_at: tc_now.clone(),
+                        };
+
+                        {
+                            let db = self.db.lock().map_err(|e| {
+                                AppError::Database(format!("Failed to acquire DB lock: {}", e))
+                            })?;
+                            let conn = db.connection();
+                            chat_repo::insert_message(conn, &tc_assistant_message)?;
+                        }
+
+                        // コンテキストにアシスタントのtool_callメッセージを追加
+                        let tool_calls_json =
+                            serde_json::to_string(&tool_calls).unwrap_or_default();
+                        loop_messages.push(ChatMessage {
+                            role: MessageRole::Assistant,
+                            content: tool_calls_json,
+                            tool_call_id: None,
+                            images: None,
+                        });
+
+                        // 3. PluginSystem::handle_tool_calls でツール実行
+                        let tool_results = if let Some(ref ps) = self.plugin_system {
+                            ps.handle_tool_calls(&tool_calls).await?
+                        } else {
+                            tool_calls
+                                .iter()
+                                .map(|tc| crate::models::plugin::ToolResult {
+                                    tool_call_id: tc.id.clone(),
+                                    content: "Plugin system is not available".to_string(),
+                                    is_error: true,
+                                })
+                                .collect()
+                        };
+
+                        // 4. ツール実行結果をDB保存 & コンテキストに追加
+                        for result in &tool_results {
+                            let tool_msg_id = uuid::Uuid::new_v4().to_string();
+                            let tool_now = chrono::Utc::now().to_rfc3339();
+
+                            let tool_message = ChatMessageRecord {
+                                id: tool_msg_id,
+                                session_id: session_id_owned.clone(),
+                                role: ChatRole::Tool,
+                                content: result.content.clone(),
+                                attachments: None,
+                                tool_calls: None,
+                                tool_call_id: Some(result.tool_call_id.clone()),
+                                created_at: tool_now,
+                            };
+
+                            {
+                                let db = self.db.lock().map_err(|e| {
+                                    AppError::Database(format!("Failed to acquire DB lock: {}", e))
+                                })?;
+                                let conn = db.connection();
+                                chat_repo::insert_message(conn, &tool_message)?;
+                            }
+
+                            // コンテキストにツール結果を追加
+                            loop_messages.push(ChatMessage {
+                                role: MessageRole::Tool,
+                                content: result.content.clone(),
+                                tool_call_id: Some(result.tool_call_id.clone()),
+                                images: None,
+                            });
+                        }
+
+                        // ループ継続 — 再度LLMを呼び出す
                     }
                 }
-                let _ = app_handle_clone.emit(
-                    "chat:stream",
-                    ChatStreamEvent {
-                        session_id: session_id_for_callback.clone(),
-                        chunk,
-                        done: false,
-                    },
-                );
-            });
+            }
 
-            let _llm_guard = self.llm_lock.lock().await;
-            let response = self
-                .llm_client
-                .chat_stream(&llm_messages, &self.current_llm_config(), callback)
-                .await?;
-            drop(_llm_guard);
-
+            // MAX_TOOL_ITERATIONS到達時のフォールバック: ストリーミング完了を通知
             app_handle
                 .emit(
                     "chat:stream",
@@ -1200,35 +1912,34 @@ impl ChatEngine for DefaultChatEngine {
                 )
                 .map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
 
-            response
-        };
+            // 最大反復到達時はエラーメッセージをアシスタントとして保存
+            let fallback_content = "[Tool execution limit reached. Please try again.]".to_string();
+            let assistant_msg_id = uuid::Uuid::new_v4().to_string();
+            let assistant_now = chrono::Utc::now().to_rfc3339();
 
-        // 4. アシスタントメッセージ保存
-        let assistant_msg_id = uuid::Uuid::new_v4().to_string();
-        let assistant_now = chrono::Utc::now().to_rfc3339();
+            let assistant_message = ChatMessageRecord {
+                id: assistant_msg_id,
+                session_id: session_id_owned.clone(),
+                role: ChatRole::Assistant,
+                content: fallback_content.clone(),
+                attachments: None,
+                tool_calls: None,
+                tool_call_id: None,
+                created_at: assistant_now.clone(),
+            };
 
-        let assistant_message = ChatMessageRecord {
-            id: assistant_msg_id,
-            session_id: session_id_owned.clone(),
-            role: ChatRole::Assistant,
-            content: full_response.clone(),
-            attachments: None,
-            tool_calls: None,
-            tool_call_id: None,
-            created_at: assistant_now.clone(),
-        };
+            {
+                let db = self
+                    .db
+                    .lock()
+                    .map_err(|e| AppError::Database(format!("Failed to acquire DB lock: {}", e)))?;
+                let conn = db.connection();
 
-        {
-            let db = self
-                .db
-                .lock()
-                .map_err(|e| AppError::Database(format!("Failed to acquire DB lock: {}", e)))?;
-            let conn = db.connection();
+                chat_repo::insert_message(conn, &assistant_message)?;
 
-            chat_repo::insert_message(conn, &assistant_message)?;
-
-            let preview = truncate_str(&full_response, 50);
-            chat_repo::update_session_metadata(conn, session_id, &assistant_now, &preview)?;
+                let preview = truncate_str(&fallback_content, 50);
+                chat_repo::update_session_metadata(conn, session_id, &assistant_now, &preview)?;
+            }
         }
 
         Ok(())
@@ -1443,5 +2154,292 @@ fn truncate_str(s: &str, max_chars: usize) -> String {
         format!("{}...", truncated)
     } else {
         truncated
+    }
+}
+
+/// テスト専用: AppHandle不要のsend_message（イベント発行をスキップ）
+#[cfg(test)]
+impl DefaultChatEngine {
+    pub async fn send_message_for_test(
+        &self,
+        session_id: &str,
+        content: &str,
+        attachments: Option<Vec<Attachment>>,
+    ) -> Result<(), AppError> {
+        let now = chrono::Utc::now().to_rfc3339();
+        let user_msg_id = uuid::Uuid::new_v4().to_string();
+
+        // 添付ファイル処理
+        let attachment_text = attachments
+            .as_ref()
+            .and_then(|a| Self::extract_attachment_text(a));
+        let attachment_images = attachments
+            .as_ref()
+            .and_then(|a| Self::extract_attachment_images(a));
+        let message_attachments = attachments
+            .as_ref()
+            .map(|a| Self::to_message_attachments(a));
+
+        // 1. ユーザーメッセージをDB保存
+        let user_message = ChatMessageRecord {
+            id: user_msg_id,
+            session_id: session_id.to_string(),
+            role: ChatRole::User,
+            content: content.to_string(),
+            attachments: message_attachments,
+            tool_calls: None,
+            tool_call_id: None,
+            created_at: now.clone(),
+        };
+
+        // DB操作
+        let (system_prompt, memories, thoughts, history) = {
+            let db = self
+                .db
+                .lock()
+                .map_err(|e| AppError::Database(format!("Failed to acquire DB lock: {}", e)))?;
+            let conn = db.connection();
+
+            chat_repo::insert_message(conn, &user_message)?;
+
+            let session = chat_repo::get_session(conn, session_id)?
+                .ok_or_else(|| AppError::NotFound(format!("Session not found: {}", session_id)))?;
+
+            let character =
+                char_repo::get_character(conn, &session.character_id)?.ok_or_else(|| {
+                    AppError::NotFound(format!("Character not found: {}", session.character_id))
+                })?;
+
+            let memories = mem_repo::list_memories(conn, &session.character_id)?;
+
+            let threshold_minutes = self
+                .config_manager
+                .get_config()
+                .thought
+                .auto_delete_threshold_minutes;
+            let thoughts = if threshold_minutes > 0 {
+                let since =
+                    chrono::Utc::now() - chrono::Duration::minutes(threshold_minutes as i64);
+                let since_str = since.to_rfc3339();
+                thought_repo::get_recent_thoughts(conn, &session.character_id, &since_str)?
+            } else {
+                thought_repo::get_thoughts(conn, &session.character_id, None)?
+            };
+
+            let history = chat_repo::get_messages(conn, session_id)?;
+
+            (character.system_prompt, memories, thoughts, history)
+        };
+
+        // 2. コンテキスト組み立て
+        let filtered_history = Self::filter_compressed_history(&history, &memories, session_id);
+        let history_without_last_user: Vec<_> = {
+            let mut h = filtered_history;
+            if let Some(last) = h.last() {
+                if last.role == ChatRole::User {
+                    h.pop();
+                }
+            }
+            h
+        };
+
+        let llm_messages = self.build_context(
+            &system_prompt,
+            &memories,
+            &thoughts,
+            &history_without_last_user,
+            content,
+            attachment_text.as_deref(),
+            attachment_images,
+        );
+
+        let session_id_owned = session_id.to_string();
+
+        // === ツール実行ループ（TTS無効パスと同等） ===
+        const MAX_TOOL_ITERATIONS: usize = 10;
+
+        let tool_definitions = {
+            let global = self
+                .plugin_system
+                .as_ref()
+                .map(|ps| ps.get_enabled_tools())
+                .unwrap_or_default();
+            self.filter_tools_by_session_permissions(&session_id_owned, global)
+        };
+        let tools_for_llm: Option<&[crate::models::ToolDefinition]> = if tool_definitions.is_empty()
+        {
+            None
+        } else {
+            Some(&tool_definitions)
+        };
+
+        let mut loop_messages = llm_messages;
+        let mut iteration = 0;
+
+        loop {
+            iteration += 1;
+            if iteration > MAX_TOOL_ITERATIONS {
+                break;
+            }
+
+            let callback: Box<dyn Fn(String) + Send> = Box::new(|_chunk: String| {
+                // テスト用: イベント発行なし
+            });
+
+            let _llm_guard = self.llm_lock.lock().await;
+            let llm_response = self
+                .llm_client
+                .chat_stream(
+                    &loop_messages,
+                    &self.current_llm_config(),
+                    tools_for_llm,
+                    callback,
+                )
+                .await?;
+            drop(_llm_guard);
+
+            match llm_response {
+                LLMResponse::Text(text) => {
+                    // テキスト応答 — ループ終了
+                    let assistant_msg_id = uuid::Uuid::new_v4().to_string();
+                    let assistant_now = chrono::Utc::now().to_rfc3339();
+
+                    let assistant_message = ChatMessageRecord {
+                        id: assistant_msg_id,
+                        session_id: session_id_owned.clone(),
+                        role: ChatRole::Assistant,
+                        content: text.clone(),
+                        attachments: None,
+                        tool_calls: None,
+                        tool_call_id: None,
+                        created_at: assistant_now.clone(),
+                    };
+
+                    {
+                        let db = self.db.lock().map_err(|e| {
+                            AppError::Database(format!("Failed to acquire DB lock: {}", e))
+                        })?;
+                        let conn = db.connection();
+                        chat_repo::insert_message(conn, &assistant_message)?;
+                        let preview = truncate_str(&text, 50);
+                        chat_repo::update_session_metadata(
+                            conn,
+                            session_id,
+                            &assistant_now,
+                            &preview,
+                        )?;
+                    }
+
+                    return Ok(());
+                }
+                LLMResponse::ToolCalls(tool_calls) => {
+                    // ツール呼び出し応答
+                    let tc_msg_id = uuid::Uuid::new_v4().to_string();
+                    let tc_now = chrono::Utc::now().to_rfc3339();
+
+                    let tc_assistant_message = ChatMessageRecord {
+                        id: tc_msg_id,
+                        session_id: session_id_owned.clone(),
+                        role: ChatRole::Assistant,
+                        content: String::new(),
+                        attachments: None,
+                        tool_calls: Some(tool_calls.clone()),
+                        tool_call_id: None,
+                        created_at: tc_now.clone(),
+                    };
+
+                    {
+                        let db = self.db.lock().map_err(|e| {
+                            AppError::Database(format!("Failed to acquire DB lock: {}", e))
+                        })?;
+                        let conn = db.connection();
+                        chat_repo::insert_message(conn, &tc_assistant_message)?;
+                    }
+
+                    let tool_calls_json = serde_json::to_string(&tool_calls).unwrap_or_default();
+                    loop_messages.push(ChatMessage {
+                        role: MessageRole::Assistant,
+                        content: tool_calls_json,
+                        tool_call_id: None,
+                        images: None,
+                    });
+
+                    // PluginSystem::handle_tool_calls でツール実行
+                    let tool_results = if let Some(ref ps) = self.plugin_system {
+                        ps.handle_tool_calls(&tool_calls).await?
+                    } else {
+                        tool_calls
+                            .iter()
+                            .map(|tc| crate::models::plugin::ToolResult {
+                                tool_call_id: tc.id.clone(),
+                                content: "Plugin system is not available".to_string(),
+                                is_error: true,
+                            })
+                            .collect()
+                    };
+
+                    // ツール実行結果をDB保存 & コンテキストに追加
+                    for result in &tool_results {
+                        let tool_msg_id = uuid::Uuid::new_v4().to_string();
+                        let tool_now = chrono::Utc::now().to_rfc3339();
+
+                        let tool_message = ChatMessageRecord {
+                            id: tool_msg_id,
+                            session_id: session_id_owned.clone(),
+                            role: ChatRole::Tool,
+                            content: result.content.clone(),
+                            attachments: None,
+                            tool_calls: None,
+                            tool_call_id: Some(result.tool_call_id.clone()),
+                            created_at: tool_now,
+                        };
+
+                        {
+                            let db = self.db.lock().map_err(|e| {
+                                AppError::Database(format!("Failed to acquire DB lock: {}", e))
+                            })?;
+                            let conn = db.connection();
+                            chat_repo::insert_message(conn, &tool_message)?;
+                        }
+
+                        loop_messages.push(ChatMessage {
+                            role: MessageRole::Tool,
+                            content: result.content.clone(),
+                            tool_call_id: Some(result.tool_call_id.clone()),
+                            images: None,
+                        });
+                    }
+                }
+            }
+        }
+
+        // MAX_TOOL_ITERATIONS到達時のフォールバック
+        let fallback_content = "[Tool execution limit reached. Please try again.]".to_string();
+        let assistant_msg_id = uuid::Uuid::new_v4().to_string();
+        let assistant_now = chrono::Utc::now().to_rfc3339();
+
+        let assistant_message = ChatMessageRecord {
+            id: assistant_msg_id,
+            session_id: session_id_owned.clone(),
+            role: ChatRole::Assistant,
+            content: fallback_content.clone(),
+            attachments: None,
+            tool_calls: None,
+            tool_call_id: None,
+            created_at: assistant_now.clone(),
+        };
+
+        {
+            let db = self
+                .db
+                .lock()
+                .map_err(|e| AppError::Database(format!("Failed to acquire DB lock: {}", e)))?;
+            let conn = db.connection();
+            chat_repo::insert_message(conn, &assistant_message)?;
+            let preview = truncate_str(&fallback_content, 50);
+            chat_repo::update_session_metadata(conn, session_id, &assistant_now, &preview)?;
+        }
+
+        Ok(())
     }
 }

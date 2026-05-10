@@ -25,9 +25,14 @@ pub async fn get_config(state: State<'_, AppState>) -> Result<AppConfig, AppErro
 }
 
 /// アプリケーション設定を更新して永続化
+/// plugins セクションは set_plugin_config / enable_plugin / disable_plugin で管理するため、
+/// ここでは現在の保存済み plugins を維持する（フロントの古い draft で上書きされるのを防止）。
 #[tauri::command]
 pub async fn set_config(config: AppConfig, state: State<'_, AppState>) -> Result<(), AppError> {
-    state.config_manager.set_config(config)
+    let mut merged = config;
+    let current = state.config_manager.get_config();
+    merged.plugins = current.plugins;
+    state.config_manager.set_config(merged)
 }
 
 /// LLM接続テスト
