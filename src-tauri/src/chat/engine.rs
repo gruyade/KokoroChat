@@ -46,6 +46,39 @@ pub struct DirectoryAccessRequestEvent {
     pub requires_write: bool,
 }
 
+/// file_ops プラグインが提供するツール名一覧（System Prompt ガイダンス注入の判定に使用）
+const FILE_OPS_TOOL_NAMES: &[&str] =
+    &["read_file", "write_file", "list_directory", "search_files"];
+
+/// file_ops ツール利用時に AI に守らせる判断手順を明示する System Prompt 追補。
+/// バックエンドが許可要請〜許可待ち〜再実行を自動処理するため、AI は対象パスの特定と
+/// 操作種別（read/write）の判定に集中すれば良い旨を示す。
+const FILE_OPS_SYSTEM_PROMPT_GUIDANCE: &str = "## ファイル操作ツール（file_ops）使用時の判断手順\nユーザーからファイルの読み込み・作成・編集・保存・一覧・検索を依頼された場合、必ず以下の手順で判断・実行すること:\n1. **対象パスの特定**: 対象ファイルまたはディレクトリの絶対パス（および親ディレクトリ）を特定する。曖昧な場合はユーザーに確認するか、`list_directory` で親ディレクトリの中身を先に確認する。\n2. **操作種別の判定**: 必要な権限が読み取り(read)か書き込み(write)かを判定し、最小限の権限で済むツールを選ぶ。`read_file`/`list_directory`/`search_files` はread、`write_file` はwrite。\n3. **既存ファイル編集時の事前読み込み**: `write_file` で既存ファイルを編集する場合は、必ず先に `read_file` で現在の内容を確認すること（新規作成時は不要）。\n4. **ツール呼び出し**: 上記判定に基づき適切なツールを1回呼び出す。\n5. **権限不足時の挙動**: 対象ディレクトリへのアクセス権がない場合、ツールが自動的にユーザーへ許可ダイアログを表示し応答を待機する。許可されればそのまま結果が返るので、別途許可要請ツールを呼ぶ必要はない。拒否された場合のみ「アクセス拒否」エラーが返るので、その旨をユーザーに伝える。";
+
+/// ツール定義リストに file_ops プラグインのツールが含まれているか判定
+fn has_file_ops_tools(tools: &[crate::models::plugin::ToolDefinition]) -> bool {
+    tools
+        .iter()
+        .any(|t| FILE_OPS_TOOL_NAMES.contains(&t.name.as_str()))
+}
+
+/// file_ops ツールが利用可能な場合のみ、メッセージ列の先頭 System メッセージに
+/// 判断手順ガイダンスを追記する。System メッセージが先頭にない場合は何もしない。
+fn augment_system_prompt_with_file_ops_guidance(
+    messages: &mut [ChatMessage],
+    tools: &[crate::models::plugin::ToolDefinition],
+) {
+    if !has_file_ops_tools(tools) {
+        return;
+    }
+    if let Some(sys_msg) = messages.first_mut() {
+        if matches!(sys_msg.role, MessageRole::System) {
+            sys_msg.content.push_str("\n\n");
+            sys_msg.content.push_str(FILE_OPS_SYSTEM_PROMPT_GUIDANCE);
+        }
+    }
+}
+
 /// ChatEngine trait — チャット機能の抽象インターフェース
 #[async_trait]
 pub trait ChatEngine: Send + Sync {
@@ -777,6 +810,8 @@ impl ChatEngine for DefaultChatEngine {
 
             // ツール実行ループ用のコンテキスト（可変）
             let mut loop_messages = llm_messages;
+            // file_ops ツールが有効な場合、System メッセージに判断手順ガイダンスを追記
+            augment_system_prompt_with_file_ops_guidance(&mut loop_messages, &tool_definitions);
             let mut iteration = 0;
 
             loop {
@@ -1273,6 +1308,8 @@ impl ChatEngine for DefaultChatEngine {
 
             // ツール実行ループ用のコンテキスト（可変）
             let mut loop_messages = llm_messages;
+            // file_ops ツールが有効な場合、System メッセージに判断手順ガイダンスを追記
+            augment_system_prompt_with_file_ops_guidance(&mut loop_messages, &tool_definitions);
             let mut iteration = 0;
 
             loop {
@@ -1778,6 +1815,8 @@ impl ChatEngine for DefaultChatEngine {
 
             // ツール実行ループ用のコンテキスト（可変）
             let mut loop_messages = llm_messages;
+            // file_ops ツールが有効な場合、System メッセージに判断手順ガイダンスを追記
+            augment_system_prompt_with_file_ops_guidance(&mut loop_messages, &tool_definitions);
             let mut iteration = 0;
 
             loop {
@@ -2351,6 +2390,8 @@ impl DefaultChatEngine {
         };
 
         let mut loop_messages = llm_messages;
+        // file_ops ツールが有効な場合、System メッセージに判断手順ガイダンスを追記
+        augment_system_prompt_with_file_ops_guidance(&mut loop_messages, &tool_definitions);
         let mut iteration = 0;
 
         loop {
