@@ -40,6 +40,17 @@ impl FileOpsPlugin {
         Ok(())
     }
 
+    /// トラバーサルチェック + 絶対/相対パス解決の共通ロジック
+    fn resolve_path(&self, path_str: &str) -> Result<PathBuf, String> {
+        let path = Path::new(path_str);
+        Self::reject_traversal(path)?;
+        Ok(if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            self.base_dir.join(path)
+        })
+    }
+
     /// パスを正規化して比較用文字列を生成（Windows対応: バックスラッシュをスラッシュに統一）
     fn normalize_for_comparison(path: &Path) -> String {
         path.to_string_lossy().replace('\\', "/").to_lowercase()
@@ -68,15 +79,7 @@ impl FileOpsPlugin {
         acl: &[DirectoryPermission],
         require_write: bool,
     ) -> Result<PathBuf, String> {
-        let path = Path::new(path_str);
-        Self::reject_traversal(path)?;
-
-        // 絶対パスはそのまま、相対パスはbase_dir基準で解決
-        let resolved = if path.is_absolute() {
-            path.to_path_buf()
-        } else {
-            self.base_dir.join(path)
-        };
+        let resolved = self.resolve_path(path_str)?;
 
         // ACLリストのいずれかのディレクトリに内包されているか確認
         for perm in acl {
@@ -105,14 +108,7 @@ impl FileOpsPlugin {
 
     /// 従来のbase_dirベースのパス検証（ACL未設定時のフォールバック）
     fn validate_path(&self, path_str: &str) -> Result<PathBuf, String> {
-        let path = Path::new(path_str);
-        Self::reject_traversal(path)?;
-
-        let resolved = if path.is_absolute() {
-            path.to_path_buf()
-        } else {
-            self.base_dir.join(path)
-        };
+        let resolved = self.resolve_path(path_str)?;
 
         let base_str = Self::normalize_for_comparison(&self.base_dir);
         let resolved_str = Self::normalize_for_comparison(&resolved);
@@ -405,6 +401,74 @@ impl FileOpsPlugin {
 
         Ok(())
     }
+
+    /// 実行 → アクセス拒否時に許可要求 → 再実行の共通フロー
+    async fn execute_with_acl_retry<R, F>(
+        &self,
+        app_handle: &tauri::AppHandle<R>,
+        tool_call_id: &str,
+        session_id: &Option<String>,
+        acl: &Option<Vec<DirectoryPermission>>,
+        path: &str,
+        requires_write: bool,
+        op: F,
+    ) -> ToolResult
+    where
+        R: tauri::Runtime,
+        F: Fn(&Option<Vec<DirectoryPermission>>) -> Result<String, String>,
+    {
+        match op(acl) {
+            Ok(content) => Self::ok_result(tool_call_id, content),
+            Err(err) if err.contains("アクセス拒否") && session_id.is_some() => {
+                let sid = session_id.as_ref().unwrap();
+                match self
+                    .request_permission_and_wait(
+                        app_handle,
+                        sid,
+                        path,
+                        requires_write,
+                        err.clone(),
+                    )
+                    .await
+                {
+                    Ok(()) => {
+                        let new_acl = self.reload_acl_from_db(sid);
+                        match op(&new_acl) {
+                            Ok(content) => Self::ok_result(tool_call_id, content),
+                            Err(e) => Self::err_result(tool_call_id, e),
+                        }
+                    }
+                    Err(denied_err) => Self::err_result(tool_call_id, denied_err),
+                }
+            }
+            Err(err) => Self::err_result(tool_call_id, err),
+        }
+    }
+
+    /// ToolResult 成功ヘルパー
+    fn ok_result(id: &str, content: String) -> ToolResult {
+        ToolResult {
+            tool_call_id: id.to_string(),
+            content,
+            is_error: false,
+        }
+    }
+
+    /// ToolResult エラーヘルパー
+    fn err_result(id: &str, content: String) -> ToolResult {
+        ToolResult {
+            tool_call_id: id.to_string(),
+            content,
+            is_error: true,
+        }
+    }
+
+    /// ToolCall 引数から文字列パラメータを取得
+    fn get_str_arg<'a>(args: &'a Value, key: &str) -> Result<&'a str, AppError> {
+        args.get(key)
+            .and_then(Value::as_str)
+            .ok_or_else(|| AppError::Plugin(format!("'{}' パラメータが必要", key)))
+    }
 }
 
 /// UIへのアクセス許可リクエストイベントペイロード
@@ -507,220 +571,43 @@ impl<R: tauri::Runtime> PluginHandler<R> for FileOpsPlugin {
             .as_ref()
             .and_then(|c| c.session_id.as_ref())
             .cloned();
+        let id = tool_call.id.as_str();
 
-        match tool_call.name.as_str() {
+        let result = match tool_call.name.as_str() {
             "read_file" => {
-                let path = tool_call
-                    .arguments
-                    .get("path")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| AppError::Plugin("'path' パラメータが必要".to_string()))?;
-
-                let result = match self.read_file(path, &acl) {
-                    Ok(content) => ToolResult {
-                        tool_call_id: tool_call.id.clone(),
-                        content,
-                        is_error: false,
-                    },
-                    Err(err) if err.contains("アクセス拒否") && session_id.is_some() => {
-                        let sid = session_id.as_ref().unwrap();
-                        match self
-                            .request_permission_and_wait(app_handle, sid, path, false, err.clone())
-                            .await
-                        {
-                            Ok(()) => {
-                                // 許可された: ACLを再取得して再実行
-                                let new_acl = self.reload_acl_from_db(sid);
-                                match self.read_file(path, &new_acl) {
-                                    Ok(content) => ToolResult {
-                                        tool_call_id: tool_call.id.clone(),
-                                        content,
-                                        is_error: false,
-                                    },
-                                    Err(e) => ToolResult {
-                                        tool_call_id: tool_call.id.clone(),
-                                        content: e,
-                                        is_error: true,
-                                    },
-                                }
-                            }
-                            Err(denied_err) => ToolResult {
-                                tool_call_id: tool_call.id.clone(),
-                                content: denied_err,
-                                is_error: true,
-                            },
-                        }
-                    }
-                    Err(err) => ToolResult {
-                        tool_call_id: tool_call.id.clone(),
-                        content: err,
-                        is_error: true,
-                    },
-                };
-                Ok(result)
+                let path = Self::get_str_arg(&tool_call.arguments, "path")?;
+                self.execute_with_acl_retry(app_handle, id, &session_id, &acl, path, false, |a| {
+                    self.read_file(path, a)
+                })
+                .await
             }
             "write_file" => {
-                let path = tool_call
-                    .arguments
-                    .get("path")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| AppError::Plugin("'path' パラメータが必要".to_string()))?;
-                let content = tool_call
-                    .arguments
-                    .get("content")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| AppError::Plugin("'content' パラメータが必要".to_string()))?;
-
-                let result = match self.write_file(path, content, &acl) {
-                    Ok(msg) => ToolResult {
-                        tool_call_id: tool_call.id.clone(),
-                        content: msg,
-                        is_error: false,
-                    },
-                    Err(err) if err.contains("アクセス拒否") && session_id.is_some() => {
-                        let sid = session_id.as_ref().unwrap();
-                        match self
-                            .request_permission_and_wait(app_handle, sid, path, true, err.clone())
-                            .await
-                        {
-                            Ok(()) => {
-                                let new_acl = self.reload_acl_from_db(sid);
-                                match self.write_file(path, content, &new_acl) {
-                                    Ok(msg) => ToolResult {
-                                        tool_call_id: tool_call.id.clone(),
-                                        content: msg,
-                                        is_error: false,
-                                    },
-                                    Err(e) => ToolResult {
-                                        tool_call_id: tool_call.id.clone(),
-                                        content: e,
-                                        is_error: true,
-                                    },
-                                }
-                            }
-                            Err(denied_err) => ToolResult {
-                                tool_call_id: tool_call.id.clone(),
-                                content: denied_err,
-                                is_error: true,
-                            },
-                        }
-                    }
-                    Err(err) => ToolResult {
-                        tool_call_id: tool_call.id.clone(),
-                        content: err,
-                        is_error: true,
-                    },
-                };
-                Ok(result)
+                let path = Self::get_str_arg(&tool_call.arguments, "path")?;
+                let content = Self::get_str_arg(&tool_call.arguments, "content")?;
+                self.execute_with_acl_retry(app_handle, id, &session_id, &acl, path, true, |a| {
+                    self.write_file(path, content, a)
+                })
+                .await
             }
             "list_directory" => {
-                let path = tool_call
-                    .arguments
-                    .get("path")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| AppError::Plugin("'path' パラメータが必要".to_string()))?;
-
-                let result = match self.list_directory(path, &acl) {
-                    Ok(content) => ToolResult {
-                        tool_call_id: tool_call.id.clone(),
-                        content,
-                        is_error: false,
-                    },
-                    Err(err) if err.contains("アクセス拒否") && session_id.is_some() => {
-                        let sid = session_id.as_ref().unwrap();
-                        match self
-                            .request_permission_and_wait(app_handle, sid, path, false, err.clone())
-                            .await
-                        {
-                            Ok(()) => {
-                                let new_acl = self.reload_acl_from_db(sid);
-                                match self.list_directory(path, &new_acl) {
-                                    Ok(content) => ToolResult {
-                                        tool_call_id: tool_call.id.clone(),
-                                        content,
-                                        is_error: false,
-                                    },
-                                    Err(e) => ToolResult {
-                                        tool_call_id: tool_call.id.clone(),
-                                        content: e,
-                                        is_error: true,
-                                    },
-                                }
-                            }
-                            Err(denied_err) => ToolResult {
-                                tool_call_id: tool_call.id.clone(),
-                                content: denied_err,
-                                is_error: true,
-                            },
-                        }
-                    }
-                    Err(err) => ToolResult {
-                        tool_call_id: tool_call.id.clone(),
-                        content: err,
-                        is_error: true,
-                    },
-                };
-                Ok(result)
+                let path = Self::get_str_arg(&tool_call.arguments, "path")?;
+                self.execute_with_acl_retry(app_handle, id, &session_id, &acl, path, false, |a| {
+                    self.list_directory(path, a)
+                })
+                .await
             }
             "search_files" => {
-                let path = tool_call
-                    .arguments
-                    .get("path")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| AppError::Plugin("'path' パラメータが必要".to_string()))?;
-                let pattern = tool_call
-                    .arguments
-                    .get("pattern")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| AppError::Plugin("'pattern' パラメータが必要".to_string()))?;
-
-                let result = match self.search_files(path, pattern, &acl) {
-                    Ok(content) => ToolResult {
-                        tool_call_id: tool_call.id.clone(),
-                        content,
-                        is_error: false,
-                    },
-                    Err(err) if err.contains("アクセス拒否") && session_id.is_some() => {
-                        let sid = session_id.as_ref().unwrap();
-                        match self
-                            .request_permission_and_wait(app_handle, sid, path, false, err.clone())
-                            .await
-                        {
-                            Ok(()) => {
-                                let new_acl = self.reload_acl_from_db(sid);
-                                match self.search_files(path, pattern, &new_acl) {
-                                    Ok(content) => ToolResult {
-                                        tool_call_id: tool_call.id.clone(),
-                                        content,
-                                        is_error: false,
-                                    },
-                                    Err(e) => ToolResult {
-                                        tool_call_id: tool_call.id.clone(),
-                                        content: e,
-                                        is_error: true,
-                                    },
-                                }
-                            }
-                            Err(denied_err) => ToolResult {
-                                tool_call_id: tool_call.id.clone(),
-                                content: denied_err,
-                                is_error: true,
-                            },
-                        }
-                    }
-                    Err(err) => ToolResult {
-                        tool_call_id: tool_call.id.clone(),
-                        content: err,
-                        is_error: true,
-                    },
-                };
-                Ok(result)
+                let path = Self::get_str_arg(&tool_call.arguments, "path")?;
+                let pattern = Self::get_str_arg(&tool_call.arguments, "pattern")?;
+                self.execute_with_acl_retry(app_handle, id, &session_id, &acl, path, false, |a| {
+                    self.search_files(path, pattern, a)
+                })
+                .await
             }
-            _ => Err(AppError::Plugin(format!(
-                "不明なツール: {}",
-                tool_call.name
-            ))),
-        }
+            _ => return Err(AppError::Plugin(format!("不明なツール: {}", tool_call.name))),
+        };
+
+        Ok(result)
     }
 }
 
