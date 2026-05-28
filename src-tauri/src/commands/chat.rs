@@ -414,6 +414,7 @@ pub async fn stop_generation(
                 session_id: session_id.clone(),
                 chunk: String::new(),
                 done: true,
+                tool_break: false,
             },
         );
     }

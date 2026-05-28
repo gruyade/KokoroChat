@@ -380,7 +380,8 @@ export function ChatView() {
               onDelete={handleDeleteMessage}
             />
           ))}
-          {isStreaming && <StreamingIndicator content={streamingContent} />}
+          {/* ツール実行中はツールインジケータのみ表示し、ストリーミングバブルは非表示 */}
+          {isStreaming && !executingToolName && <StreamingIndicator content={streamingContent} />}
           {executingToolName && (
             <div className="px-4 py-2">
               <ToolCallIndicator toolName={executingToolName} />

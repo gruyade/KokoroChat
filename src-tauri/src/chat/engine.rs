@@ -29,6 +29,8 @@ pub struct ChatStreamEvent {
     pub session_id: String,
     pub chunk: String,
     pub done: bool,
+    /// true のとき「ツール実行前のテキストをバブルとして確定し、ストリーミングをリセットせよ」を意味する
+    pub tool_break: bool,
 }
 
 /// ツール実行中イベント
@@ -47,13 +49,38 @@ pub struct DirectoryAccessRequestEvent {
 }
 
 /// file_ops プラグインが提供するツール名一覧（System Prompt ガイダンス注入の判定に使用）
-const FILE_OPS_TOOL_NAMES: &[&str] =
-    &["read_file", "write_file", "list_directory", "search_files"];
+const FILE_OPS_TOOL_NAMES: &[&str] = &["read_file", "write_file", "list_directory", "search_files"];
 
 /// file_ops ツール利用時に AI に守らせる判断手順を明示する System Prompt 追補。
 /// バックエンドが許可要請〜許可待ち〜再実行を自動処理するため、AI は対象パスの特定と
 /// 操作種別（read/write）の判定に集中すれば良い旨を示す。
-const FILE_OPS_SYSTEM_PROMPT_GUIDANCE: &str = "## ファイル操作ツール（file_ops）使用時の判断手順\nユーザーからファイルの読み込み・作成・編集・保存・一覧・検索を依頼された場合、必ず以下の手順で判断・実行すること:\n1. **対象パスの特定**: 対象ファイルまたはディレクトリの絶対パス（および親ディレクトリ）を特定する。曖昧な場合はユーザーに確認するか、`list_directory` で親ディレクトリの中身を先に確認する。\n2. **操作種別の判定**: 必要な権限が読み取り(read)か書き込み(write)かを判定し、最小限の権限で済むツールを選ぶ。`read_file`/`list_directory`/`search_files` はread、`write_file` はwrite。\n3. **既存ファイル編集時の事前読み込み**: `write_file` で既存ファイルを編集する場合は、必ず先に `read_file` で現在の内容を確認すること（新規作成時は不要）。\n4. **ツール呼び出し**: 上記判定に基づき適切なツールを1回呼び出す。\n5. **権限不足時の挙動**: 対象ディレクトリへのアクセス権がない場合、ツールが自動的にユーザーへ許可ダイアログを表示し応答を待機する。許可されればそのまま結果が返るので、別途許可要請ツールを呼ぶ必要はない。拒否された場合のみ「アクセス拒否」エラーが返るので、その旨をユーザーに伝える。";
+const FILE_OPS_SYSTEM_PROMPT_GUIDANCE: &str = concat!(
+    "## File Operations (file_ops)\n\n",
+    "You have access to file operation tools: read_file, write_file, list_directory, search_files.\n\n",
+    "### RULE #1 — Path mentioned = call the tool immediately, before anything else\n",
+    "If the user's message contains a file path or directory path, ",
+    "your FIRST action MUST be to call the appropriate tool to read its contents. ",
+    "Do NOT summarize, guess, or respond based on assumptions about what the file might contain. ",
+    "Do NOT ask the user what the file contains. ",
+    "Just call the tool immediately.\n",
+    "- File path given → call read_file with that path first\n",
+    "- Directory path given → call list_directory with that path first\n",
+    "- File name given without a full path → call search_files to locate it, then call read_file\n\n",
+    "### RULE #2 — Proactive use in natural conversation\n",
+    "Do NOT wait for the user to explicitly say \"use the tool\". ",
+    "Call tools autonomously whenever it would help you answer accurately.\n",
+    "- \"ファイルを見て\" / \"show me the file\" / \"open it\" → read_file\n",
+    "- \"～について調べて\" / \"look into ~\" when a file or path is implied → list_directory or search_files, then read_file\n",
+    "- \"編集して\" / \"update\" / \"fix\" targeting a file → read_file first, then write_file\n",
+    "- \"フォルダに何がある？\" / \"what's in this folder?\" → list_directory\n",
+    "- You need file content to answer accurately, even if not explicitly asked → call read_file\n\n",
+    "### Steps (once you decide to act)\n",
+    "1. **Locate the target**: Use the path exactly as provided. If unclear, call list_directory or search_files — do not guess.\n",
+    "2. **Choose the right tool**: read_file / list_directory / search_files for reading; write_file for writing.\n",
+    "3. **Read before writing**: Always call read_file before write_file when editing an existing file.\n",
+    "4. **Permission handling**: If access is not yet permitted, the app shows a dialog automatically. ",
+    "Do not request permission separately. If denied, inform the user and stop.",
+);
 
 /// ツール定義リストに file_ops プラグインのツールが含まれているか判定
 fn has_file_ops_tools(tools: &[crate::models::plugin::ToolDefinition]) -> bool {
@@ -840,6 +867,7 @@ impl ChatEngine for DefaultChatEngine {
                             session_id: session_id_for_callback.clone(),
                             chunk,
                             done: false,
+                            tool_break: false,
                         },
                     );
                 });
@@ -866,6 +894,7 @@ impl ChatEngine for DefaultChatEngine {
                                     session_id: session_id_owned.clone(),
                                     chunk: String::new(),
                                     done: true,
+                                    tool_break: false,
                                 },
                             )
                             .map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
@@ -911,6 +940,50 @@ impl ChatEngine for DefaultChatEngine {
                             iteration,
                             tool_calls.len()
                         );
+
+                        // 0. ツール呼び出し前のストリーミングコンテンツを確定 (tool_break)
+                        let pre_tool_content = if let Some(ref acc) = partial_content_accumulator {
+                            if let Ok(mut guard) = acc.lock() {
+                                std::mem::take(&mut *guard)
+                            } else {
+                                String::new()
+                            }
+                        } else {
+                            String::new()
+                        };
+                        // pre-tool テキストがあれば独立した assistant メッセージとして DB 保存
+                        if !pre_tool_content.is_empty() {
+                            let pre_msg_id = uuid::Uuid::new_v4().to_string();
+                            let pre_now = chrono::Utc::now().to_rfc3339();
+                            let pre_message = ChatMessageRecord {
+                                id: pre_msg_id,
+                                session_id: session_id_owned.clone(),
+                                role: ChatRole::Assistant,
+                                content: pre_tool_content,
+                                attachments: None,
+                                tool_calls: None,
+                                tool_call_id: None,
+                                created_at: pre_now,
+                            };
+                            {
+                                let db = self.db.lock().map_err(|e| {
+                                    AppError::Database(format!("Failed to acquire DB lock: {}", e))
+                                })?;
+                                chat_repo::insert_message(db.connection(), &pre_message)?;
+                            }
+                        }
+                        // フロントエンドに tool_break を通知してバブルをリセットさせる
+                        app_handle
+                            .emit(
+                                "chat:stream",
+                                ChatStreamEvent {
+                                    session_id: session_id_owned.clone(),
+                                    chunk: String::new(),
+                                    done: true,
+                                    tool_break: true,
+                                },
+                            )
+                            .map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
 
                         // セッション情報とプラグイン設定をツール呼び出しに注入
                         self.inject_tool_context(&mut tool_calls, &session_id_owned);
@@ -1021,6 +1094,7 @@ impl ChatEngine for DefaultChatEngine {
                         session_id: session_id_owned.clone(),
                         chunk: String::new(),
                         done: true,
+                        tool_break: false,
                     },
                 )
                 .map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
@@ -1338,6 +1412,7 @@ impl ChatEngine for DefaultChatEngine {
                             session_id: session_id_for_callback.clone(),
                             chunk,
                             done: false,
+                            tool_break: false,
                         },
                     );
                 });
@@ -1364,6 +1439,7 @@ impl ChatEngine for DefaultChatEngine {
                                     session_id: session_id_owned.clone(),
                                     chunk: String::new(),
                                     done: true,
+                                    tool_break: false,
                                 },
                             )
                             .map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
@@ -1409,6 +1485,48 @@ impl ChatEngine for DefaultChatEngine {
                             iteration,
                             tool_calls.len()
                         );
+
+                        // 0. ツール呼び出し前のストリーミングコンテンツを確定 (tool_break)
+                        let pre_tool_content = if let Some(ref acc) = partial_content_accumulator {
+                            if let Ok(mut guard) = acc.lock() {
+                                std::mem::take(&mut *guard)
+                            } else {
+                                String::new()
+                            }
+                        } else {
+                            String::new()
+                        };
+                        if !pre_tool_content.is_empty() {
+                            let pre_msg_id = uuid::Uuid::new_v4().to_string();
+                            let pre_now = chrono::Utc::now().to_rfc3339();
+                            let pre_message = ChatMessageRecord {
+                                id: pre_msg_id,
+                                session_id: session_id_owned.clone(),
+                                role: ChatRole::Assistant,
+                                content: pre_tool_content,
+                                attachments: None,
+                                tool_calls: None,
+                                tool_call_id: None,
+                                created_at: pre_now,
+                            };
+                            {
+                                let db = self.db.lock().map_err(|e| {
+                                    AppError::Database(format!("Failed to acquire DB lock: {}", e))
+                                })?;
+                                chat_repo::insert_message(db.connection(), &pre_message)?;
+                            }
+                        }
+                        app_handle
+                            .emit(
+                                "chat:stream",
+                                ChatStreamEvent {
+                                    session_id: session_id_owned.clone(),
+                                    chunk: String::new(),
+                                    done: true,
+                                    tool_break: true,
+                                },
+                            )
+                            .map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
 
                         // セッション情報とプラグイン設定をツール呼び出しに注入
                         self.inject_tool_context(&mut tool_calls, &session_id_owned);
@@ -1517,6 +1635,7 @@ impl ChatEngine for DefaultChatEngine {
                         session_id: session_id_owned.clone(),
                         chunk: String::new(),
                         done: true,
+                        tool_break: false,
                     },
                 )
                 .map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
@@ -1845,6 +1964,7 @@ impl ChatEngine for DefaultChatEngine {
                             session_id: session_id_for_callback.clone(),
                             chunk,
                             done: false,
+                            tool_break: false,
                         },
                     );
                 });
@@ -1871,6 +1991,7 @@ impl ChatEngine for DefaultChatEngine {
                                     session_id: session_id_owned.clone(),
                                     chunk: String::new(),
                                     done: true,
+                                    tool_break: false,
                                 },
                             )
                             .map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
@@ -1916,6 +2037,48 @@ impl ChatEngine for DefaultChatEngine {
                             iteration,
                             tool_calls.len()
                         );
+
+                        // 0. ツール呼び出し前のストリーミングコンテンツを確定 (tool_break)
+                        let pre_tool_content = if let Some(ref acc) = partial_content_accumulator {
+                            if let Ok(mut guard) = acc.lock() {
+                                std::mem::take(&mut *guard)
+                            } else {
+                                String::new()
+                            }
+                        } else {
+                            String::new()
+                        };
+                        if !pre_tool_content.is_empty() {
+                            let pre_msg_id = uuid::Uuid::new_v4().to_string();
+                            let pre_now = chrono::Utc::now().to_rfc3339();
+                            let pre_message = ChatMessageRecord {
+                                id: pre_msg_id,
+                                session_id: session_id_owned.clone(),
+                                role: ChatRole::Assistant,
+                                content: pre_tool_content,
+                                attachments: None,
+                                tool_calls: None,
+                                tool_call_id: None,
+                                created_at: pre_now,
+                            };
+                            {
+                                let db = self.db.lock().map_err(|e| {
+                                    AppError::Database(format!("Failed to acquire DB lock: {}", e))
+                                })?;
+                                chat_repo::insert_message(db.connection(), &pre_message)?;
+                            }
+                        }
+                        app_handle
+                            .emit(
+                                "chat:stream",
+                                ChatStreamEvent {
+                                    session_id: session_id_owned.clone(),
+                                    chunk: String::new(),
+                                    done: true,
+                                    tool_break: true,
+                                },
+                            )
+                            .map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
 
                         // セッション情報とプラグイン設定をツール呼び出しに注入
                         self.inject_tool_context(&mut tool_calls, &session_id_owned);
@@ -2024,6 +2187,7 @@ impl ChatEngine for DefaultChatEngine {
                         session_id: session_id_owned.clone(),
                         chunk: String::new(),
                         done: true,
+                        tool_break: false,
                     },
                 )
                 .map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
@@ -2181,6 +2345,7 @@ impl DefaultChatEngine {
                             session_id: session_id.to_string(),
                             chunk: text.clone(),
                             done: false,
+                            tool_break: false,
                         },
                     )
                     .map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
@@ -2192,6 +2357,7 @@ impl DefaultChatEngine {
                             session_id: session_id.to_string(),
                             chunk: String::new(),
                             done: true,
+                            tool_break: false,
                         },
                     )
                     .map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;

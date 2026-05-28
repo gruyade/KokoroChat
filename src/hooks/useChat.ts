@@ -8,6 +8,8 @@ interface ChatStreamEvent {
   session_id: string;
   chunk: string;
   done: boolean;
+  /** true のとき pre-tool バブルを確定しストリーミングをリセット（isStreaming は維持）*/
+  tool_break: boolean;
 }
 
 /** spontaneous:message イベントペイロード */
@@ -45,8 +47,12 @@ export function useChat() {
 
       const unlistenStream = await listen<ChatStreamEvent>('chat:stream', (event) => {
         if (cancelled) return;
-        const { chunk, done } = event.payload;
-        if (done) {
+        const { chunk, done, tool_break } = event.payload;
+        if (done && tool_break) {
+          // ツール実行前テキストをバブルとして確定し、ストリーミング状態は維持
+          useChatStore.getState().commitPreToolContent(streamContent);
+          streamContent = '';
+        } else if (done) {
           useChatStore.getState().finishStreaming(streamContent);
           streamContent = '';
           // ストリーミング完了後にDBから履歴を再取得し、正しいメッセージIDを同期

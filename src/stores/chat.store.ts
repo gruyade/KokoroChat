@@ -20,6 +20,8 @@ interface ChatState {
   deleteSession: (sessionId: string) => Promise<void>;
   fetchHistory: (sessionId: string) => Promise<void>;
   appendStreamChunk: (chunk: string) => void;
+  /** ツール実行前テキストを確定バブルとして追加し、streamingContent をリセット（isStreaming は維持）*/
+  commitPreToolContent: (content: string) => void;
   finishStreaming: (fullContent: string) => void;
   setTTSGenerating: (value: boolean) => void;
   finishWithAudio: (text: string, audio: string) => void;
@@ -149,6 +151,25 @@ export const useChatStore = create<ChatState>((set, get) => ({
       isStreaming: true,
       executingToolName: null,
     }));
+  },
+
+  commitPreToolContent: (content: string) => {
+    const { currentSessionId, messages } = get();
+    // テキストがある場合のみバブルとして追加
+    if (!content.trim()) return;
+    const assistantMessage: ChatMessageRecord = {
+      id: crypto.randomUUID(),
+      session_id: currentSessionId ?? '',
+      role: 'assistant',
+      content,
+      created_at: new Date().toISOString(),
+    };
+    set({
+      messages: [...messages, assistantMessage],
+      streamingContent: '',   // 次のストリーミングのためリセット
+      executingToolName: null, // tool:executing イベントで上書きされる
+      // isStreaming は true のまま維持
+    });
   },
 
   finishStreaming: (fullContent: string) => {

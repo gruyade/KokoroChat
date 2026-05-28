@@ -403,6 +403,7 @@ impl FileOpsPlugin {
     }
 
     /// 実行 → アクセス拒否時に許可要求 → 再実行の共通フロー
+    #[allow(clippy::too_many_arguments)]
     async fn execute_with_acl_retry<R, F>(
         &self,
         app_handle: &tauri::AppHandle<R>,
@@ -422,13 +423,7 @@ impl FileOpsPlugin {
             Err(err) if err.contains("アクセス拒否") && session_id.is_some() => {
                 let sid = session_id.as_ref().unwrap();
                 match self
-                    .request_permission_and_wait(
-                        app_handle,
-                        sid,
-                        path,
-                        requires_write,
-                        err.clone(),
-                    )
+                    .request_permission_and_wait(app_handle, sid, path, requires_write, err.clone())
                     .await
                 {
                     Ok(()) => {
@@ -487,20 +482,54 @@ impl<R: tauri::Runtime> PluginHandler<R> for FileOpsPlugin {
     }
 
     fn description(&self) -> &str {
-        "ユーザーが許可したディレクトリ内のファイルを読み書きする。絶対パスで指定可能。アクセス許可が必要な場合は自動的にユーザーに確認される。"
+        concat!(
+            "[Purpose] A plugin that gives the AI the ability to read and write files on the user's machine. ",
+            "Provides four tools: read_file, write_file, list_directory, and search_files.\n",
+            "[When to use] Enable this plugin when the user wants the AI to access, create, edit, or search files or directories.\n",
+            "[Out of scope] Cannot execute files or run shell commands. ",
+            "Cannot access paths that the user has not explicitly permitted — ",
+            "a confirmation dialog is automatically shown to the user when permission is required. ",
+            "Access is denied and an error is returned if the user rejects the request.",
+        )
     }
 
     fn tools(&self) -> Vec<ToolDefinition> {
         vec![
             ToolDefinition {
                 name: "read_file".to_string(),
-                description: "【種別: 読み取り(read)】指定したパスのファイルを読み込む。テキストファイルはそのまま、画像ファイル（.png/.jpg/.jpeg/.gif/.webp/.bmp）はBase64で返す。【判断手順】(1)対象ファイルの絶対パスと親ディレクトリを特定 (2)操作はread権限のみで十分と判断 (3)本ツールを呼び出す。【権限フロー】親ディレクトリへのread権限がない場合、本ツールが自動的にユーザーへ許可ダイアログを表示し応答を待機する。許可されれば結果が返るので、別途許可要請ツールを呼ぶ必要はない。拒否された場合のみ「アクセス拒否」エラーが返る。ファイルを編集する前には必ずこのツールで現在の内容を確認すること。".to_string(),
+                description: concat!(
+                    "[Purpose] Read the contents of a file and return them. ",
+                    "Text files are returned as plain strings; image files (.png/.jpg/.jpeg/.gif/.webp/.bmp) are returned as Base64-encoded strings.\n",
+                    "[When to use] ",
+                    "HIGHEST PRIORITY: If the user's message contains a file path, call this tool immediately as your first action — ",
+                    "before responding, before asking questions, before anything else. ",
+                    "Do NOT guess or assume the file's contents. ",
+                    "Additionally, call this tool proactively whenever reading the file would help you answer accurately, ",
+                    "even without an explicit request. ",
+                    "Explicit triggers: \"見せて\", \"読んで\", \"表示して\", \"開いて\", \"確認して\", \"中身は？\", \"show\", \"open\", \"read\", \"display\". ",
+                    "Implicit triggers: user mentions a file path in conversation; ",
+                    "you need the file content to answer a question about it; ",
+                    "user says \"調べて\" / \"look into\" and a file or path is implied. ",
+                    "Also ALWAYS call this before editing or modifying an existing file to retrieve its current content.\n",
+                    "[Out of scope] Does NOT modify or overwrite files (use write_file instead). ",
+                    "Does NOT list directory contents (use list_directory instead). ",
+                    "Do NOT call this tool with an unknown path — use list_directory or search_files first to resolve the absolute path.\n",
+                    "[Permissions] If read permission is missing, the app automatically shows a confirmation dialog to the user. ",
+                    "If allowed, the file content is returned. If denied, an access-denied error is returned. No additional tool call is needed.\n",
+                    "Example: User says \"Show me C:/work/memo.txt\" → call with path=\"C:/work/memo.txt\".",
+                ).to_string(),
                 parameters: json!({
                     "type": "object",
                     "properties": {
                         "path": {
                             "type": "string",
-                            "description": "読み込むファイルの絶対パス（例: C:/Users/user/documents/file.txt）またはサンドボックス内の相対パス"
+                            "description": concat!(
+                                "Absolute path of the file to read. ",
+                                "Pass the path exactly as the user provided — do NOT convert or normalize slashes. ",
+                                "File name alone is not valid — a full absolute path is required. ",
+                                "If the user refers to a file with a relative or ambiguous path, ",
+                                "use list_directory or search_files to resolve the absolute path first.",
+                            )
                         }
                     },
                     "required": ["path"]
@@ -508,17 +537,44 @@ impl<R: tauri::Runtime> PluginHandler<R> for FileOpsPlugin {
             },
             ToolDefinition {
                 name: "write_file".to_string(),
-                description: "【種別: 書き込み(write)】ファイルを新規作成または上書き保存する。ユーザーからファイルの作成・編集・保存を依頼された場合は必ずこのツールを使う。親ディレクトリが存在しない場合は自動作成。【判断手順】(1)書き込み先ファイルの絶対パスと親ディレクトリを特定 (2)既存ファイルを編集する場合は先に read_file で現在の内容を確認 (3)write権限が必要と判断し本ツールを呼び出す。【権限フロー】親ディレクトリへのwrite権限がない場合、本ツールが自動的にユーザーへ許可ダイアログを表示し応答を待機する。許可されればそのまま書き込みが実行される。拒否された場合のみ「アクセス拒否」エラーが返る。".to_string(),
+                description: concat!(
+                    "[Purpose] Create a new file or completely overwrite an existing file at the specified path. ",
+                    "Parent directories are created automatically if they do not exist.\n",
+                    "[When to use] When the user asks to create, save, write, update, edit, modify, or append to a file, ",
+                    "or when you determine that writing a file is the appropriate action to fulfill the user's request ",
+                    "even if they did not explicitly say \"write\" or \"save\".\n",
+                    "[Out of scope] The content field ALWAYS replaces the entire file — partial updates are not possible. ",
+                    "When editing an existing file, ALWAYS call read_file first to get the current content, ",
+                    "then pass the full updated content to this tool. Passing only the changed portion will erase everything else. ",
+                    "Does NOT create directories alone (directories are only created as a side effect of writing a file).\n",
+                    "[Permissions] If write permission is missing, the app automatically shows a confirmation dialog to the user. ",
+                    "If allowed, the file is written successfully. If denied, an access-denied error is returned. No additional tool call is needed.\n",
+                    "Example (new file): User says \"Create C:/work/hello.txt with the content Hello World\" ",
+                    "→ call with path=\"C:/work/hello.txt\", content=\"Hello World\".\n",
+                    "Example (edit existing): User says \"Change X in C:/work/config.txt\" ",
+                    "→ (1) call read_file(path=\"C:/work/config.txt\") to get the full current content ",
+                    "→ (2) build the fully updated content and call write_file(path=\"C:/work/config.txt\", content=<full updated content>).",
+                ).to_string(),
                 parameters: json!({
                     "type": "object",
                     "properties": {
                         "path": {
                             "type": "string",
-                            "description": "書き込み先ファイルの絶対パス（例: C:/Users/user/documents/file.txt）またはサンドボックス内の相対パス"
+                            "description": concat!(
+                                "Absolute path of the file to write. ",
+                                "Pass the path exactly as the user provided — do NOT convert or normalize slashes. ",
+                                "File name alone is not valid — a full absolute path is required. ",
+                                "Non-existent parent directories are created automatically.",
+                            )
                         },
                         "content": {
                             "type": "string",
-                            "description": "ファイルに書き込む内容（テキスト）。既存ファイルの場合は全内容が置き換わる"
+                            "description": concat!(
+                                "The content to write to the file (UTF-8 text). ",
+                                "This field completely replaces the entire file. ",
+                                "When editing an existing file, always pass the full updated file content, not just the changed portion. ",
+                                "Passing only the changed portion will erase everything else in the file.",
+                            )
                         }
                     },
                     "required": ["path", "content"]
@@ -526,13 +582,32 @@ impl<R: tauri::Runtime> PluginHandler<R> for FileOpsPlugin {
             },
             ToolDefinition {
                 name: "list_directory".to_string(),
-                description: "【種別: 読み取り(read)】指定したディレクトリのファイルとサブディレクトリ一覧を取得する。対象ファイルのパスが曖昧な場合や、ディレクトリ構成を把握したい場合に最初に呼び出す。【判断手順】(1)確認したいディレクトリの絶対パスを特定 (2)read権限のみで十分と判断 (3)本ツールを呼び出す。【権限フロー】対象ディレクトリへのread権限がない場合、本ツールが自動的にユーザーへ許可ダイアログを表示し応答を待機する。許可されれば一覧が返る。拒否された場合のみ「アクセス拒否」エラーが返る。".to_string(),
+                description: concat!(
+                    "[Purpose] Return the names of files and subdirectories directly inside the specified directory (non-recursive).\n",
+                    "[When to use] ",
+                    "HIGHEST PRIORITY: If the user's message contains a directory path, call this tool immediately as your first action — ",
+                    "before responding or asking questions. ",
+                    "Also use this when the user asks to list or show what is inside a folder, ",
+                    "or when you need to discover what files exist before reading or writing them, ",
+                    "even without an explicit \"list\" request.\n",
+                    "[Out of scope] Does NOT return file contents (use read_file for that). ",
+                    "Does NOT recurse into subdirectories (use search_files for recursive search). ",
+                    "Does NOT create or modify files.\n",
+                    "[Permissions] If read permission is missing, the app automatically shows a confirmation dialog to the user. ",
+                    "If allowed, the listing is returned. If denied, an access-denied error is returned. No additional tool call is needed.\n",
+                    "Example: User says \"What files are in C:/work?\" → call with path=\"C:/work\". ",
+                    "If the path is unknown, start from a known parent directory (e.g. C:/Users/user) and drill down.",
+                ).to_string(),
                 parameters: json!({
                     "type": "object",
                     "properties": {
                         "path": {
                             "type": "string",
-                            "description": "一覧を取得するディレクトリの絶対パス（例: C:/Users/user/documents）またはサンドボックス内の相対パス"
+                            "description": concat!(
+                                "Absolute path of the directory to list. ",
+                                "Pass the path exactly as the user provided — do NOT convert or normalize slashes. ",
+                                "Must be a directory path — do not pass a file path.",
+                            )
                         }
                     },
                     "required": ["path"]
@@ -540,17 +615,42 @@ impl<R: tauri::Runtime> PluginHandler<R> for FileOpsPlugin {
             },
             ToolDefinition {
                 name: "search_files".to_string(),
-                description: "【種別: 読み取り(read)】指定したディレクトリ以下のファイルをパターンで再帰検索する。ファイル名の一部から対象ファイルを探したい場合に使う。【判断手順】(1)検索対象ディレクトリの絶対パスとパターンを特定 (2)read権限のみで十分と判断 (3)本ツールを呼び出す。【権限フロー】対象ディレクトリへのread権限がない場合、本ツールが自動的にユーザーへ許可ダイアログを表示し応答を待機する。許可されれば結果が返る。拒否された場合のみ「アクセス拒否」エラーが返る。".to_string(),
+                description: concat!(
+                    "[Purpose] Recursively search the specified directory and return absolute paths of all files ",
+                    "whose names contain the given pattern as a substring.\n",
+                    "[When to use] When the user asks to find or locate a file by name, ",
+                    "e.g. \"find all Python files under C:/work\", \"where is the file named config?\", ",
+                    "\"list all .txt files in this folder\". ",
+                    "Also use this proactively when the user mentions a file name without a full path — ",
+                    "call this first to resolve the absolute path, then pass it to read_file.\n",
+                    "[Out of scope] Does NOT search file contents — only filters by file name (no grep-style content search). ",
+                    "Does NOT return file contents (use read_file for that). ",
+                    "Does NOT create or modify files.\n",
+                    "[Permissions] If read permission is missing, the app automatically shows a confirmation dialog to the user. ",
+                    "If allowed, the results are returned. If denied, an access-denied error is returned. No additional tool call is needed.\n",
+                    "Example: User says \"Find all Python files under C:/work\" ",
+                    "→ call with path=\"C:/work\", pattern=\".py\". Pass the returned paths to read_file to read their contents.",
+                ).to_string(),
                 parameters: json!({
                     "type": "object",
                     "properties": {
                         "path": {
                             "type": "string",
-                            "description": "検索対象ディレクトリの絶対パス（例: C:/Users/user/documents）またはサンドボックス内の相対パス"
+                            "description": concat!(
+                                "Absolute path of the directory to search recursively. ",
+                                "Pass the path exactly as the user provided — do NOT convert or normalize slashes. ",
+                                "Must be a directory path — do not pass a file path.",
+                            )
                         },
                         "pattern": {
                             "type": "string",
-                            "description": "検索パターン（ファイル名の部分一致。例: '.txt' で全テキストファイル、'readme' で readme を含むファイル）"
+                            "description": concat!(
+                                "Substring to match against file names (case-insensitive). ",
+                                "No wildcards needed — the pattern is automatically matched as a substring. ",
+                                "To filter by extension, include the dot (e.g. \".txt\", \".py\"). ",
+                                "To filter by name, pass the partial name directly (e.g. \"readme\", \"config\"). ",
+                                "Pass an empty string (\"\") to match all files.",
+                            )
                         }
                     },
                     "required": ["path", "pattern"]
@@ -604,7 +704,12 @@ impl<R: tauri::Runtime> PluginHandler<R> for FileOpsPlugin {
                 })
                 .await
             }
-            _ => return Err(AppError::Plugin(format!("不明なツール: {}", tool_call.name))),
+            _ => {
+                return Err(AppError::Plugin(format!(
+                    "不明なツール: {}",
+                    tool_call.name
+                )))
+            }
         };
 
         Ok(result)
@@ -646,7 +751,9 @@ mod tests {
         let (plugin, _tmp) = setup();
         let handler: &dyn PluginHandler<tauri::test::MockRuntime> = &plugin;
         assert_eq!(handler.name(), "file_ops");
-        assert_eq!(handler.description(), "ユーザーが許可したディレクトリ内のファイルを読み書きする。絶対パスで指定可能。アクセス許可が必要な場合は自動的にユーザーに確認される。");
+        assert!(handler.description().contains("[Purpose]"));
+        assert!(handler.description().contains("read_file"));
+        assert!(handler.description().contains("write_file"));
 
         let tools = handler.tools();
         let tool_names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
