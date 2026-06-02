@@ -269,27 +269,54 @@ impl DefaultChatEngine {
         session_id: &str,
         base_prompt: &str,
     ) -> String {
-        let entries = {
+        let mut result = base_prompt.to_string();
+
+        // system_prompt モードのエントリを注入
+        let system_entries = {
             let db = match self.db.lock() {
                 Ok(db) => db,
-                Err(_) => return base_prompt.to_string(),
+                Err(_) => return result,
             };
             match knowledge_repo::get_system_prompt_entries(db.connection(), session_id) {
                 Ok(entries) => entries,
-                Err(_) => return base_prompt.to_string(),
+                Err(_) => return result,
             }
         };
 
-        if entries.is_empty() {
-            return base_prompt.to_string();
+        if !system_entries.is_empty() {
+            let knowledge_section: Vec<String> = system_entries
+                .iter()
+                .map(|e| format!("## {}\n{}", e.file_name, e.content))
+                .collect();
+            result = format!("{}\n\n{}", result, knowledge_section.join("\n\n"));
         }
 
-        let knowledge_section: Vec<String> = entries
-            .iter()
-            .map(|e| format!("## {}\n{}", e.file_name, e.content))
-            .collect();
+        // tool_reference モードのエントリがあればツール使用を指示
+        let tool_ref_entries = {
+            let db = match self.db.lock() {
+                Ok(db) => db,
+                Err(_) => return result,
+            };
+            match knowledge_repo::get_tool_reference_entries(db.connection(), session_id) {
+                Ok(entries) => entries,
+                Err(_) => return result,
+            }
+        };
 
-        format!("{}\n\n{}", base_prompt, knowledge_section.join("\n\n"))
+        if !tool_ref_entries.is_empty() {
+            let file_names: Vec<&str> = tool_ref_entries.iter().map(|e| e.file_name.as_str()).collect();
+            let instruction = format!(
+                "\n\n## ナレッジ参照指示\n\
+                以下のナレッジファイルが利用可能です: {}\n\
+                ユーザーの質問に答える際、関連するナレッジファイルの内容を get_knowledge ツールで取得し、その内容に基づいて回答してください。\n\
+                ナレッジの内容を回答に具体的に反映し、引用や参照を行ってください。\n\
+                ナレッジに該当する情報がある場合は、必ず get_knowledge を呼び出してから回答してください。",
+                file_names.join(", ")
+            );
+            result.push_str(&instruction);
+        }
+
+        result
     }
 
     /// 圧縮済みメッセージを履歴から除外するフィルタ

@@ -43,10 +43,10 @@ impl<R: tauri::Runtime> PluginHandler<R> for KnowledgePlugin {
         vec![ToolDefinition {
             name: "get_knowledge".to_string(),
             description: concat!(
-                "[Purpose] Retrieve the full content of a knowledge file registered in the current session.\n",
-                "[When to use] When you need to reference detailed information from a knowledge file. ",
-                "Call this tool with the exact file_name of the knowledge entry you want to access.\n",
-                "[Out of scope] Cannot modify knowledge entries. Only returns content for files registered with tool_reference mode.",
+                "[Purpose] ユーザーが登録したナレッジファイルの内容を取得する。\n",
+                "[When to use] ユーザーの質問に答える前に、関連するナレッジファイルを必ず参照すること。",
+                "ナレッジに含まれる情報は回答の根拠として活用し、具体的に引用・反映すること。\n",
+                "[How to use] file_name パラメータに正確なファイル名を指定して呼び出す。",
             ).to_string(),
             parameters: json!({
                 "type": "object",
