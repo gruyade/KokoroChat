@@ -10,7 +10,8 @@ use tauri::{AppHandle, Emitter};
 use crate::db::database::Database;
 use crate::db::repositories::{
     character as char_repo, chat as chat_repo, chat_plugin_config as plugin_config_repo,
-    chat_tool_permission as perm_repo, memory as mem_repo, thought as thought_repo,
+    chat_tool_permission as perm_repo, knowledge as knowledge_repo, memory as mem_repo,
+    thought as thought_repo,
 };
 use crate::error::AppError;
 use crate::llm::client::{ChatMessage, LLMClient, LLMClientConfig, LLMResponse, MessageRole};
@@ -261,6 +262,36 @@ impl DefaultChatEngine {
         }
     }
 
+    /// system_prompt モードのナレッジをシステムプロンプトに注入
+    /// entries が空ならベースプロンプトをそのまま返す
+    pub(crate) fn inject_knowledge_to_system_prompt(
+        &self,
+        session_id: &str,
+        base_prompt: &str,
+    ) -> String {
+        let entries = {
+            let db = match self.db.lock() {
+                Ok(db) => db,
+                Err(_) => return base_prompt.to_string(),
+            };
+            match knowledge_repo::get_system_prompt_entries(db.connection(), session_id) {
+                Ok(entries) => entries,
+                Err(_) => return base_prompt.to_string(),
+            }
+        };
+
+        if entries.is_empty() {
+            return base_prompt.to_string();
+        }
+
+        let knowledge_section: Vec<String> = entries
+            .iter()
+            .map(|e| format!("## {}\n{}", e.file_name, e.content))
+            .collect();
+
+        format!("{}\n\n{}", base_prompt, knowledge_section.join("\n\n"))
+    }
+
     /// 圧縮済みメッセージを履歴から除外するフィルタ
     /// memoriesから現在のセッションに対応する最新のMemoryを探し、
     /// そのsource_message_to以前のメッセージを除外する
@@ -401,6 +432,65 @@ impl DefaultChatEngine {
         global_tools
             .into_iter()
             .filter(|t| !disabled_tools.contains(t.name.as_str()))
+            .collect()
+    }
+
+    /// tool_reference モードのナレッジエントリに基づき get_knowledge ツール定義をフィルタリング
+    /// - tool_reference エントリが1件以上: get_knowledge の parameter description に利用可能ファイル名を列挙
+    /// - tool_reference エントリが0件: get_knowledge ツールを除外
+    pub(crate) fn filter_knowledge_tools(
+        &self,
+        session_id: &str,
+        tools: Vec<crate::models::plugin::ToolDefinition>,
+    ) -> Vec<crate::models::plugin::ToolDefinition> {
+        // get_knowledge ツールが含まれていなければ何もしない
+        if !tools.iter().any(|t| t.name == "get_knowledge") {
+            return tools;
+        }
+
+        // DBから tool_reference エントリを取得
+        let entries = {
+            let db = match self.db.lock() {
+                Ok(db) => db,
+                Err(_) => return tools,
+            };
+            match knowledge_repo::get_tool_reference_entries(db.connection(), session_id) {
+                Ok(entries) => entries,
+                Err(_) => return tools,
+            }
+        };
+
+        // エントリ0件: get_knowledge ツールを除外
+        if entries.is_empty() {
+            return tools
+                .into_iter()
+                .filter(|t| t.name != "get_knowledge")
+                .collect();
+        }
+
+        // エントリ1件以上: file_name パラメータの description に利用可能ファイル名一覧を付加
+        let file_names: Vec<&str> = entries.iter().map(|e| e.file_name.as_str()).collect();
+        let available_list = format!("Available files: {}", file_names.join(", "));
+
+        tools
+            .into_iter()
+            .map(|mut t| {
+                if t.name == "get_knowledge" {
+                    // parameters.properties.file_name.description を更新
+                    if let Some(props) = t.parameters.get_mut("properties") {
+                        if let Some(file_name_prop) = props.get_mut("file_name") {
+                            if let Some(desc) = file_name_prop.get_mut("description") {
+                                let base_desc = desc.as_str().unwrap_or("");
+                                *desc = serde_json::Value::String(format!(
+                                    "{} {}",
+                                    base_desc, available_list
+                                ));
+                            }
+                        }
+                    }
+                }
+                t
+            })
             .collect()
     }
 
@@ -656,11 +746,15 @@ impl ChatEngine for DefaultChatEngine {
         // TTS有効判定: グローバル設定 AND キャラクター個別TTS設定あり
         let tts_enabled = self.config_manager.get_config().tts.enabled && tts_config.is_some();
 
+        // Knowledge注入（system_promptモードのエントリをベースプロンプトに結合）
+        let system_prompt_with_knowledge =
+            self.inject_knowledge_to_system_prompt(session_id, &system_prompt);
+
         // TTS有効時はSystem Promptに出力フォーマットルールを付加
         let effective_system_prompt = if tts_enabled {
-            format!("{}\n\n## 出力フォーマットルール（必ず守ること）\n応答は必ず以下のJSON形式で返してください。JSON以外のテキストは含めないでください。\n```\n{{\"display\": \"表示用テキスト（地の文・動作描写・効果音を含む全文）\", \"speech\": \"声に出して話すセリフと心の声のみ（動作描写・効果音・擬音・ナレーションは含めない）\"}}\n```\n重要: speechには実際に口から発する言葉と心の中で思っていることだけを入れてください。\n- 含める: セリフ、呼びかけ、返事、質問、心の声、独り言\n- 含めない: *動作描写*, 効果音, 擬音語, ナレーション, 状況説明\n例:\n```\n{{\"display\": \"*嬉しそうに手を振りながら* おはよう！今日も一緒に遊ぼうね！ *ぴょんぴょん跳ねる*\", \"speech\": \"おはよう！今日も一緒に遊ぼうね！\"}}\n```", system_prompt)
+            format!("{}\n\n## 出力フォーマットルール（必ず守ること）\n応答は必ず以下のJSON形式で返してください。JSON以外のテキストは含めないでください。\n```\n{{\"display\": \"表示用テキスト（地の文・動作描写・効果音を含む全文）\", \"speech\": \"声に出して話すセリフと心の声のみ（動作描写・効果音・擬音・ナレーションは含めない）\"}}\n```\n重要: speechには実際に口から発する言葉と心の中で思っていることだけを入れてください。\n- 含める: セリフ、呼びかけ、返事、質問、心の声、独り言\n- 含めない: *動作描写*, 効果音, 擬音語, ナレーション, 状況説明\n例:\n```\n{{\"display\": \"*嬉しそうに手を振りながら* おはよう！今日も一緒に遊ぼうね！ *ぴょんぴょん跳ねる*\", \"speech\": \"おはよう！今日も一緒に遊ぼうね！\"}}\n```", system_prompt_with_knowledge)
         } else {
-            system_prompt.clone()
+            system_prompt_with_knowledge
         };
 
         let llm_messages = self.build_context(
@@ -826,7 +920,8 @@ impl ChatEngine for DefaultChatEngine {
                     .as_ref()
                     .map(|ps| ps.get_enabled_tools())
                     .unwrap_or_default();
-                self.filter_tools_by_session_permissions(&session_id_owned, global)
+                let filtered = self.filter_tools_by_session_permissions(&session_id_owned, global);
+                self.filter_knowledge_tools(&session_id_owned, filtered)
             };
             let tools_for_llm: Option<&[crate::models::ToolDefinition]> =
                 if tool_definitions.is_empty() {
@@ -1236,8 +1331,12 @@ impl ChatEngine for DefaultChatEngine {
             h
         };
 
+        // Knowledge注入（system_promptモードのエントリをベースプロンプトに結合）
+        let system_prompt_with_knowledge =
+            self.inject_knowledge_to_system_prompt(session_id, &system_prompt);
+
         let llm_messages = self.build_context(
-            &system_prompt,
+            &system_prompt_with_knowledge,
             &memories,
             &thoughts,
             &history_without_last_user,
@@ -1371,7 +1470,8 @@ impl ChatEngine for DefaultChatEngine {
                     .as_ref()
                     .map(|ps| ps.get_enabled_tools())
                     .unwrap_or_default();
-                self.filter_tools_by_session_permissions(&session_id_owned, global)
+                let filtered = self.filter_tools_by_session_permissions(&session_id_owned, global);
+                self.filter_knowledge_tools(&session_id_owned, filtered)
             };
             let tools_for_llm: Option<&[crate::models::ToolDefinition]> =
                 if tool_definitions.is_empty() {
@@ -1790,8 +1890,12 @@ impl ChatEngine for DefaultChatEngine {
             h
         };
 
+        // Knowledge注入（system_promptモードのエントリをベースプロンプトに結合）
+        let system_prompt_with_knowledge =
+            self.inject_knowledge_to_system_prompt(session_id, &system_prompt);
+
         let llm_messages = self.build_context(
-            &system_prompt,
+            &system_prompt_with_knowledge,
             &memories,
             &thoughts,
             &history_without_last_user,
@@ -1923,7 +2027,8 @@ impl ChatEngine for DefaultChatEngine {
                     .as_ref()
                     .map(|ps| ps.get_enabled_tools())
                     .unwrap_or_default();
-                self.filter_tools_by_session_permissions(&session_id_owned, global)
+                let filtered = self.filter_tools_by_session_permissions(&session_id_owned, global);
+                self.filter_knowledge_tools(&session_id_owned, filtered)
             };
             let tools_for_llm: Option<&[crate::models::ToolDefinition]> =
                 if tool_definitions.is_empty() {
@@ -2314,8 +2419,12 @@ impl DefaultChatEngine {
             h
         };
 
+        // Knowledge注入（system_promptモードのエントリをベースプロンプトに結合）
+        let system_prompt_with_knowledge =
+            self.inject_knowledge_to_system_prompt(session_id, &system_prompt);
+
         let llm_messages = self.build_context(
-            &system_prompt,
+            &system_prompt_with_knowledge,
             &memories,
             &thoughts,
             &history_without_last_user,
@@ -2525,8 +2634,12 @@ impl DefaultChatEngine {
             h
         };
 
+        // Knowledge注入（system_promptモードのエントリをベースプロンプトに結合）
+        let system_prompt_with_knowledge =
+            self.inject_knowledge_to_system_prompt(session_id, &system_prompt);
+
         let llm_messages = self.build_context(
-            &system_prompt,
+            &system_prompt_with_knowledge,
             &memories,
             &thoughts,
             &history_without_last_user,
@@ -2546,7 +2659,8 @@ impl DefaultChatEngine {
                 .as_ref()
                 .map(|ps| ps.get_enabled_tools())
                 .unwrap_or_default();
-            self.filter_tools_by_session_permissions(&session_id_owned, global)
+            let filtered = self.filter_tools_by_session_permissions(&session_id_owned, global);
+            self.filter_knowledge_tools(&session_id_owned, filtered)
         };
         let tools_for_llm: Option<&[crate::models::ToolDefinition]> = if tool_definitions.is_empty()
         {

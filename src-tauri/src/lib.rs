@@ -26,7 +26,7 @@ use config::model_config::ModelConfigManager;
 use db::database::Database;
 use llm::client::OpenAICompatibleClient;
 use memory::manager::DefaultMemoryManager;
-use plugin::builtin::{CalculatorPlugin, FileOpsPlugin, WebSearchPlugin};
+use plugin::builtin::{CalculatorPlugin, FileOpsPlugin, KnowledgePlugin, WebSearchPlugin};
 use plugin::registry::{DefaultPluginRegistry, PluginRegistry};
 use plugin::system::DefaultPluginSystem;
 use state::{AppState, FileOpsStateManager};
@@ -109,6 +109,9 @@ pub fn run() {
                     app_data_dir.join("plugin_files"),
                     db_for_chat.clone(),
                 )))
+                .ok();
+            plugin_registry
+                .register(Box::new(KnowledgePlugin::new(db_for_chat.clone())))
                 .ok();
 
             // config.json から保存済みプラグイン設定を PluginRegistry に復元
@@ -233,6 +236,13 @@ pub fn run() {
             commands::debug::debug_compress_memory,
             commands::debug::debug_generate_thought,
             commands::debug::debug_trigger_spontaneous,
+            commands::knowledge::add_knowledge,
+            commands::knowledge::remove_knowledge,
+            commands::knowledge::list_knowledge,
+            commands::knowledge::toggle_knowledge,
+            commands::knowledge::set_knowledge_injection_mode,
+            commands::knowledge::export_knowledge,
+            commands::knowledge::read_text_file_for_knowledge,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

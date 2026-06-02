@@ -1,13 +1,14 @@
 //! チャットコンテキスト組み立てのプロパティテスト
 //! proptest を使用して build_context の不変条件を検証する。
 //!
-//! **Validates: Requirements 2.2, 5.3**
+//! **Validates: Requirements 2.2, 3.2, 3.4, 5.1, 5.2, 5.3, 5.4, 2.3**
 
 #[cfg(test)]
 mod tests {
     use std::sync::{Arc, Mutex};
 
     use proptest::prelude::*;
+    use rusqlite::params;
 
     use crate::chat::engine::DefaultChatEngine;
     use crate::db::database::Database;
@@ -436,6 +437,363 @@ mod tests {
                     i,
                     history[i].role,
                     expected_role
+                );
+            }
+        }
+    }
+
+    // ========================================
+    // Feature: knowledge-plugin, Property 6: Engine enabled-state filter
+    // ========================================
+    //
+    // For any set of knowledge entries with varying enabled states, building the LLM context
+    // SHALL include only entries where enabled=true, regardless of injection_mode.
+    // Disabled entries SHALL appear in neither the system prompt nor the get_knowledge tool availability.
+    //
+    // **Validates: Requirements 3.2, 3.4, 2.3**
+
+    /// DB + セッションを準備して engine を返すヘルパー
+    fn create_engine_with_session() -> (DefaultChatEngine, String, Arc<Mutex<Database>>) {
+        use crate::db::database::Database;
+        use crate::models::config::*;
+        use std::collections::HashMap;
+
+        let db = Database::open_in_memory().unwrap();
+
+        // キャラクター + セッション作成
+        {
+            let conn = db.connection();
+            conn.execute(
+                "INSERT INTO characters (id, name, description, system_prompt, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![
+                    "char-test",
+                    "Test",
+                    "Desc",
+                    "Base Prompt",
+                    "2024-01-01T00:00:00Z",
+                    "2024-01-01T00:00:00Z"
+                ],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO chat_sessions (id, character_id, created_at) VALUES (?1, ?2, ?3)",
+                params!["sess-test", "char-test", "2024-01-01T00:00:00Z"],
+            )
+            .unwrap();
+        }
+
+        let db = Arc::new(Mutex::new(db));
+        let db_clone = db.clone();
+
+        let llm_client: Arc<dyn LLMClient> = Arc::new(MockLLMClient);
+
+        let mut models = HashMap::new();
+        let settings = ModelSettings {
+            base_url: "http://localhost:8080/v1".to_string(),
+            model: "test-model".to_string(),
+            api_key: None,
+            temperature: 0.7,
+            provider: None,
+        };
+        models.insert(ModelPurpose::Chat, settings.clone());
+        models.insert(ModelPurpose::Memory, settings.clone());
+        models.insert(ModelPurpose::Thought, settings.clone());
+        models.insert(ModelPurpose::CharacterGeneration, settings);
+
+        let config = AppConfig {
+            models,
+            spontaneous: SpontaneousConfig {
+                enabled: false,
+                min_interval_seconds: 60,
+                probability: 0.3,
+            },
+            thought: ThoughtConfig {
+                enabled: false,
+                interval_minutes: 5,
+                auto_delete_threshold_minutes: 1440,
+            },
+            memory: MemoryConfig {
+                compression_threshold: 50,
+            },
+            tts: TTSGlobalConfig {
+                enabled: false,
+                voicepeak_path: None,
+                timeout_seconds: 60,
+                max_chunk_size: 140,
+                irodori_base_url: None,
+                irodori_caption_base_url: None,
+                irodori_reference_audio_base_url: None,
+            },
+            ui: UIConfig {
+                theme: Theme::Dark,
+                language: "ja".to_string(),
+                send_key: SendKey::default(),
+            },
+            plugins: PluginsConfig {
+                enabled_plugins: vec![],
+                plugin_settings: HashMap::new(),
+            },
+            attachment: AttachmentConfig {
+                max_file_size_bytes: 10 * 1024 * 1024,
+                allowed_extensions: vec![],
+            },
+        };
+
+        let config_manager =
+            Arc::new(crate::config::model_config::ModelConfigManager::new_with_config(config));
+        let llm_lock = Arc::new(tokio::sync::Mutex::new(()));
+        let tts_connector: Arc<dyn TTSConnector> = Arc::new(MockTTSConnector);
+        let engine = DefaultChatEngine::new(
+            db,
+            llm_client,
+            config_manager,
+            llm_lock,
+            tts_connector,
+            None,
+            None,
+        );
+
+        (engine, "sess-test".to_string(), db_clone)
+    }
+
+    /// get_knowledge ツール定義を生成するヘルパー
+    fn make_get_knowledge_tool() -> crate::models::plugin::ToolDefinition {
+        crate::models::plugin::ToolDefinition {
+            name: "get_knowledge".to_string(),
+            description: "Retrieve knowledge content by file name".to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "file_name": {
+                        "type": "string",
+                        "description": "The file name to retrieve"
+                    }
+                },
+                "required": ["file_name"]
+            }),
+        }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(100))]
+
+        // Feature: knowledge-plugin, Property 6: Engine enabled-state filter
+        #[test]
+        fn prop_engine_enabled_state_filter(
+            entries_enabled in proptest::collection::vec(any::<bool>(), 1..=6),
+            entries_modes in proptest::collection::vec(
+                prop_oneof![Just("system_prompt".to_string()), Just("tool_reference".to_string())],
+                1..=6
+            ),
+            contents in proptest::collection::vec("[a-zA-Z0-9]{5,30}", 1..=6),
+        ) {
+            use crate::db::repositories::knowledge as knowledge_repo;
+
+            // エントリ数を揃える
+            let count = entries_enabled.len().min(entries_modes.len()).min(contents.len());
+            if count == 0 {
+                return Ok(());
+            }
+
+            let (engine, session_id, db_arc) = create_engine_with_session();
+
+            // エントリをDBに追加
+            {
+                let db_guard = db_arc.lock().unwrap();
+                let conn = db_guard.connection();
+                for i in 0..count {
+                    let entry = crate::models::KnowledgeEntry {
+                        id: format!("know-p6-{}", i),
+                        session_id: session_id.clone(),
+                        file_name: format!("file_{}.txt", i),
+                        content: contents[i].clone(),
+                        size_bytes: contents[i].len() as i64,
+                        enabled: entries_enabled[i],
+                        injection_mode: entries_modes[i].clone(),
+                        created_at: format!("2024-01-{:02}T00:00:00Z", (i % 28) + 1),
+                    };
+                    knowledge_repo::add_knowledge(conn, &entry).unwrap();
+                }
+            }
+
+            // ---- system_prompt モードの検証 ----
+            // inject_knowledge_to_system_prompt は enabled=true AND mode=system_prompt のエントリのみ含む
+            let base_prompt = "Base system prompt";
+            let injected = engine.inject_knowledge_to_system_prompt(&session_id, base_prompt);
+
+            for i in 0..count {
+                let file_name = format!("file_{}.txt", i);
+                let expected_header = format!("## {}", file_name);
+
+                if entries_enabled[i] && entries_modes[i] == "system_prompt" {
+                    // enabled=true AND system_prompt → システムプロンプトに含まれる
+                    prop_assert!(
+                        injected.contains(&expected_header),
+                        "Enabled system_prompt entry '{}' should be in injected prompt, but was not found",
+                        file_name
+                    );
+                    prop_assert!(
+                        injected.contains(&contents[i]),
+                        "Content of enabled system_prompt entry '{}' should be in injected prompt",
+                        file_name
+                    );
+                } else {
+                    // disabled OR tool_reference → システムプロンプトに含まれない
+                    prop_assert!(
+                        !injected.contains(&expected_header),
+                        "Entry '{}' (enabled={}, mode={}) should NOT be in system prompt",
+                        file_name,
+                        entries_enabled[i],
+                        entries_modes[i]
+                    );
+                }
+            }
+
+            // ---- tool_reference モードの検証 ----
+            // filter_knowledge_tools は enabled=true AND mode=tool_reference のエントリが1件以上あれば
+            // get_knowledge を含め、0件なら除外する
+            let tools = vec![make_get_knowledge_tool()];
+            let filtered = engine.filter_knowledge_tools(&session_id, tools);
+
+            let has_enabled_tool_ref = (0..count).any(|i| {
+                entries_enabled[i] && entries_modes[i] == "tool_reference"
+            });
+
+            if has_enabled_tool_ref {
+                // get_knowledge ツールが残っている
+                prop_assert!(
+                    filtered.iter().any(|t| t.name == "get_knowledge"),
+                    "get_knowledge tool should be present when enabled tool_reference entries exist"
+                );
+            } else {
+                // get_knowledge ツールが除外される
+                prop_assert!(
+                    !filtered.iter().any(|t| t.name == "get_knowledge"),
+                    "get_knowledge tool should be removed when no enabled tool_reference entries exist"
+                );
+            }
+
+            // disabled エントリの file_name は get_knowledge ツールの description に含まれてはいけない
+            if has_enabled_tool_ref {
+                let tool = filtered.iter().find(|t| t.name == "get_knowledge").unwrap();
+                let params_str = serde_json::to_string(&tool.parameters).unwrap_or_default();
+                for i in 0..count {
+                    let file_name = format!("file_{}.txt", i);
+                    if !entries_enabled[i] || entries_modes[i] != "tool_reference" {
+                        prop_assert!(
+                            !params_str.contains(&file_name),
+                            "Disabled/non-tool_reference entry '{}' should NOT appear in get_knowledge params",
+                            file_name
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    // ========================================
+    // Feature: knowledge-plugin, Property 8: System prompt injection ordering and format
+    // ========================================
+    //
+    // For any set of enabled knowledge entries with injection_mode="system_prompt",
+    // the system prompt SHALL contain each entry formatted as "## {file_name}\n{content}",
+    // concatenated in created_at ascending order, appearing after the base system prompt
+    // and before thoughts/memories context.
+    //
+    // **Validates: Requirements 5.1, 5.2, 5.3, 5.4**
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(100))]
+
+        // Feature: knowledge-plugin, Property 8: System prompt injection ordering and format
+        #[test]
+        fn prop_system_prompt_injection_ordering_and_format(
+            entry_count in 1usize..=5,
+            contents in proptest::collection::vec("[a-zA-Z0-9 ]{5,40}", 5),
+            base_prompt in "[a-zA-Z0-9]{10,30}",
+        ) {
+            use crate::db::repositories::knowledge as knowledge_repo;
+
+            let count = entry_count.min(contents.len());
+            let (engine, session_id, db_arc) = create_engine_with_session();
+
+            // エントリをDBに追加（各エントリは enabled=true, mode=system_prompt）
+            // created_at は日付が異なるように設定（昇順の検証用）
+            let mut expected_order: Vec<(String, String)> = Vec::new();
+            {
+                let db_guard = db_arc.lock().unwrap();
+                let conn = db_guard.connection();
+                for i in 0..count {
+                    let file_name = format!("doc_{}.txt", i);
+                    let created_at = format!("2024-01-{:02}T{:02}:00:00Z", (i % 28) + 1, i);
+                    let entry = crate::models::KnowledgeEntry {
+                        id: format!("know-p8-{}", i),
+                        session_id: session_id.clone(),
+                        file_name: file_name.clone(),
+                        content: contents[i].clone(),
+                        size_bytes: contents[i].len() as i64,
+                        enabled: true,
+                        injection_mode: "system_prompt".to_string(),
+                        created_at,
+                    };
+                    knowledge_repo::add_knowledge(conn, &entry).unwrap();
+                    expected_order.push((file_name, contents[i].clone()));
+                }
+            }
+
+            // inject_knowledge_to_system_prompt を呼び出す
+            let injected = engine.inject_knowledge_to_system_prompt(&session_id, &base_prompt);
+
+            // 1. ベースプロンプトが先頭にある
+            prop_assert!(
+                injected.starts_with(&base_prompt),
+                "Injected prompt should start with base prompt. Got: {}",
+                &injected[..injected.len().min(100)]
+            );
+
+            // 2. 各エントリが "## {file_name}\n{content}" 形式で含まれる
+            for (file_name, content) in &expected_order {
+                let expected_section = format!("## {}\n{}", file_name, content);
+                prop_assert!(
+                    injected.contains(&expected_section),
+                    "Injected prompt should contain '## {}\\n{}', but was not found in: {}",
+                    file_name,
+                    content,
+                    &injected
+                );
+            }
+
+            // 3. エントリが created_at 昇順で出現する（position 比較）
+            if count > 1 {
+                let mut positions: Vec<usize> = Vec::new();
+                for (file_name, _content) in &expected_order {
+                    let header = format!("## {}", file_name);
+                    let pos = injected.find(&header).unwrap_or(usize::MAX);
+                    positions.push(pos);
+                }
+                for i in 1..positions.len() {
+                    prop_assert!(
+                        positions[i] > positions[i - 1],
+                        "Entries should appear in created_at ascending order. Entry {} at pos {}, entry {} at pos {}",
+                        i - 1,
+                        positions[i - 1],
+                        i,
+                        positions[i]
+                    );
+                }
+            }
+
+            // 4. ナレッジセクションはベースプロンプトの後に出現する
+            if count > 0 {
+                let first_header = format!("## {}", expected_order[0].0);
+                let base_end = base_prompt.len();
+                let first_header_pos = injected.find(&first_header).unwrap_or(0);
+                prop_assert!(
+                    first_header_pos > base_end,
+                    "Knowledge section should appear after base prompt (base ends at {}, first entry at {})",
+                    base_end,
+                    first_header_pos
                 );
             }
         }

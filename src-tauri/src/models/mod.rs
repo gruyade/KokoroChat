@@ -2,6 +2,7 @@ pub mod attachment;
 pub mod character;
 pub mod chat;
 pub mod config;
+pub mod knowledge;
 pub mod memory;
 pub mod plugin;
 pub mod thought;
@@ -18,6 +19,7 @@ pub use config::{
     AppConfig, AttachmentConfig, LLMProvider, MemoryConfig, ModelPurpose, ModelSettings,
     PluginsConfig, SpontaneousConfig, TTSGlobalConfig, Theme, ThoughtConfig, UIConfig,
 };
+pub use knowledge::{KnowledgeEntry, KnowledgeEntryMeta};
 pub use memory::Memory;
 pub use plugin::{
     CliToolConfig, CustomToolRecord, CustomToolType, HttpToolConfig, PluginInfo, ToolCall,

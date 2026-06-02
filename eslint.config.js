@@ -40,6 +40,7 @@ export default [
         MouseEvent: 'readonly',
         RequestInit: 'readonly',
         Response: 'readonly',
+        File: 'readonly',
         FileReader: 'readonly',
         Image: 'readonly',
         localStorage: 'readonly',

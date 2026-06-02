@@ -606,4 +606,251 @@ mod tests {
             prop_assert_eq!(retrieved_b, Some(config_b));
         }
     }
+
+    // ========================================
+    // Feature: knowledge-plugin, Property 9: get_knowledge tool availability reflects current state
+    // For any session, the get_knowledge tool SHALL be included in tool definitions if and only if
+    // at least one entry has enabled=true and injection_mode="tool_reference". When included, the
+    // tool's parameter description SHALL list exactly the file_names of all qualifying entries.
+    // **Validates: Requirements 6.1, 6.4, 6.5**
+    // ========================================
+
+    /// ナレッジエントリの有効/無効とinjection_modeの組み合わせストラテジー
+    fn knowledge_entry_config_strategy() -> impl Strategy<Value = (bool, String)> {
+        (
+            prop::bool::ANY,
+            prop_oneof![
+                Just("system_prompt".to_string()),
+                Just("tool_reference".to_string()),
+            ],
+        )
+    }
+
+    /// テスト用ファイル名ストラテジー（拡張子付き）
+    fn knowledge_file_name_strategy() -> impl Strategy<Value = String> {
+        "[a-z]{1,10}\\.(txt|md|json|csv)"
+    }
+
+    /// テスト用コンテンツストラテジー（小さめ: 1〜200バイト）
+    fn knowledge_content_strategy() -> impl Strategy<Value = String> {
+        "[a-zA-Z0-9 ]{1,200}"
+    }
+
+    /// in-memory DB + session を準備するヘルパー
+    fn setup_knowledge_db() -> crate::db::database::Database {
+        let db = crate::db::database::Database::open_in_memory().unwrap();
+        let conn = db.connection();
+        conn.execute(
+            "INSERT INTO characters (id, name, description, system_prompt, created_at, updated_at)
+             VALUES ('char-test', 'Test', 'Desc', 'Prompt', '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z')",
+            [],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO chat_sessions (id, character_id, created_at) VALUES ('sess-prop', 'char-test', '2024-01-01T00:00:00Z')",
+            [],
+        ).unwrap();
+        db
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(100))]
+
+        /// Property 9: get_tool_reference_entries returns only enabled+tool_reference entries,
+        /// and KnowledgePlugin always exposes get_knowledge tool definition.
+        #[test]
+        fn prop_knowledge_tool_availability_reflects_state(
+            entries in proptest::collection::vec(
+                (knowledge_file_name_strategy(), knowledge_content_strategy(), knowledge_entry_config_strategy()),
+                1..=5
+            ),
+        ) {
+            use crate::db::repositories::knowledge as knowledge_repo;
+            use crate::models::KnowledgeEntry;
+            use crate::plugin::builtin::knowledge::KnowledgePlugin;
+            use std::sync::Mutex;
+
+            let db = setup_knowledge_db();
+
+            // Deduplicate file_names (same session_id + file_name = UNIQUE constraint)
+            let mut seen_names = std::collections::HashSet::new();
+            let mut unique_entries: Vec<(String, String, bool, String)> = Vec::new();
+            for (i, (file_name, content, (enabled, mode))) in entries.into_iter().enumerate() {
+                if seen_names.insert(file_name.clone()) {
+                    unique_entries.push((file_name, content, enabled, mode));
+                }
+                if unique_entries.len() >= 5 {
+                    break;
+                }
+            }
+
+            // Insert entries into DB
+            let conn = db.connection();
+            for (i, (file_name, content, enabled, mode)) in unique_entries.iter().enumerate() {
+                let entry = KnowledgeEntry {
+                    id: format!("know-prop9-{}", i),
+                    session_id: "sess-prop".to_string(),
+                    file_name: file_name.clone(),
+                    content: content.clone(),
+                    size_bytes: content.len() as i64,
+                    enabled: *enabled,
+                    injection_mode: mode.clone(),
+                    created_at: format!("2024-01-01T00:00:{:02}Z", i),
+                };
+                knowledge_repo::add_knowledge(conn, &entry).unwrap();
+            }
+
+            // get_tool_reference_entries should return only enabled=true AND injection_mode=tool_reference
+            let tool_ref_entries = knowledge_repo::get_tool_reference_entries(conn, "sess-prop").unwrap();
+
+            let expected_file_names: Vec<&str> = unique_entries
+                .iter()
+                .filter(|(_, _, enabled, mode)| *enabled && mode == "tool_reference")
+                .map(|(name, _, _, _)| name.as_str())
+                .collect();
+
+            prop_assert_eq!(tool_ref_entries.len(), expected_file_names.len());
+            for entry in &tool_ref_entries {
+                prop_assert!(expected_file_names.contains(&entry.file_name.as_str()));
+            }
+
+            // KnowledgePlugin.tools() always returns get_knowledge (tool availability decision is
+            // handled by the Engine, not the plugin). Verify tool definition structure.
+            let db_arc = Arc::new(Mutex::new(
+                crate::db::database::Database::open_in_memory().unwrap()
+            ));
+            let knowledge_plugin = KnowledgePlugin::new(db_arc);
+            let tools = <KnowledgePlugin as PluginHandler<tauri::test::MockRuntime>>::tools(&knowledge_plugin);
+            prop_assert_eq!(tools.len(), 1);
+            prop_assert_eq!(&tools[0].name, "get_knowledge");
+            // parameters must have file_name property
+            let params = tools[0].parameters.as_object().unwrap();
+            let properties = params.get("properties").unwrap().as_object().unwrap();
+            prop_assert!(properties.contains_key("file_name"));
+        }
+    }
+
+    // ========================================
+    // Feature: knowledge-plugin, Property 10: get_knowledge content retrieval
+    // For any enabled knowledge entry with injection_mode="tool_reference", calling get_knowledge
+    // with that entry's exact file_name SHALL return the full content that was originally stored.
+    // **Validates: Requirements 6.2, 10.6**
+    // ========================================
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(100))]
+
+        /// Property 10: Calling execute with a valid file_name returns the full stored content.
+        #[test]
+        fn prop_knowledge_content_retrieval(
+            file_name in knowledge_file_name_strategy(),
+            content in knowledge_content_strategy(),
+            call_id in tool_call_id_strategy(),
+        ) {
+            use crate::db::repositories::knowledge as knowledge_repo;
+            use crate::models::{KnowledgeEntry, ToolExecutionContext};
+            use crate::plugin::builtin::knowledge::KnowledgePlugin;
+            use std::sync::Mutex;
+
+            let db = setup_knowledge_db();
+            let conn = db.connection();
+
+            // Insert a tool_reference entry
+            let entry = KnowledgeEntry {
+                id: "know-prop10".to_string(),
+                session_id: "sess-prop".to_string(),
+                file_name: file_name.clone(),
+                content: content.clone(),
+                size_bytes: content.len() as i64,
+                enabled: true,
+                injection_mode: "tool_reference".to_string(),
+                created_at: "2024-01-01T00:00:00Z".to_string(),
+            };
+            knowledge_repo::add_knowledge(conn, &entry).unwrap();
+
+            // Create KnowledgePlugin with the SAME db instance
+            let db_arc = Arc::new(Mutex::new(db));
+            let knowledge_plugin = KnowledgePlugin::new(db_arc);
+
+            // Construct a ToolCall with session_id context
+            let tool_call = ToolCall {
+                id: call_id.clone(),
+                name: "get_knowledge".to_string(),
+                arguments: json!({ "file_name": file_name }),
+                context: Some(ToolExecutionContext {
+                    session_id: Some("sess-prop".to_string()),
+                    plugin_config_json: None,
+                }),
+            };
+
+            // Execute synchronously (execute_get_knowledge is sync internally)
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(async {
+                let app = make_mock_app();
+                let result = knowledge_plugin.execute(&tool_call, app.handle()).await.unwrap();
+
+                prop_assert_eq!(&result.tool_call_id, &call_id);
+                prop_assert!(!result.is_error);
+                prop_assert_eq!(&result.content, &content);
+
+                Ok(())
+            })?;
+        }
+
+        /// Property 10 (negative): Calling execute with a non-matching file_name returns an error result.
+        #[test]
+        fn prop_knowledge_content_retrieval_nonexistent(
+            file_name in knowledge_file_name_strategy(),
+            content in knowledge_content_strategy(),
+            call_id in tool_call_id_strategy(),
+            wrong_name in "[a-z]{11,15}\\.txt",
+        ) {
+            use crate::db::repositories::knowledge as knowledge_repo;
+            use crate::models::{KnowledgeEntry, ToolExecutionContext};
+            use crate::plugin::builtin::knowledge::KnowledgePlugin;
+            use std::sync::Mutex;
+
+            let db = setup_knowledge_db();
+            let conn = db.connection();
+
+            // Insert a tool_reference entry
+            let entry = KnowledgeEntry {
+                id: "know-prop10-neg".to_string(),
+                session_id: "sess-prop".to_string(),
+                file_name: file_name.clone(),
+                content: content.clone(),
+                size_bytes: content.len() as i64,
+                enabled: true,
+                injection_mode: "tool_reference".to_string(),
+                created_at: "2024-01-01T00:00:00Z".to_string(),
+            };
+            knowledge_repo::add_knowledge(conn, &entry).unwrap();
+
+            let db_arc = Arc::new(Mutex::new(db));
+            let knowledge_plugin = KnowledgePlugin::new(db_arc);
+
+            // Call with a wrong file_name (guaranteed different length from valid names)
+            let tool_call = ToolCall {
+                id: call_id.clone(),
+                name: "get_knowledge".to_string(),
+                arguments: json!({ "file_name": wrong_name }),
+                context: Some(ToolExecutionContext {
+                    session_id: Some("sess-prop".to_string()),
+                    plugin_config_json: None,
+                }),
+            };
+
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(async {
+                let app = make_mock_app();
+                let result = knowledge_plugin.execute(&tool_call, app.handle()).await.unwrap();
+
+                prop_assert_eq!(&result.tool_call_id, &call_id);
+                prop_assert!(result.is_error);
+                // Error message should contain the available file_name
+                prop_assert!(result.content.contains(&file_name));
+
+                Ok(())
+            })?;
+        }
+    }
 }
