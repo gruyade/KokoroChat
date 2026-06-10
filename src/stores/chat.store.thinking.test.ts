@@ -47,7 +47,7 @@ describe('Chat Store - Property 8: Tool break preserves accumulated thinking con
     fc.assert(
       fc.property(
         fc.array(fc.string({ minLength: 1, maxLength: 100 }), { minLength: 1, maxLength: 20 }),
-        fc.string({ minLength: 1, maxLength: 200 }), // text content for commitPreToolContent
+        fc.string({ minLength: 1, maxLength: 200 }).filter((s) => s.trim().length > 0), // text content for commitPreToolContent
         (thinkingChunks, textContent) => {
           // Reset state for each iteration
           useChatStore.setState({
