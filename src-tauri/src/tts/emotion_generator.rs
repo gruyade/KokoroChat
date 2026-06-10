@@ -51,8 +51,10 @@ impl EmotionGenerator {
         let response = llm_client.chat(&messages, llm_config, None).await?;
 
         match response {
-            LLMResponse::Text(json_str) => Self::parse_and_validate(&json_str, base_config),
-            LLMResponse::ToolCalls(_) => Err(AppError::LlmApi(
+            LLMResponse::Text {
+                content: json_str, ..
+            } => Self::parse_and_validate(&json_str, base_config),
+            LLMResponse::ToolCalls { calls: _, .. } => Err(AppError::LlmApi(
                 "Unexpected tool call response from emotion generation".to_string(),
             )),
         }

@@ -43,3 +43,6 @@ export type { Attachment, AttachmentType } from './attachment';
 
 // Plugin types
 export type { PluginInfo, ToolDefinition, ToolCall, ToolResult, CustomToolType, CustomToolRequest } from './plugin';
+
+// Knowledge types
+export type { InjectionMode, KnowledgeEntryMeta } from './knowledge';

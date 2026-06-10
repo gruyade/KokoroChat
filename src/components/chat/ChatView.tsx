@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { MessageSquare, UploadCloud, Wrench, Shield } from 'lucide-react';
+import { MessageSquare, Wrench, Shield } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { useChatStore, useCharacterStore } from '../../stores';
+import { useChatStore, useCharacterStore, useKnowledgeStore } from '../../stores';
+import { useUIStore } from '../../stores/ui.store';
 import { MessageBubble } from './MessageBubble';
 import { MessageInput, type MessageInputRef } from './MessageInput';
 import { StreamingIndicator } from './StreamingIndicator';
@@ -32,8 +33,17 @@ export function shouldAutoScroll(scrollHeight: number, scrollTop: number, client
   return (scrollHeight - scrollTop - clientHeight) <= 200;
 }
 
+/** position が指定 DOM 要素の BoundingRect 内にあるか判定 */
+function isPositionInElement(el: Element, position: { x: number; y: number }): boolean {
+  const rect = el.getBoundingClientRect();
+  return (
+    position.x >= rect.left && position.x <= rect.right &&
+    position.y >= rect.top && position.y <= rect.bottom
+  );
+}
+
 export function ChatView() {
-  const { currentSessionId, messages, isStreaming, isAbortable, streamingContent, error, isTTSGenerating, executingToolName, sendMessage, createSession, fetchHistory, stopGeneration } =
+  const { currentSessionId, messages, isStreaming, isAbortable, streamingContent, isThinking, error, isTTSGenerating, executingToolName, sendMessage, createSession, fetchHistory, stopGeneration } =
     useChatStore();
   const { selectedCharacterId, characters } = useCharacterStore();
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -45,32 +55,85 @@ export function ChatView() {
   const lastSmoothScrollTimeRef = useRef(0);
 
   const [isDragOver, setIsDragOver] = useState(false);
+  const [dragTarget, setDragTarget] = useState<'chat' | 'knowledge' | null>(null);
   const [toolPaneOpen, setToolPaneOpen] = useState(false);
   const [pendingAccessRequests, setPendingAccessRequests] = useState<PendingAccessRequest[]>([]);
   const [paneWidth, setPaneWidth] = useState(320);
   const isResizingRef = useRef(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
-  // Tauri drag-drop イベント: ファイルパスを直接取得
-  useEffect(() => {
-    const unlisten = listen<{ paths: string[] }>('tauri://drag-drop', async (event) => {
-      setIsDragOver(false);
-      for (const path of event.payload.paths) {
-        await messageInputRef.current?.addAttachment(path);
-      }
-    });
-    return () => { unlisten.then(fn => fn()); };
+  const addKnowledge = useKnowledgeStore((s) => s.addKnowledge);
+  const showToast = useUIStore((s) => s.showToast);
+
+  /** ドロップ位置がどのターゲット要素内にあるか判定 */
+  const resolveDropTarget = useCallback((position: { x: number; y: number }): 'chat' | 'knowledge' | null => {
+    // ナレッジ DropZone 判定（data-drop-target="knowledge" 属性で特定）
+    const knowledgeDropZone = document.querySelector('[data-drop-target="knowledge"]');
+    if (knowledgeDropZone && isPositionInElement(knowledgeDropZone, position)) {
+      return 'knowledge';
+    }
+    // チャット入力エリア判定（data-drop-target="chat" 属性で特定）
+    const chatInput = document.querySelector('[data-drop-target="chat"]');
+    if (chatInput && isPositionInElement(chatInput, position)) {
+      return 'chat';
+    }
+    return null;
   }, []);
 
-  // Tauri drag-over / drag-leave イベント: オーバーレイ制御
+  // Tauri drag-drop イベント: ドロップ位置に応じてルーティング
   useEffect(() => {
-    const unlistenOver = listen('tauri://drag-over', () => setIsDragOver(true));
-    const unlistenLeave = listen('tauri://drag-leave', () => setIsDragOver(false));
+    const unlisten = listen<{ paths: string[]; position: { x: number; y: number } }>('tauri://drag-drop', async (event) => {
+      setIsDragOver(false);
+      setDragTarget(null);
+
+      const { paths, position } = event.payload;
+      const target = resolveDropTarget(position);
+
+      if (target === 'knowledge') {
+        const sessionId = useChatStore.getState().currentSessionId;
+        if (!sessionId) return;
+        for (const filePath of paths) {
+          try {
+            const content = await invoke<string>('read_text_file_for_knowledge', { filePath });
+            const fileName = filePath.split(/[\\/]/).pop() ?? filePath;
+            await addKnowledge(sessionId, fileName, content);
+          } catch (err) {
+            const fileName = filePath.split(/[\\/]/).pop() ?? filePath;
+            showToast(`${fileName}: ${err instanceof Error ? err.message : String(err)}`, 'error');
+          }
+        }
+      } else if (target === 'chat') {
+        for (const path of paths) {
+          await messageInputRef.current?.addAttachment(path);
+        }
+      }
+      // target === null → どちらのエリアでもないので何もしない
+    });
+    return () => { unlisten.then(fn => fn()); };
+  }, [resolveDropTarget, addKnowledge, showToast]);
+
+  // Tauri drag-over / drag-leave イベント: ドロップ先に応じたハイライト表示
+  useEffect(() => {
+    const unlistenOver = listen<{ position: { x: number; y: number } }>('tauri://drag-over', (event) => {
+      const pos = event.payload.position;
+      if (pos) {
+        const target = resolveDropTarget(pos);
+        setDragTarget(target);
+        setIsDragOver(target !== null);
+      } else {
+        setIsDragOver(false);
+        setDragTarget(null);
+      }
+    });
+    const unlistenLeave = listen('tauri://drag-leave', () => {
+      setIsDragOver(false);
+      setDragTarget(null);
+    });
     return () => {
       unlistenOver.then(fn => fn());
       unlistenLeave.then(fn => fn());
     };
-  }, []);
+  }, [resolveDropTarget]);
 
   // file_ops:request_access イベントリスナー（常時マウント）
   useEffect(() => {
@@ -120,7 +183,6 @@ export function ChatView() {
   }, [handleResizeMove, handleResizeEnd]);
 
   // スクロールイベントでオートスクロール状態を更新
-  // isProgrammaticScrollRef はscrollイベント経由の更新のみブロック（ユーザー操作イベントはブロックしない）
   const handleScroll = useCallback(() => {
     if (isProgrammaticScrollRef.current) return;
     const container = scrollContainerRef.current;
@@ -132,18 +194,15 @@ export function ChatView() {
     );
   }, []);
 
-  // wheel/touchmoveイベントリスナー: ユーザーが上方向にスクロールした場合、
-  // isProgrammaticScrollRefに関係なく即座にisNearBottomRefをfalseに設定
+  // wheel/touchmoveイベントリスナー
   useEffect(() => {
     const container = scrollContainerRef.current;
     if (!container) return;
 
     const handleWheel = (e: WheelEvent) => {
-      // deltaY > 0 は下方向、deltaY < 0 は上方向
       if (e.deltaY < 0) {
         isNearBottomRef.current = false;
       } else if (e.deltaY > 0) {
-        // 下方向スクロール時は現在位置で判定
         const nearBottom = shouldAutoScroll(
           container.scrollHeight,
           container.scrollTop,
@@ -164,7 +223,6 @@ export function ChatView() {
     const handleTouchMove = (e: TouchEvent) => {
       if (e.touches.length > 0 && lastTouchY !== null) {
         const currentY = e.touches[0].clientY;
-        // タッチが下に動く = コンテンツが上にスクロール（ユーザーがスクロールアップ）
         if (currentY > lastTouchY) {
           isNearBottomRef.current = false;
         }
@@ -180,7 +238,6 @@ export function ChatView() {
       container.removeEventListener('touchstart', handleTouchStart);
       container.removeEventListener('touchmove', handleTouchMove);
     };
-    // currentSessionId を依存に含めることで、セッション選択後にcontainerが出現した際に再登録
   }, [currentSessionId]);
 
   // スクロールイベントリスナー登録
@@ -195,7 +252,6 @@ export function ChatView() {
   const smoothScrollToBottom = useCallback(() => {
     if (!isNearBottomRef.current) return;
 
-    // スロットリング: 前回の呼び出しから150ms以内なら無視
     const now = Date.now();
     if (now - lastSmoothScrollTimeRef.current < 150) return;
     lastSmoothScrollTimeRef.current = now;
@@ -205,7 +261,6 @@ export function ChatView() {
     }
     isProgrammaticScrollRef.current = true;
     rafIdRef.current = requestAnimationFrame(() => {
-      // rAF実行直前に再チェック: スケジュールから実行までの間にユーザーがスクロールアップした場合をキャッチ
       if (!isNearBottomRef.current) {
         isProgrammaticScrollRef.current = false;
         rafIdRef.current = null;
@@ -217,7 +272,6 @@ export function ChatView() {
         top: container.scrollHeight,
         behavior: 'smooth',
       });
-      // smooth scroll完了後にフラグ解除（300ms後）
       setTimeout(() => {
         isProgrammaticScrollRef.current = false;
       }, 300);
@@ -245,20 +299,17 @@ export function ChatView() {
 
   // メッセージロードおよび追加時のスクロール制御
   useEffect(() => {
-    // メッセージがない場合は何もしない
     if (messages.length === 0) {
       prevMessageCountRef.current = 0;
       return;
     }
 
-    // 履歴ロード時（前回0件からN件に増えた初回）は即座に最下部へ
     if (prevMessageCountRef.current === 0) {
       const timer = setTimeout(() => scrollToBottomInstant(), 50);
       prevMessageCountRef.current = messages.length;
       return () => clearTimeout(timer);
     }
 
-    // 通常の新規メッセージ追加時はスムーズスクロール
     if (messages.length !== prevMessageCountRef.current) {
       prevMessageCountRef.current = messages.length;
       if (isNearBottomRef.current) {
@@ -267,14 +318,14 @@ export function ChatView() {
     }
   }, [messages.length, smoothScrollToBottom, scrollToBottomInstant]);
 
-  // ストリーミング中 → オートスクロール有効時のみスムーズ追従
+  // ストリーミング中のオートスクロール
   useEffect(() => {
     if (isStreaming && streamingContent && isNearBottomRef.current) {
       smoothScrollToBottom();
     }
   }, [streamingContent, isStreaming, smoothScrollToBottom]);
 
-  // クリーンアップ: 未処理のrAFをキャンセル
+  // クリーンアップ
   useEffect(() => {
     return () => {
       if (rafIdRef.current !== null) {
@@ -316,14 +367,12 @@ export function ChatView() {
   };
 
   const handleDeleteMessage = async (messageId: string) => {
-    // メッセージ削除後に履歴を再取得
     try {
       await invoke('delete_message', { id: messageId });
       if (currentSessionId) {
         fetchHistory(currentSessionId);
       }
     } catch {
-      // delete_messageコマンドが未実装の場合はローカルから削除
       useChatStore.setState((state) => ({
         messages: state.messages.filter((m) => m.id !== messageId),
       }));
@@ -338,16 +387,6 @@ export function ChatView() {
     <div ref={containerRef} className="relative flex-1 flex overflow-hidden">
       {/* Main chat area */}
       <div className="flex-1 flex flex-col overflow-hidden">
-        {/* Drag-drop overlay */}
-        {isDragOver && (
-          <div className="absolute inset-0 bg-background/80 backdrop-blur-sm z-50 flex items-center justify-center pointer-events-none">
-            <div className="flex flex-col items-center gap-2 text-muted-foreground">
-              <UploadCloud className="h-12 w-12" />
-              <span className="text-sm font-medium">ファイルをドロップして添付</span>
-            </div>
-          </div>
-        )}
-
         {/* Header controls */}
         <div className="flex items-center justify-end px-3 py-1.5 border-b border-border/50">
           <ChatHeaderControls />
@@ -380,7 +419,7 @@ export function ChatView() {
               onDelete={handleDeleteMessage}
             />
           ))}
-          {isStreaming && <StreamingIndicator content={streamingContent} />}
+          {isStreaming && !executingToolName && <StreamingIndicator content={streamingContent} isThinking={isThinking} />}
           {executingToolName && (
             <div className="px-4 py-2">
               <ToolCallIndicator toolName={executingToolName} />
@@ -441,16 +480,18 @@ export function ChatView() {
           </div>
         )}
 
-        {/* Input area */}
-        <MessageInput
-          ref={messageInputRef}
-          onSend={handleSend}
-          disabled={isStreaming || isTTSGenerating}
-          isStreaming={isStreaming}
-          isAbortable={isAbortable}
-          onStop={stopGeneration}
-          isDragOver={isDragOver}
-        />
+        {/* Input area — data-drop-target="chat" でドロップ判定対象 */}
+        <div data-drop-target="chat">
+          <MessageInput
+            ref={messageInputRef}
+            onSend={handleSend}
+            disabled={isStreaming || isTTSGenerating}
+            isStreaming={isStreaming}
+            isAbortable={isAbortable}
+            onStop={stopGeneration}
+            isDragOver={isDragOver && dragTarget === 'chat'}
+          />
+        </div>
       </div>
 
       {/* Tool management pane (right side) with resize handle */}

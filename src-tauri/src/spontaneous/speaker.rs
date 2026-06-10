@@ -225,8 +225,8 @@ impl SpontaneousSpeaker for DefaultSpontaneousSpeaker {
 
                 // レスポンス解析
                 let generated_text = match response {
-                    LLMResponse::Text(text) => text.trim().to_string(),
-                    LLMResponse::ToolCalls(_) => continue,
+                    LLMResponse::Text { content: text, .. } => text.trim().to_string(),
+                    LLMResponse::ToolCalls { calls: _, .. } => continue,
                 };
 
                 // [SKIP]の場合はスキップ
@@ -245,6 +245,7 @@ impl SpontaneousSpeaker for DefaultSpontaneousSpeaker {
                     attachments: None,
                     tool_calls: None,
                     tool_call_id: None,
+                    thinking_content: None,
                     created_at: now,
                 };
 
@@ -333,6 +334,7 @@ mod tests {
                 attachments: None,
                 tool_calls: None,
                 tool_call_id: None,
+                thinking_content: None,
                 created_at: "2024-01-01T00:00:00Z".to_string(),
             },
         };
@@ -367,6 +369,7 @@ mod tests {
                 attachments: None,
                 tool_calls: None,
                 tool_call_id: None,
+                thinking_content: None,
                 created_at: "2024-01-01T10:00:00Z".to_string(),
             },
             ChatMessageRecord {
@@ -377,6 +380,7 @@ mod tests {
                 attachments: None,
                 tool_calls: None,
                 tool_call_id: None,
+                thinking_content: None,
                 created_at: "2024-01-01T10:01:00Z".to_string(),
             },
         ];
@@ -405,6 +409,7 @@ mod tests {
             attachments: None,
             tool_calls: None,
             tool_call_id: None,
+            thinking_content: None,
             created_at: "2024-01-01T10:00:00Z".to_string(),
         }];
 

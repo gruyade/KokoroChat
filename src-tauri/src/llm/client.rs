@@ -1,12 +1,17 @@
 // LLM Client - OpenAI互換API通信
 
 use async_trait::async_trait;
+use log::debug;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::error::AppError;
+use crate::llm::think_tag_buffer::ThinkTagBuffer;
 use crate::models::{LLMProvider, ToolCall, ToolDefinition};
+
+/// Anthropic redacted_thinking ブロック検出時に蓄積するマーカー文字列
+pub const REDACTED_THINKING_MARKER: &str = "[REDACTED_THINKING]";
 
 /// LLMクライアント接続設定
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -204,22 +209,43 @@ pub fn build_anthropic_url(config: &LLMClientConfig) -> String {
 
 /// Gemini APIレスポンスをパースしてLLMResponseを返す
 pub fn parse_gemini_response(body: &Value) -> Result<LLMResponse, AppError> {
-    let text = body["candidates"][0]["content"]["parts"][0]["text"]
-        .as_str()
-        .unwrap_or("")
-        .to_string();
-
-    if text.is_empty() {
-        // candidatesが空またはフィルタされた場合のチェック
-        if body["candidates"].as_array().map_or(true, |c| c.is_empty()) {
-            return Err(AppError::LlmApi(
-                "Gemini response has no candidates (possibly filtered by safety settings)"
-                    .to_string(),
-            ));
-        }
+    let candidates = body["candidates"].as_array();
+    if candidates.map_or(true, |c| c.is_empty()) {
+        return Err(AppError::LlmApi(
+            "Gemini response has no candidates (possibly filtered by safety settings)".to_string(),
+        ));
     }
 
-    Ok(LLMResponse::Text(text))
+    // parts から thought: true のテキストを thinking として抽出し、通常テキストのみ結合
+    let parts = body["candidates"][0]["content"]["parts"].as_array();
+    let (text, thinking) = match parts {
+        Some(parts) => {
+            let text = parts
+                .iter()
+                .filter(|p| p.get("thought").and_then(|v| v.as_bool()) != Some(true))
+                .filter_map(|p| p["text"].as_str())
+                .collect::<Vec<_>>()
+                .join("");
+            let thinking_text = parts
+                .iter()
+                .filter(|p| p.get("thought").and_then(|v| v.as_bool()) == Some(true))
+                .filter_map(|p| p["text"].as_str())
+                .collect::<Vec<_>>()
+                .join("");
+            let thinking = if thinking_text.is_empty() {
+                None
+            } else {
+                Some(thinking_text)
+            };
+            (text, thinking)
+        }
+        None => (String::new(), None),
+    };
+
+    Ok(LLMResponse::Text {
+        content: text,
+        thinking,
+    })
 }
 
 /// Anthropic Messages APIレスポンスをパースしてLLMResponseを返す
@@ -227,12 +253,43 @@ pub fn parse_anthropic_response(body: &Value) -> Result<LLMResponse, AppError> {
     let content = body["content"].as_array().ok_or_else(|| {
         AppError::LlmApi("Invalid Anthropic response: missing 'content' array".to_string())
     })?;
+
+    // thinking / redacted_thinking ブロックからthinking contentを抽出（出現順序維持）
+    let mut thinking_parts: Vec<String> = Vec::new();
+    for block in content.iter() {
+        match block["type"].as_str() {
+            Some("thinking") => {
+                if let Some(text) = block["thinking"].as_str() {
+                    if !text.is_empty() {
+                        thinking_parts.push(text.to_string());
+                    }
+                }
+            }
+            Some("redacted_thinking") => {
+                thinking_parts.push(REDACTED_THINKING_MARKER.to_string());
+            }
+            _ => {}
+        }
+    }
+
+    // type: "text" のブロックのみ抽出（thinking / redacted_thinking / tool_use を除外）
     let text = content
         .iter()
+        .filter(|block| block["type"].as_str() == Some("text"))
         .filter_map(|block| block["text"].as_str())
         .collect::<Vec<_>>()
         .join("");
-    Ok(LLMResponse::Text(text))
+
+    let thinking = if thinking_parts.is_empty() {
+        None
+    } else {
+        Some(thinking_parts.join(""))
+    };
+
+    Ok(LLMResponse::Text {
+        content: text,
+        thinking,
+    })
 }
 
 /// メッセージロール
@@ -258,35 +315,49 @@ pub struct ChatMessage {
     pub images: Option<Vec<String>>,
 }
 
-/// LLMレスポンス — テキストまたはtool_call
+/// LLMレスポンス — テキストまたはtool_call（thinking content付き）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum LLMResponse {
-    Text(String),
-    ToolCalls(Vec<ToolCall>),
+    Text {
+        content: String,
+        thinking: Option<String>,
+    },
+    ToolCalls {
+        calls: Vec<ToolCall>,
+        thinking: Option<String>,
+    },
 }
 
 impl LLMResponse {
     /// テキストを取得（ToolCallsの場合は空文字列を返す）
     pub fn text(&self) -> &str {
         match self {
-            LLMResponse::Text(s) => s,
-            LLMResponse::ToolCalls(_) => "",
+            LLMResponse::Text { content, .. } => content,
+            LLMResponse::ToolCalls { .. } => "",
         }
     }
 
     /// テキストを消費して取得（ToolCallsの場合は空文字列を返す）
     pub fn into_text(self) -> String {
         match self {
-            LLMResponse::Text(s) => s,
-            LLMResponse::ToolCalls(_) => String::new(),
+            LLMResponse::Text { content, .. } => content,
+            LLMResponse::ToolCalls { .. } => String::new(),
         }
     }
 
     /// ToolCallsかどうか
     pub fn is_tool_calls(&self) -> bool {
-        matches!(self, LLMResponse::ToolCalls(_))
+        matches!(self, LLMResponse::ToolCalls { .. })
     }
 }
+
+/// ストリーミングコールバック型
+/// text_callback: 通常テキストチャンク
+/// thinking_callback: thinking/reasoning チャンク
+pub type StreamCallbacks = (
+    Box<dyn Fn(String) + Send>, // text_callback
+    Box<dyn Fn(String) + Send>, // thinking_callback
+);
 
 /// LLMクライアントtrait
 #[async_trait]
@@ -300,14 +371,15 @@ pub trait LLMClient: Send + Sync {
     ) -> Result<LLMResponse, AppError>;
 
     /// ストリーミングチャット補完（コールバックでチャンクを受信）
-    /// テキストチャンクはコールバックで逐次送信し、Tool Callはバッファリングして最終結果として返す。
-    /// 戻り値: LLMResponse::Text(全テキスト) または LLMResponse::ToolCalls(バッファされたツール呼び出し)
+    /// テキストチャンクはcallbacks.0で逐次送信し、Tool Callはバッファリングして最終結果として返す。
+    /// callbacks.1はthinking/reasoningチャンク用。
+    /// 戻り値: LLMResponse::Text { content: 全テキスト, thinking } または LLMResponse::ToolCalls { calls: バッファされたツール呼び出し, thinking }
     async fn chat_stream(
         &self,
         messages: &[ChatMessage],
         config: &LLMClientConfig,
         tools: Option<&[ToolDefinition]>,
-        callback: Box<dyn Fn(String) + Send>,
+        callbacks: StreamCallbacks,
     ) -> Result<LLMResponse, AppError>;
 
     /// 接続テスト
@@ -493,14 +565,63 @@ impl OpenAICompatibleClient {
                         }
                     })
                     .collect();
-                return Ok(LLMResponse::ToolCalls(tool_calls));
+                return Ok(LLMResponse::ToolCalls {
+                    calls: tool_calls,
+                    thinking: None,
+                });
             }
         }
 
-        // テキストレスポンス
-        let content = message["content"].as_str().unwrap_or("").to_string();
+        // テキストレスポンス（reasoning_content フィールドは無視）
+        let content = message["content"].as_str().unwrap_or("");
+        let cleaned = Self::strip_think_tags(content);
 
-        Ok(LLMResponse::Text(content))
+        Ok(LLMResponse::Text {
+            content: cleaned,
+            thinking: None,
+        })
+    }
+
+    /// `<think>...</think>` タグとその内容を除去する（非ストリーミング用）。
+    /// 改行を跨ぐ thinking ブロック、閉じタグのみ残っているケース、
+    /// 未閉じの開始タグ以降の全除去に対応。
+    fn strip_think_tags(s: &str) -> String {
+        let mut result = String::new();
+        let mut remaining = s;
+
+        // 閉じタグだけ先頭に残っているケース（前のレスポンスの think が跨いだ等）
+        if let Some(end) = remaining.find("</think>") {
+            if remaining[..end].find("<think>").is_none() {
+                remaining = &remaining[end + "</think>".len()..];
+            }
+        }
+
+        loop {
+            match remaining.find("<think>") {
+                Some(start) => {
+                    // 開始タグの前までを結果に追加
+                    result.push_str(&remaining[..start]);
+                    let after_open = &remaining[start + "<think>".len()..];
+                    match after_open.find("</think>") {
+                        Some(end) => {
+                            // 完結した think ブロック → スキップして続行
+                            remaining = &after_open[end + "</think>".len()..];
+                        }
+                        None => {
+                            // 閉じタグなし → 開始タグ以降を全て除去して終了
+                            break;
+                        }
+                    }
+                }
+                None => {
+                    // タグなし → 残り全てを結果に追加
+                    result.push_str(remaining);
+                    break;
+                }
+            }
+        }
+
+        result
     }
 
     /// SSEストリームからテキストをパース（OpenAI形式）
@@ -767,9 +888,11 @@ impl LLMClient for OpenAICompatibleClient {
         messages: &[ChatMessage],
         config: &LLMClientConfig,
         tools: Option<&[ToolDefinition]>,
-        callback: Box<dyn Fn(String) + Send>,
+        callbacks: StreamCallbacks,
     ) -> Result<LLMResponse, AppError> {
         let strategy = resolve_api_strategy(config);
+        let callback = callbacks.0;
+        let thinking_callback = callbacks.1;
 
         match strategy {
             ApiStrategy::Gemini => {
@@ -796,6 +919,7 @@ impl LLMClient for OpenAICompatibleClient {
                 }
 
                 let mut full_text = String::new();
+                let mut full_thinking = String::new();
                 let mut tool_calls: Vec<ToolCall> = Vec::new();
                 let bytes = response.bytes().await?;
                 let text = String::from_utf8_lossy(&bytes);
@@ -806,13 +930,14 @@ impl LLMClient for OpenAICompatibleClient {
                         continue;
                     }
 
-                    // Gemini: functionCall in parts を検出
+                    // Gemini: parts を解析（thinking part 検出 + functionCall 検出）
                     if let Some(data) = line.strip_prefix("data: ") {
                         if let Ok(json) = serde_json::from_str::<Value>(data) {
                             if let Some(parts) =
                                 json["candidates"][0]["content"]["parts"].as_array()
                             {
                                 for part in parts {
+                                    // functionCall 検出
                                     if let Some(fc) = part.get("functionCall") {
                                         let name = fc["name"].as_str().unwrap_or("").to_string();
                                         let args = fc
@@ -825,22 +950,55 @@ impl LLMClient for OpenAICompatibleClient {
                                             arguments: args,
                                             context: None,
                                         });
+                                        continue;
+                                    }
+
+                                    // Thinking part（thought: true フラグ）→ thinking_callback で通知
+                                    if part.get("thought").and_then(|v| v.as_bool()) == Some(true) {
+                                        if let Some(thought_text) = part["text"].as_str() {
+                                            if !thought_text.is_empty() {
+                                                full_thinking.push_str(thought_text);
+                                                thinking_callback(thought_text.to_string());
+                                            }
+                                        }
+                                        continue;
+                                    }
+
+                                    // 通常テキストパーツ
+                                    if let Some(text_chunk) = part["text"].as_str() {
+                                        if !text_chunk.is_empty() {
+                                            full_text.push_str(text_chunk);
+                                            callback(text_chunk.to_string());
+                                        }
                                     }
                                 }
+                                continue;
                             }
                         }
                     }
 
+                    // フォールバック: parse_gemini_sse_line（parts ベースで処理できなかったケース）
                     if let Some(chunk) = Self::parse_gemini_sse_line(line) {
                         full_text.push_str(&chunk);
                         callback(chunk);
                     }
                 }
 
-                if !tool_calls.is_empty() {
-                    Ok(LLMResponse::ToolCalls(tool_calls))
+                let thinking = if full_thinking.is_empty() {
+                    None
                 } else {
-                    Ok(LLMResponse::Text(full_text))
+                    Some(full_thinking)
+                };
+                if !tool_calls.is_empty() {
+                    Ok(LLMResponse::ToolCalls {
+                        calls: tool_calls,
+                        thinking,
+                    })
+                } else {
+                    Ok(LLMResponse::Text {
+                        content: full_text,
+                        thinking,
+                    })
                 }
             }
             ApiStrategy::Anthropic => {
@@ -870,7 +1028,11 @@ impl LLMClient for OpenAICompatibleClient {
                 }
 
                 let mut full_text = String::new();
+                let mut full_thinking = String::new();
                 let mut tool_buffer = AnthropicToolCallBuffer::new();
+                // Thinking ブロックのインデックスを追跡（自動判定）
+                let mut thinking_block_indices: std::collections::HashSet<usize> =
+                    std::collections::HashSet::new();
                 let bytes = response.bytes().await?;
                 let text = String::from_utf8_lossy(&bytes);
 
@@ -880,7 +1042,7 @@ impl LLMClient for OpenAICompatibleClient {
                         continue;
                     }
 
-                    // Tool Call バッファリング処理
+                    // Tool Call & Thinking ブロック処理
                     if let Some(data) = line.strip_prefix("data: ") {
                         if let Ok(json) = serde_json::from_str::<Value>(data) {
                             let event_type = json["type"].as_str().unwrap_or("");
@@ -889,24 +1051,69 @@ impl LLMClient for OpenAICompatibleClient {
                                 "content_block_start" => {
                                     let index = json["index"].as_u64().unwrap_or(0) as usize;
                                     let content_block = &json["content_block"];
-                                    if content_block["type"].as_str() == Some("tool_use") {
-                                        let id =
-                                            content_block["id"].as_str().unwrap_or("").to_string();
-                                        let name = content_block["name"]
-                                            .as_str()
-                                            .unwrap_or("")
-                                            .to_string();
-                                        tool_buffer.process_block_start(index, &id, &name);
-                                        continue;
+                                    let block_type = content_block["type"].as_str().unwrap_or("");
+
+                                    match block_type {
+                                        "tool_use" => {
+                                            let id = content_block["id"]
+                                                .as_str()
+                                                .unwrap_or("")
+                                                .to_string();
+                                            let name = content_block["name"]
+                                                .as_str()
+                                                .unwrap_or("")
+                                                .to_string();
+                                            tool_buffer.process_block_start(index, &id, &name);
+                                        }
+                                        "thinking" => {
+                                            thinking_block_indices.insert(index);
+                                        }
+                                        "redacted_thinking" => {
+                                            thinking_block_indices.insert(index);
+                                            // redacted_thinking ブロック検出時にマーカーを即座に通知
+                                            let marker = REDACTED_THINKING_MARKER.to_string();
+                                            full_thinking.push_str(&marker);
+                                            thinking_callback(marker);
+                                        }
+                                        _ => {}
                                     }
+                                    continue;
                                 }
                                 "content_block_delta" => {
                                     let index = json["index"].as_u64().unwrap_or(0) as usize;
                                     let delta = &json["delta"];
-                                    if delta["type"].as_str() == Some("input_json_delta") {
-                                        let partial = delta["partial_json"].as_str().unwrap_or("");
-                                        tool_buffer.process_input_delta(index, partial);
-                                        continue;
+                                    let delta_type = delta["type"].as_str().unwrap_or("");
+
+                                    match delta_type {
+                                        "input_json_delta" => {
+                                            let partial =
+                                                delta["partial_json"].as_str().unwrap_or("");
+                                            tool_buffer.process_input_delta(index, partial);
+                                            continue;
+                                        }
+                                        "thinking_delta" => {
+                                            // thinking ブロックのテキストデルタを thinking_callback で通知
+                                            if let Some(thinking_text) = delta["thinking"].as_str()
+                                            {
+                                                if !thinking_text.is_empty() {
+                                                    full_thinking.push_str(thinking_text);
+                                                    thinking_callback(thinking_text.to_string());
+                                                }
+                                            }
+                                            continue;
+                                        }
+                                        "signature_delta" => {
+                                            // signature はスキップ
+                                            continue;
+                                        }
+                                        "text_delta" => {
+                                            // Thinking ブロックに属するテキストはスキップ
+                                            if thinking_block_indices.contains(&index) {
+                                                continue;
+                                            }
+                                            // 通常テキスト: フォールスルーして parse_anthropic_sse_line で処理
+                                        }
+                                        _ => {}
                                     }
                                 }
                                 _ => {}
@@ -920,10 +1127,22 @@ impl LLMClient for OpenAICompatibleClient {
                     }
                 }
 
-                if tool_buffer.has_tool_calls() {
-                    Ok(LLMResponse::ToolCalls(tool_buffer.into_tool_calls()))
+                let thinking = if full_thinking.is_empty() {
+                    None
                 } else {
-                    Ok(LLMResponse::Text(full_text))
+                    Some(full_thinking)
+                };
+
+                if tool_buffer.has_tool_calls() {
+                    Ok(LLMResponse::ToolCalls {
+                        calls: tool_buffer.into_tool_calls(),
+                        thinking,
+                    })
+                } else {
+                    Ok(LLMResponse::Text {
+                        content: full_text,
+                        thinking,
+                    })
                 }
             }
             ApiStrategy::OpenAI => {
@@ -950,8 +1169,10 @@ impl LLMClient for OpenAICompatibleClient {
                 }
 
                 let mut full_text = String::new();
-                let mut buffer = String::new();
+                let mut thinking_buffer = String::new();
                 let mut tool_buffer = OpenAIToolCallBuffer::new();
+                // <think>タグベースのthinking content検出用バッファ
+                let mut think_tag_buffer = ThinkTagBuffer::new();
 
                 let bytes = response.bytes().await?;
                 let text = String::from_utf8_lossy(&bytes);
@@ -962,31 +1183,158 @@ impl LLMClient for OpenAICompatibleClient {
                         continue;
                     }
 
-                    // Tool Call バッファリング処理
+                    // Tool Call バッファリング & reasoning 検出処理
                     if let Some(data) = line.strip_prefix("data: ") {
+                        debug!(
+                            "[SSE raw] data: {}",
+                            crate::utils::safe_truncate_bytes(data, 500)
+                        );
                         if data.trim() != "[DONE]" {
                             if let Ok(json) = serde_json::from_str::<Value>(data) {
                                 let delta = &json["choices"][0]["delta"];
+
+                                // Tool Call 検出
                                 if let Some(tool_calls_arr) = delta["tool_calls"].as_array() {
                                     tool_buffer.process_delta(tool_calls_arr);
                                     continue;
                                 }
+
+                                // reasoning_content / reasoning フィールドの検出
+                                // 対応プロバイダー: OpenAI o3/o4-mini, DeepSeek, LM Studio等
+                                let reasoning_chunk = delta
+                                    .get("reasoning_content")
+                                    .and_then(|v| v.as_str())
+                                    .filter(|s| !s.is_empty())
+                                    .or_else(|| {
+                                        delta
+                                            .get("reasoning")
+                                            .and_then(|v| v.as_str())
+                                            .filter(|s| !s.is_empty())
+                                    });
+
+                                if let Some(reasoning) = reasoning_chunk {
+                                    // thinking_callbackで通知し、バッファに蓄積
+                                    thinking_callback(reasoning.to_string());
+                                    thinking_buffer.push_str(reasoning);
+
+                                    // 同一チャンクに content が存在する場合はテキストとして処理続行
+                                    let has_content = delta
+                                        .get("content")
+                                        .and_then(|v| v.as_str())
+                                        .is_some_and(|s| !s.is_empty());
+                                    if !has_content {
+                                        continue;
+                                    }
+                                }
                             }
+                        } else {
+                            debug!("[SSE] received [DONE]");
                         }
                     }
 
                     if let Some(chunk) = Self::parse_sse_line(line) {
-                        full_text.push_str(&chunk);
-                        buffer.push_str(&chunk);
-                        callback(buffer.clone());
-                        buffer.clear();
+                        // <think>...</think> タグによるthinking content検出
+                        // ThinkTagBufferを使用してチャンク境界をまたぐタグに対応
+                        let (text_parts, thinking_parts) = think_tag_buffer.process_chunk(&chunk);
+
+                        // デバッグログ: ストリーム受信内容の追跡
+                        if !chunk.is_empty() {
+                            debug!(
+                                "[ThinkTagBuffer] input chunk({} bytes, inside_think={}): {:?}",
+                                chunk.len(),
+                                think_tag_buffer.is_inside_think(),
+                                crate::utils::safe_truncate_bytes(&chunk, 200)
+                            );
+                        }
+                        if !thinking_parts.is_empty() {
+                            debug!(
+                                "[ThinkTagBuffer] -> thinking_parts: {:?}",
+                                thinking_parts
+                                    .iter()
+                                    .map(|s| crate::utils::safe_truncate_bytes(s, 100))
+                                    .collect::<Vec<_>>()
+                            );
+                        }
+                        if !text_parts.is_empty() {
+                            debug!(
+                                "[ThinkTagBuffer] -> text_parts: {:?}",
+                                text_parts
+                                    .iter()
+                                    .map(|s| crate::utils::safe_truncate_bytes(s, 100))
+                                    .collect::<Vec<_>>()
+                            );
+                        }
+                        if text_parts.is_empty() && thinking_parts.is_empty() && !chunk.is_empty() {
+                            debug!("[ThinkTagBuffer] -> ALL PENDING (nothing emitted!) inside_think={}", think_tag_buffer.is_inside_think());
+                        }
+
+                        for thinking_part in thinking_parts {
+                            thinking_callback(thinking_part.clone());
+                            thinking_buffer.push_str(&thinking_part);
+                        }
+
+                        for text_part in text_parts {
+                            full_text.push_str(&text_part);
+                            callback(text_part);
+                        }
                     }
                 }
 
-                if tool_buffer.has_tool_calls() {
-                    Ok(LLMResponse::ToolCalls(tool_buffer.into_tool_calls()))
+                // ストリーム終了: ThinkTagBufferのフラッシュ
+                let (flush_text_parts, flush_thinking_parts) = think_tag_buffer.flush();
+                if !flush_text_parts.is_empty() || !flush_thinking_parts.is_empty() {
+                    debug!(
+                        "[ThinkTagBuffer] FLUSH: text_parts={:?}, thinking_parts={:?}",
+                        flush_text_parts, flush_thinking_parts
+                    );
+                }
+                for thinking_part in flush_thinking_parts {
+                    thinking_callback(thinking_part.clone());
+                    thinking_buffer.push_str(&thinking_part);
+                }
+                for text_part in flush_text_parts {
+                    full_text.push_str(&text_part);
+                    callback(text_part);
+                }
+
+                let thinking = if thinking_buffer.is_empty() {
+                    None
                 } else {
-                    Ok(LLMResponse::Text(full_text))
+                    Some(thinking_buffer)
+                };
+
+                debug!(
+                    "[OpenAI stream] DONE. full_text({} bytes): {:?}",
+                    full_text.len(),
+                    crate::utils::safe_truncate_bytes(&full_text, 300)
+                );
+                debug!(
+                    "[OpenAI stream] thinking: {:?}",
+                    thinking
+                        .as_ref()
+                        .map(|s| crate::utils::safe_truncate_bytes(s, 200))
+                );
+
+                // Thinking-onlyレスポンス検出: 本文が空でthinkingのみの場合はエラーを返す
+                if !tool_buffer.has_tool_calls()
+                    && full_text.trim().is_empty()
+                    && thinking.is_some()
+                {
+                    return Err(AppError::LlmApi(
+                        "LLMの応答に本文が含まれていません（思考のみ）。モデルの最大トークン数（max_tokens）を増やすか、コンテキスト長の設定を見直してください。".to_string()
+                    ));
+                }
+
+                if tool_buffer.has_tool_calls() {
+                    Ok(LLMResponse::ToolCalls {
+                        calls: tool_buffer.into_tool_calls(),
+                        thinking,
+                    })
+                } else {
+                    Ok(LLMResponse::Text {
+                        content: full_text,
+                        thinking,
+                    })
                 }
             }
         }
@@ -1324,7 +1672,9 @@ mod tests {
 
         let result = OpenAICompatibleClient::parse_response(&response).unwrap();
         match result {
-            LLMResponse::Text(text) => assert_eq!(text, "Hello! How can I help you?"),
+            LLMResponse::Text { content: text, .. } => {
+                assert_eq!(text, "Hello! How can I help you?")
+            }
             _ => panic!("Expected LLMResponse::Text"),
         }
     }
@@ -1350,7 +1700,7 @@ mod tests {
 
         let result = OpenAICompatibleClient::parse_response(&response).unwrap();
         match result {
-            LLMResponse::ToolCalls(calls) => {
+            LLMResponse::ToolCalls { calls, .. } => {
                 assert_eq!(calls.len(), 1);
                 assert_eq!(calls[0].id, "call_abc123");
                 assert_eq!(calls[0].name, "calculator");
@@ -1476,7 +1826,10 @@ mod tests {
 
     #[test]
     fn test_llm_response_text_serialization() {
-        let resp = LLMResponse::Text("Hello".to_string());
+        let resp = LLMResponse::Text {
+            content: "Hello".to_string(),
+            thinking: None,
+        };
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("Text"));
         assert!(json.contains("Hello"));
@@ -1484,12 +1837,15 @@ mod tests {
 
     #[test]
     fn test_llm_response_tool_calls_serialization() {
-        let resp = LLMResponse::ToolCalls(vec![ToolCall {
-            id: "call_1".to_string(),
-            name: "search".to_string(),
-            arguments: serde_json::json!({"query": "test"}),
-            context: None,
-        }]);
+        let resp = LLMResponse::ToolCalls {
+            calls: vec![ToolCall {
+                id: "call_1".to_string(),
+                name: "search".to_string(),
+                arguments: serde_json::json!({"query": "test"}),
+                context: None,
+            }],
+            thinking: None,
+        };
         let json = serde_json::to_string(&resp).unwrap();
         assert!(json.contains("ToolCalls"));
         assert!(json.contains("search"));
@@ -1677,7 +2033,7 @@ mod tests {
 
         let result = OpenAICompatibleClient::parse_response(&response).unwrap();
         match result {
-            LLMResponse::ToolCalls(calls) => {
+            LLMResponse::ToolCalls { calls, .. } => {
                 assert_eq!(calls.len(), 2);
                 assert_eq!(calls[0].name, "search");
                 assert_eq!(calls[1].name, "calculator");
@@ -1865,7 +2221,7 @@ mod tests {
 
         let result = parse_gemini_response(&body).unwrap();
         match result {
-            LLMResponse::Text(text) => assert_eq!(text, "Hello from Gemini!"),
+            LLMResponse::Text { content: text, .. } => assert_eq!(text, "Hello from Gemini!"),
             _ => panic!("Expected LLMResponse::Text"),
         }
     }
@@ -1909,7 +2265,7 @@ mod tests {
 
         let result = parse_gemini_response(&body).unwrap();
         match result {
-            LLMResponse::Text(text) => assert_eq!(text, ""),
+            LLMResponse::Text { content: text, .. } => assert_eq!(text, ""),
             _ => panic!("Expected LLMResponse::Text"),
         }
     }
@@ -1930,7 +2286,7 @@ mod tests {
 
         let result = parse_anthropic_response(&body).unwrap();
         match result {
-            LLMResponse::Text(text) => assert_eq!(text, "Hello from Claude!"),
+            LLMResponse::Text { content: text, .. } => assert_eq!(text, "Hello from Claude!"),
             _ => panic!("Expected LLMResponse::Text"),
         }
     }
@@ -1950,7 +2306,7 @@ mod tests {
 
         let result = parse_anthropic_response(&body).unwrap();
         match result {
-            LLMResponse::Text(text) => assert_eq!(text, "First part. Second part."),
+            LLMResponse::Text { content: text, .. } => assert_eq!(text, "First part. Second part."),
             _ => panic!("Expected LLMResponse::Text"),
         }
     }
@@ -1981,7 +2337,7 @@ mod tests {
 
         let result = parse_anthropic_response(&body).unwrap();
         match result {
-            LLMResponse::Text(text) => assert_eq!(text, ""),
+            LLMResponse::Text { content: text, .. } => assert_eq!(text, ""),
             _ => panic!("Expected LLMResponse::Text"),
         }
     }
@@ -2003,7 +2359,7 @@ mod tests {
 
         let result = parse_anthropic_response(&body).unwrap();
         match result {
-            LLMResponse::Text(text) => {
+            LLMResponse::Text { content: text, .. } => {
                 assert_eq!(text, "Let me search for that. Here are the results.")
             }
             _ => panic!("Expected LLMResponse::Text"),
@@ -2098,5 +2454,169 @@ mod tests {
         let line = "event: content_block_delta";
         let result = OpenAICompatibleClient::parse_anthropic_sse_line(line);
         assert_eq!(result, None);
+    }
+
+    // --- strip_think_tags tests ---
+
+    #[test]
+    fn test_strip_think_tags_basic() {
+        let input = "<think>I need to think about this</think>Hello!";
+        assert_eq!(OpenAICompatibleClient::strip_think_tags(input), "Hello!");
+    }
+
+    #[test]
+    fn test_strip_think_tags_multiple() {
+        let input = "A<think>thought1</think>B<think>thought2</think>C";
+        assert_eq!(OpenAICompatibleClient::strip_think_tags(input), "ABC");
+    }
+
+    #[test]
+    fn test_strip_think_tags_multiline() {
+        let input = "<think>\nline1\nline2\n</think>Result";
+        assert_eq!(OpenAICompatibleClient::strip_think_tags(input), "Result");
+    }
+
+    #[test]
+    fn test_strip_think_tags_unclosed() {
+        let input = "Before<think>still thinking...";
+        assert_eq!(OpenAICompatibleClient::strip_think_tags(input), "Before");
+    }
+
+    #[test]
+    fn test_strip_think_tags_close_only() {
+        // 閉じタグだけ先頭に残っているケース（前レスポンスから跨いだ）
+        let input = "thinking content</think>Actual response";
+        assert_eq!(
+            OpenAICompatibleClient::strip_think_tags(input),
+            "Actual response"
+        );
+    }
+
+    #[test]
+    fn test_strip_think_tags_no_tags() {
+        let input = "Normal text without any tags";
+        assert_eq!(
+            OpenAICompatibleClient::strip_think_tags(input),
+            "Normal text without any tags"
+        );
+    }
+
+    #[test]
+    fn test_strip_think_tags_empty() {
+        assert_eq!(OpenAICompatibleClient::strip_think_tags(""), "");
+    }
+
+    #[test]
+    fn test_strip_think_tags_only_thinking() {
+        let input = "<think>All thinking no output</think>";
+        assert_eq!(OpenAICompatibleClient::strip_think_tags(input), "");
+    }
+
+    // --- parse_response with reasoning_content tests ---
+
+    #[test]
+    fn test_parse_response_with_reasoning_content() {
+        // OpenAI o3/o4-mini 形式: reasoning_content フィールドを無視して content のみ抽出
+        let response = serde_json::json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "The answer is 42.",
+                    "reasoning_content": "Let me think step by step..."
+                }
+            }]
+        });
+
+        let result = OpenAICompatibleClient::parse_response(&response).unwrap();
+        match result {
+            LLMResponse::Text { content: text, .. } => assert_eq!(text, "The answer is 42."),
+            _ => panic!("Expected LLMResponse::Text"),
+        }
+    }
+
+    #[test]
+    fn test_parse_response_content_with_think_tags_and_reasoning() {
+        // LM Studio: content に <think> タグ混入 + reasoning_content も存在するケース
+        let response = serde_json::json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "<think>internal monologue</think>Final answer.",
+                    "reasoning_content": "step by step"
+                }
+            }]
+        });
+
+        let result = OpenAICompatibleClient::parse_response(&response).unwrap();
+        match result {
+            LLMResponse::Text { content: text, .. } => assert_eq!(text, "Final answer."),
+            _ => panic!("Expected LLMResponse::Text"),
+        }
+    }
+
+    // --- Gemini thinking part filter tests ---
+
+    #[test]
+    fn test_parse_gemini_response_filters_thinking_parts() {
+        let body = serde_json::json!({
+            "candidates": [{
+                "content": {
+                    "parts": [
+                        {"text": "Let me think...", "thought": true},
+                        {"text": "The answer is 42."}
+                    ],
+                    "role": "model"
+                },
+                "finishReason": "STOP"
+            }]
+        });
+
+        let result = parse_gemini_response(&body).unwrap();
+        match result {
+            LLMResponse::Text { content: text, .. } => assert_eq!(text, "The answer is 42."),
+            _ => panic!("Expected LLMResponse::Text"),
+        }
+    }
+
+    // --- Anthropic thinking block filter tests ---
+
+    #[test]
+    fn test_parse_anthropic_response_filters_thinking_blocks() {
+        let body = serde_json::json!({
+            "id": "msg_think",
+            "type": "message",
+            "role": "assistant",
+            "content": [
+                {"type": "thinking", "thinking": "Let me reason about this..."},
+                {"type": "text", "text": "Here is my answer."}
+            ],
+            "stop_reason": "end_turn"
+        });
+
+        let result = parse_anthropic_response(&body).unwrap();
+        match result {
+            LLMResponse::Text { content: text, .. } => assert_eq!(text, "Here is my answer."),
+            _ => panic!("Expected LLMResponse::Text"),
+        }
+    }
+
+    #[test]
+    fn test_parse_anthropic_response_filters_redacted_thinking() {
+        let body = serde_json::json!({
+            "id": "msg_redacted",
+            "type": "message",
+            "role": "assistant",
+            "content": [
+                {"type": "redacted_thinking", "data": "encrypted_data_here"},
+                {"type": "text", "text": "My response."}
+            ],
+            "stop_reason": "end_turn"
+        });
+
+        let result = parse_anthropic_response(&body).unwrap();
+        match result {
+            LLMResponse::Text { content: text, .. } => assert_eq!(text, "My response."),
+            _ => panic!("Expected LLMResponse::Text"),
+        }
     }
 }

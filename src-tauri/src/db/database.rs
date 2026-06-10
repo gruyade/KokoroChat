@@ -60,6 +60,11 @@ impl Database {
     fn run_migrations(&self) -> Result<(), AppError> {
         self.conn.execute_batch(migrations::create_tables_sql())?;
         self.conn.execute_batch(migrations::create_indexes_sql())?;
+        // カラム追加マイグレーション（既にカラムが存在する場合はエラーを無視）
+        let _ = self.conn.execute(
+            "ALTER TABLE chat_messages ADD COLUMN thinking_content TEXT",
+            [],
+        );
         Ok(())
     }
 }

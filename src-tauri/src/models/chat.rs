@@ -26,6 +26,8 @@ pub struct ChatMessageRecord {
     pub tool_calls: Option<Vec<ToolCall>>,
     /// tool結果のtool_call参照ID（role=tool時）
     pub tool_call_id: Option<String>,
+    /// LLMが返したthinking/reasoning content
+    pub thinking_content: Option<String>,
     pub created_at: String,
 }
 

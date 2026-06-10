@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { Bot, User, Sparkles, Wrench, Copy, RefreshCw, Trash2, Info, Pencil, Volume2, ChevronRight, ChevronDown } from 'lucide-react';
 import { invoke } from '@tauri-apps/api/core';
 import type { ChatMessageRecord } from '../../types';
@@ -6,6 +6,7 @@ import type { ToolCall } from '../../types/plugin';
 import { EditableMessage } from './EditableMessage';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { ToolResultRenderer } from './ToolResultRenderer';
+import { ThinkingSection } from './ThinkingSection';
 import { useChatStore, useCharacterStore, useConfigStore } from '../../stores';
 import { useAudioStore } from '../../hooks/useAudio';
 import { AvatarImage } from '../common/AvatarImage';
@@ -52,6 +53,96 @@ function getRoleConfig(role: ChatMessageRecord['role']) {
         label: '',
       };
   }
+}
+
+/** 純粋関数: メッセージコンテンツを前処理する */
+function prepareContent(message: ChatMessageRecord) {
+  const isSystemMessage =
+    message.role === 'user' && message.content.startsWith('[SYSTEM] ');
+  const rawContent = isSystemMessage ? message.content.slice(9) : message.content;
+  // 《》で囲まれた地の文マーカーをイタリック記法に変換
+  const displayContent = rawContent.replace(/《([^》]*)》/g, '*$1*');
+  return { isSystemMessage, displayContent };
+}
+
+/** ホバーアクションボタン — 共通スタイル */
+function ActionButton({
+  onClick,
+  disabled,
+  title,
+  destructive = false,
+  children,
+}: {
+  onClick?: () => void;
+  disabled?: boolean;
+  title?: string;
+  destructive?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      className={`p-1 rounded text-muted-foreground transition-colors disabled:opacity-50 ${
+        destructive
+          ? 'hover:bg-destructive/10 hover:text-destructive'
+          : 'hover:bg-muted hover:text-foreground'
+      }`}
+      title={title}
+    >
+      {children}
+    </button>
+  );
+}
+
+/** ホバー時に表示するアクションバー */
+function MessageActionBar({
+  align = 'start',
+  children,
+}: {
+  align?: 'start' | 'end';
+  children: ReactNode;
+}) {
+  return (
+    <div
+      className={`flex items-center gap-0.5 h-6 overflow-visible ${
+        align === 'end' ? 'justify-end' : ''
+      }`}
+    >
+      <div className="flex items-center gap-0.5 transition-all pointer-events-auto opacity-0 invisible group-hover:opacity-100 group-hover:visible">
+        {children}
+      </div>
+    </div>
+  );
+}
+
+/** 添付ファイル一覧 */
+function AttachmentList({
+  attachments,
+}: {
+  attachments: NonNullable<ChatMessageRecord['attachments']>;
+}) {
+  return (
+    <div className="flex flex-col gap-1 mt-1">
+      {attachments.map((att, i) =>
+        att.attachment_type === 'image' && att.base64_data ? (
+          <img
+            key={i}
+            src={`data:image/png;base64,${att.base64_data}`}
+            alt={att.file_name}
+            className="max-w-[240px] max-h-[180px] rounded-md border border-border object-contain"
+          />
+        ) : (
+          <span
+            key={i}
+            className="inline-flex items-center gap-1 rounded bg-muted px-2 py-0.5 text-xs text-muted-foreground"
+          >
+            📎 {att.file_name}
+          </span>
+        )
+      )}
+    </div>
+  );
 }
 
 /** 折り畳み可能なツール呼び出し表示（アシスタントメッセージ内） */
@@ -118,25 +209,24 @@ export function MessageBubble({ message, onRegenerate, onDelete }: MessageBubble
   const config = getRoleConfig(message.role);
   const [copied, setCopied] = useState(false);
   const [ttsLoading, setTtsLoading] = useState(false);
-  const { editingMessageId, setEditingMessage, editAndResend } = useChatStore();
+  const { editingMessageId, setEditingMessage, editAndResend, isStreaming: storeIsStreaming, streamingThinkingContent, messages: storeMessages } = useChatStore();
   const { selectedCharacterId, characters } = useCharacterStore();
   const { config: appConfig } = useConfigStore();
   const ttsEnabled = appConfig?.tts?.enabled ?? false;
   const selectedCharacter = characters.find((c) => c.id === selectedCharacterId);
 
-  const isEditing = editingMessageId === message.id;
+  // このメッセージがストリーミング中の最後のアシスタントメッセージかどうか判定
+  const isCurrentlyStreaming = storeIsStreaming && message.role === 'assistant' &&
+    storeMessages.length > 0 && storeMessages[storeMessages.length - 1]?.id === message.id;
 
-  // [SYSTEM]プレフィックス付きメッセージはシステムメッセージとして表示
-  const isSystemMessage = message.role === 'user' && message.content.startsWith('[SYSTEM] ');
+  const isEditing = editingMessageId === message.id;
 
   // role=tool かつ tool_call_id を持つメッセージは折り畳みツール結果として表示
   if (message.role === 'tool' && message.tool_call_id) {
     return <CollapsibleToolResult message={message} />;
   }
 
-  const rawContent = isSystemMessage ? message.content.slice(9) : message.content;
-  // 《》で囲まれた地の文マーカーを除去して表示（イタリック表示に変換）
-  const displayContent = rawContent.replace(/《([^》]*)》/g, '*$1*');
+  const { isSystemMessage, displayContent } = prepareContent(message);
 
   const handleCopy = async () => {
     await navigator.clipboard.writeText(displayContent);
@@ -208,27 +298,17 @@ export function MessageBubble({ message, onRegenerate, onDelete }: MessageBubble
             <Info className="h-3 w-3" />
             <span>{displayContent}</span>
           </div>
-          {/* Action buttons — 通常メッセージと同じ下部配置 */}
-          <div className="flex items-center gap-0.5 h-6 overflow-visible justify-end">
-            <div className="flex items-center gap-0.5 transition-all pointer-events-auto opacity-0 invisible group-hover:opacity-100 group-hover:visible">
-              <button
-                onClick={handleEdit}
-                className="p-1 rounded text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
-                title="編集"
-              >
-                <Pencil className="h-3.5 w-3.5" />
-              </button>
-              {onDelete && (
-                <button
-                  onClick={handleDelete}
-                  className="p-1 rounded text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
-                  title="削除"
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                </button>
-              )}
-            </div>
-          </div>
+          {/* Action buttons */}
+          <MessageActionBar align="end">
+            <ActionButton onClick={handleEdit} title="編集">
+              <Pencil className="h-3.5 w-3.5" />
+            </ActionButton>
+            {onDelete && (
+              <ActionButton onClick={handleDelete} title="削除" destructive>
+                <Trash2 className="h-3.5 w-3.5" />
+              </ActionButton>
+            )}
+          </MessageActionBar>
         </div>
       </div>
     );
@@ -269,6 +349,14 @@ export function MessageBubble({ message, onRegenerate, onDelete }: MessageBubble
             />
           ) : (
             <>
+              {/* Thinking Section: ストリーミング中の最後のメッセージ */}
+              {isCurrentlyStreaming && streamingThinkingContent && (
+                <ThinkingSection thinkingContent={streamingThinkingContent} isStreaming={true} />
+              )}
+              {/* Thinking Section: 履歴メッセージ */}
+              {!isCurrentlyStreaming && message.thinking_content && (
+                <ThinkingSection thinkingContent={message.thinking_content} />
+              )}
               {/* テキストが空でない場合のみバブルを表示 */}
               {message.content.trim() !== '' && (
                 <div className={`rounded-lg px-3 py-2 text-sm ${config.bubble}`}>
@@ -287,25 +375,7 @@ export function MessageBubble({ message, onRegenerate, onDelete }: MessageBubble
 
           {/* Attachments */}
           {message.attachments && message.attachments.length > 0 && (
-            <div className="flex flex-col gap-1 mt-1">
-              {message.attachments.map((att, i) => (
-                att.attachment_type === 'image' && att.base64_data ? (
-                  <img
-                    key={i}
-                    src={`data:image/png;base64,${att.base64_data}`}
-                    alt={att.file_name}
-                    className="max-w-[240px] max-h-[180px] rounded-md border border-border object-contain"
-                  />
-                ) : (
-                  <span
-                    key={i}
-                    className="inline-flex items-center gap-1 rounded bg-muted px-2 py-0.5 text-xs text-muted-foreground"
-                  >
-                    📎 {att.file_name}
-                  </span>
-                )
-              ))}
-            </div>
+            <AttachmentList attachments={message.attachments} />
           )}
           {/* Tool calls (collapsible) */}
           {message.tool_calls && message.tool_calls.length > 0 && (
@@ -318,54 +388,31 @@ export function MessageBubble({ message, onRegenerate, onDelete }: MessageBubble
 
           {/* Action buttons — 全要素の下に配置、ホバーで表示 */}
           {!isEditing && (
-            <div className={`flex items-center gap-0.5 h-6 overflow-visible ${message.role === 'user' ? 'justify-end' : ''}`}>
-              <div className="flex items-center gap-0.5 transition-all pointer-events-auto opacity-0 invisible group-hover:opacity-100 group-hover:visible">
-                <button
-                  onClick={handleCopy}
-                  className="p-1 rounded text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
-                  title={copied ? 'コピー済み' : 'コピー'}
-                >
-                  <Copy className="h-3.5 w-3.5" />
-                </button>
-                {message.role === 'user' && !isSystemMessage && (
-                  <button
-                    onClick={handleEdit}
-                    className="p-1 rounded text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
-                    title="編集"
-                  >
-                    <Pencil className="h-3.5 w-3.5" />
-                  </button>
-                )}
-                {message.role === 'assistant' && onRegenerate && (
-                  <button
-                    onClick={handleRegenerate}
-                    className="p-1 rounded text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
-                    title="再生成"
-                  >
-                    <RefreshCw className="h-3.5 w-3.5" />
-                  </button>
-                )}
-                {message.role === 'assistant' && ttsEnabled && (
-                  <button
-                    onClick={handleGenerateSpeech}
-                    disabled={ttsLoading}
-                    className="p-1 rounded text-muted-foreground hover:bg-muted hover:text-foreground transition-colors disabled:opacity-50"
-                    title="音声生成"
-                  >
-                    <Volume2 className={`h-3.5 w-3.5 ${ttsLoading ? 'animate-pulse' : ''}`} />
-                  </button>
-                )}
-                {onDelete && (
-                  <button
-                    onClick={handleDelete}
-                    className="p-1 rounded text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
-                    title="削除"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" />
-                  </button>
-                )}
-              </div>
-            </div>
+            <MessageActionBar align={message.role === 'user' ? 'end' : 'start'}>
+              <ActionButton onClick={handleCopy} title={copied ? 'コピー済み' : 'コピー'}>
+                <Copy className="h-3.5 w-3.5" />
+              </ActionButton>
+              {message.role === 'user' && !isSystemMessage && (
+                <ActionButton onClick={handleEdit} title="編集">
+                  <Pencil className="h-3.5 w-3.5" />
+                </ActionButton>
+              )}
+              {message.role === 'assistant' && onRegenerate && (
+                <ActionButton onClick={handleRegenerate} title="再生成">
+                  <RefreshCw className="h-3.5 w-3.5" />
+                </ActionButton>
+              )}
+              {message.role === 'assistant' && ttsEnabled && (
+                <ActionButton onClick={handleGenerateSpeech} disabled={ttsLoading} title="音声生成">
+                  <Volume2 className={`h-3.5 w-3.5 ${ttsLoading ? 'animate-pulse' : ''}`} />
+                </ActionButton>
+              )}
+              {onDelete && (
+                <ActionButton onClick={handleDelete} title="削除" destructive>
+                  <Trash2 className="h-3.5 w-3.5" />
+                </ActionButton>
+              )}
+            </MessageActionBar>
           )}
         </div>
       </div>

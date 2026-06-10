@@ -9,6 +9,10 @@ interface ChatState {
   isStreaming: boolean;
   isAbortable: boolean;
   streamingContent: string;
+  /** ストリーミング中のthinking/reasoning content蓄積バッファ */
+  streamingThinkingContent: string;
+  /** LLMがthinking/reasoning contentを生成中かどうか */
+  isThinking: boolean;
   error: string | null;
   editingMessageId: string | null;
   isTTSGenerating: boolean;
@@ -20,6 +24,10 @@ interface ChatState {
   deleteSession: (sessionId: string) => Promise<void>;
   fetchHistory: (sessionId: string) => Promise<void>;
   appendStreamChunk: (chunk: string) => void;
+  /** thinking/reasoning chunkを蓄積バッファに追記し、isThinkingをtrueに設定 */
+  appendThinkingChunk: (chunk: string) => void;
+  /** ツール実行前テキストを確定バブルとして追加し、streamingContent をリセット（isStreaming は維持）*/
+  commitPreToolContent: (content: string) => void;
   finishStreaming: (fullContent: string) => void;
   setTTSGenerating: (value: boolean) => void;
   finishWithAudio: (text: string, audio: string) => void;
@@ -37,6 +45,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
   isStreaming: false,
   isAbortable: false,
   streamingContent: '',
+  streamingThinkingContent: '',
+  isThinking: false,
   error: null,
   editingMessageId: null,
   isTTSGenerating: false,
@@ -75,7 +85,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   },
 
   selectSession: (sessionId: string | null) => {
-    set({ currentSessionId: sessionId, messages: [], streamingContent: '' });
+    set({ currentSessionId: sessionId, messages: [], streamingContent: '', streamingThinkingContent: '', isThinking: false });
   },
 
   sendMessage: async (content: string, attachments?: Attachment[]) => {
@@ -102,7 +112,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
       attachments: messageAttachments,
     };
     const previousMessages = messages;
-    set({ messages: [...messages, userMessage], isStreaming: true, isAbortable: true, streamingContent: '', error: null });
+    set({ messages: [...messages, userMessage], isStreaming: true, isAbortable: true, streamingContent: '', streamingThinkingContent: '', isThinking: false, error: null });
 
     try {
       await invoke('send_message', {
@@ -147,17 +157,49 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set((state) => ({
       streamingContent: state.streamingContent + chunk,
       isStreaming: true,
+      isThinking: false,
       executingToolName: null,
     }));
   },
 
+  appendThinkingChunk: (chunk: string) => {
+    set((state) => ({
+      streamingThinkingContent: state.streamingThinkingContent + chunk,
+      isThinking: true,
+    }));
+  },
+
+  commitPreToolContent: (content: string) => {
+    const { currentSessionId, messages, streamingThinkingContent } = get();
+    // テキストがある場合のみバブルとして追加
+    if (!content.trim()) return;
+    const assistantMessage: ChatMessageRecord = {
+      id: crypto.randomUUID(),
+      session_id: currentSessionId ?? '',
+      role: 'assistant',
+      content,
+      // thinking contentが蓄積済みならメッセージに設定、空ならnullのまま保持
+      thinking_content: streamingThinkingContent || null,
+      created_at: new Date().toISOString(),
+    };
+    set({
+      messages: [...messages, assistantMessage],
+      streamingContent: '',              // 次のストリーミングのためリセット
+      streamingThinkingContent: '',      // thinkingバッファをリセット
+      isThinking: false,                 // thinking状態をリセット
+      executingToolName: null,           // tool:executing イベントで上書きされる
+      // isStreaming は true のまま維持
+    });
+  },
+
   finishStreaming: (fullContent: string) => {
-    const { currentSessionId, messages } = get();
+    const { currentSessionId, messages, streamingThinkingContent } = get();
     const assistantMessage: ChatMessageRecord = {
       id: crypto.randomUUID(),
       session_id: currentSessionId ?? '',
       role: 'assistant',
       content: fullContent,
+      thinking_content: streamingThinkingContent || null,
       created_at: new Date().toISOString(),
     };
     set({
@@ -165,6 +207,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       isStreaming: false,
       isAbortable: false,
       streamingContent: '',
+      streamingThinkingContent: '',
+      isThinking: false,
       executingToolName: null,
     });
   },
@@ -188,6 +232,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       isAbortable: false,
       isTTSGenerating: false,
       streamingContent: '',
+      streamingThinkingContent: '',
+      isThinking: false,
     });
   },
 
@@ -202,6 +248,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       isStreaming: true,
       isAbortable: true,
       streamingContent: '',
+      streamingThinkingContent: '',
+      isThinking: false,
       error: null,
     });
 
@@ -224,10 +272,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
       await invoke('stop_generation', { sessionId: currentSessionId });
       // isAbortable は finishStreaming（chat:stream done イベント受信時）でクリアされる
       // ここでは送信ボタンの連打を防ぐためのみ設定
-      set({ isAbortable: false });
+      set({ isAbortable: false, isThinking: false });
     } catch {
       // 停止コマンド失敗時は無視（ストリーミングは自然完了を待つ）
-      set({ isAbortable: false });
+      set({ isAbortable: false, isThinking: false });
     }
   },
 
@@ -253,6 +301,8 @@ export const useChatStore = create<ChatState>((set, get) => ({
       isStreaming: true,
       isAbortable: true,
       streamingContent: '',
+      streamingThinkingContent: '',
+      isThinking: false,
       error: null,
       editingMessageId: null,
     });

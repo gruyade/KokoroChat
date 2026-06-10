@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
-import { X, Wrench, Lock, ChevronRight } from 'lucide-react';
+import { X, Wrench, Lock, ChevronRight, BookOpen } from 'lucide-react';
 import { usePluginStore } from '../../stores/plugin.store';
 import { useChatStore } from '../../stores/chat.store';
+import { useKnowledgeStore } from '../../stores/knowledge.store';
 import { FileOpsDirectoryManager } from './FileOpsDirectoryManager';
+import { KnowledgeSection } from './KnowledgeSection';
 
 interface ToolManagementPaneProps {
   onClose: () => void;
@@ -17,6 +19,7 @@ export function ToolManagementPane({ onClose }: ToolManagementPaneProps) {
   const { plugins, fetchPlugins, loading, sessionPermissions, setSessionToolEnabled, initSessionPermissions } =
     usePluginStore();
   const currentSessionId = useChatStore((s) => s.currentSessionId);
+  const { entries: knowledgeEntries, fetchEntries: fetchKnowledgeEntries } = useKnowledgeStore();
   const [expandedPlugins, setExpandedPlugins] = useState<Record<string, boolean>>({});
 
   // プラグイン一覧を取得
@@ -30,6 +33,13 @@ export function ToolManagementPane({ onClose }: ToolManagementPaneProps) {
       initSessionPermissions(currentSessionId);
     }
   }, [currentSessionId, plugins, initSessionPermissions]);
+
+  // ナレッジエントリを取得
+  useEffect(() => {
+    if (currentSessionId) {
+      fetchKnowledgeEntries(currentSessionId);
+    }
+  }, [currentSessionId, fetchKnowledgeEntries]);
 
   const permissions = currentSessionId ? (sessionPermissions[currentSessionId] ?? {}) : {};
 
@@ -75,7 +85,8 @@ export function ToolManagementPane({ onClose }: ToolManagementPaneProps) {
             チャットセッションを選択してください
           </div>
         ) : (
-          plugins.map((plugin) => {
+          <>
+          {plugins.map((plugin) => {
             const isExpanded = expandedPlugins[plugin.name] ?? false;
 
             return (
@@ -133,7 +144,44 @@ export function ToolManagementPane({ onClose }: ToolManagementPaneProps) {
                 )}
               </div>
             );
-          })
+          })}
+
+          {/* Knowledge Plugin アコーディオン */}
+          {currentSessionId && (() => {
+            const isKnowledgeExpanded = expandedPlugins['__knowledge__'] ?? false;
+            return (
+              <div className="rounded-md border border-border/50 overflow-hidden">
+                <button
+                  onClick={() => toggleExpanded('__knowledge__')}
+                  className="w-full flex items-center gap-1.5 px-3 py-2 hover:bg-muted/40 transition-colors text-left"
+                  aria-expanded={isKnowledgeExpanded}
+                  aria-label={`ナレッジ を${isKnowledgeExpanded ? '閉じる' : '開く'}`}
+                >
+                  <ChevronRight
+                    className={`w-3 h-3 text-muted-foreground transition-transform ${
+                      isKnowledgeExpanded ? 'rotate-90' : ''
+                    }`}
+                  />
+                  <BookOpen className="w-3 h-3 text-muted-foreground" />
+                  <span className="text-xs font-medium text-foreground">
+                    ナレッジ
+                  </span>
+                  {knowledgeEntries.length > 0 && (
+                    <span className="ml-auto text-[10px] bg-primary/15 text-primary px-1.5 py-0.5 rounded-full font-medium">
+                      {knowledgeEntries.length}
+                    </span>
+                  )}
+                </button>
+
+                {isKnowledgeExpanded && (
+                  <div className="border-t border-border/30">
+                    <KnowledgeSection sessionId={currentSessionId} />
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+          </>
         )}
       </div>
 

@@ -10,7 +10,8 @@ use tauri::{AppHandle, Emitter};
 use crate::db::database::Database;
 use crate::db::repositories::{
     character as char_repo, chat as chat_repo, chat_plugin_config as plugin_config_repo,
-    chat_tool_permission as perm_repo, memory as mem_repo, thought as thought_repo,
+    chat_tool_permission as perm_repo, knowledge as knowledge_repo, memory as mem_repo,
+    thought as thought_repo,
 };
 use crate::error::AppError;
 use crate::llm::client::{ChatMessage, LLMClient, LLMClientConfig, LLMResponse, MessageRole};
@@ -29,6 +30,10 @@ pub struct ChatStreamEvent {
     pub session_id: String,
     pub chunk: String,
     pub done: bool,
+    /// true のとき「ツール実行前のテキストをバブルとして確定し、ストリーミングをリセットせよ」を意味する
+    pub tool_break: bool,
+    /// Thinking/reasoning content のデルタ（nullの場合はthinkingなし）
+    pub thinking: Option<String>,
 }
 
 /// ツール実行中イベント
@@ -44,6 +49,64 @@ pub struct DirectoryAccessRequestEvent {
     pub session_id: String,
     pub path: String,
     pub requires_write: bool,
+}
+
+/// file_ops プラグインが提供するツール名一覧（System Prompt ガイダンス注入の判定に使用）
+const FILE_OPS_TOOL_NAMES: &[&str] = &["read_file", "write_file", "list_directory", "search_files"];
+
+/// file_ops ツール利用時に AI に守らせる判断手順を明示する System Prompt 追補。
+/// バックエンドが許可要請〜許可待ち〜再実行を自動処理するため、AI は対象パスの特定と
+/// 操作種別（read/write）の判定に集中すれば良い旨を示す。
+const FILE_OPS_SYSTEM_PROMPT_GUIDANCE: &str = concat!(
+    "## File Operations (file_ops)\n\n",
+    "You have access to file operation tools: read_file, write_file, list_directory, search_files.\n\n",
+    "### RULE #1 — Path mentioned = call the tool immediately, before anything else\n",
+    "If the user's message contains a file path or directory path, ",
+    "your FIRST action MUST be to call the appropriate tool to read its contents. ",
+    "Do NOT summarize, guess, or respond based on assumptions about what the file might contain. ",
+    "Do NOT ask the user what the file contains. ",
+    "Just call the tool immediately.\n",
+    "- File path given → call read_file with that path first\n",
+    "- Directory path given → call list_directory with that path first\n",
+    "- File name given without a full path → call search_files to locate it, then call read_file\n\n",
+    "### RULE #2 — Proactive use in natural conversation\n",
+    "Do NOT wait for the user to explicitly say \"use the tool\". ",
+    "Call tools autonomously whenever it would help you answer accurately.\n",
+    "- \"ファイルを見て\" / \"show me the file\" / \"open it\" → read_file\n",
+    "- \"～について調べて\" / \"look into ~\" when a file or path is implied → list_directory or search_files, then read_file\n",
+    "- \"編集して\" / \"update\" / \"fix\" targeting a file → read_file first, then write_file\n",
+    "- \"フォルダに何がある？\" / \"what's in this folder?\" → list_directory\n",
+    "- You need file content to answer accurately, even if not explicitly asked → call read_file\n\n",
+    "### Steps (once you decide to act)\n",
+    "1. **Locate the target**: Use the path exactly as provided. If unclear, call list_directory or search_files — do not guess.\n",
+    "2. **Choose the right tool**: read_file / list_directory / search_files for reading; write_file for writing.\n",
+    "3. **Read before writing**: Always call read_file before write_file when editing an existing file.\n",
+    "4. **Permission handling**: If access is not yet permitted, the app shows a dialog automatically. ",
+    "Do not request permission separately. If denied, inform the user and stop.",
+);
+
+/// ツール定義リストに file_ops プラグインのツールが含まれているか判定
+fn has_file_ops_tools(tools: &[crate::models::plugin::ToolDefinition]) -> bool {
+    tools
+        .iter()
+        .any(|t| FILE_OPS_TOOL_NAMES.contains(&t.name.as_str()))
+}
+
+/// file_ops ツールが利用可能な場合のみ、メッセージ列の先頭 System メッセージに
+/// 判断手順ガイダンスを追記する。System メッセージが先頭にない場合は何もしない。
+fn augment_system_prompt_with_file_ops_guidance(
+    messages: &mut [ChatMessage],
+    tools: &[crate::models::plugin::ToolDefinition],
+) {
+    if !has_file_ops_tools(tools) {
+        return;
+    }
+    if let Some(sys_msg) = messages.first_mut() {
+        if matches!(sys_msg.role, MessageRole::System) {
+            sys_msg.content.push_str("\n\n");
+            sys_msg.content.push_str(FILE_OPS_SYSTEM_PROMPT_GUIDANCE);
+        }
+    }
 }
 
 /// ChatEngine trait — チャット機能の抽象インターフェース
@@ -201,6 +264,66 @@ impl DefaultChatEngine {
         }
     }
 
+    /// system_prompt モードのナレッジをシステムプロンプトに注入
+    /// entries が空ならベースプロンプトをそのまま返す
+    pub(crate) fn inject_knowledge_to_system_prompt(
+        &self,
+        session_id: &str,
+        base_prompt: &str,
+    ) -> String {
+        let mut result = base_prompt.to_string();
+
+        // system_prompt モードのエントリを注入
+        let system_entries = {
+            let db = match self.db.lock() {
+                Ok(db) => db,
+                Err(_) => return result,
+            };
+            match knowledge_repo::get_system_prompt_entries(db.connection(), session_id) {
+                Ok(entries) => entries,
+                Err(_) => return result,
+            }
+        };
+
+        if !system_entries.is_empty() {
+            let knowledge_section: Vec<String> = system_entries
+                .iter()
+                .map(|e| format!("## {}\n{}", e.file_name, e.content))
+                .collect();
+            result = format!("{}\n\n{}", result, knowledge_section.join("\n\n"));
+        }
+
+        // tool_reference モードのエントリがあればツール使用を指示
+        let tool_ref_entries = {
+            let db = match self.db.lock() {
+                Ok(db) => db,
+                Err(_) => return result,
+            };
+            match knowledge_repo::get_tool_reference_entries(db.connection(), session_id) {
+                Ok(entries) => entries,
+                Err(_) => return result,
+            }
+        };
+
+        if !tool_ref_entries.is_empty() {
+            let file_names: Vec<&str> = tool_ref_entries
+                .iter()
+                .map(|e| e.file_name.as_str())
+                .collect();
+            let instruction = format!(
+                "\n\n## ナレッジ参照指示\n\
+                以下のナレッジファイルが利用可能です: {}\n\
+                ユーザーの質問に答える際、関連するナレッジファイルの内容を get_knowledge ツールで取得し、その内容に基づいて回答してください。\n\
+                ナレッジの内容を回答に具体的に反映し、引用や参照を行ってください。\n\
+                ナレッジに該当する情報がある場合は、必ず get_knowledge を呼び出してから回答してください。",
+                file_names.join(", ")
+            );
+            result.push_str(&instruction);
+        }
+
+        result
+    }
+
     /// 圧縮済みメッセージを履歴から除外するフィルタ
     /// memoriesから現在のセッションに対応する最新のMemoryを探し、
     /// そのsource_message_to以前のメッセージを除外する
@@ -341,6 +464,65 @@ impl DefaultChatEngine {
         global_tools
             .into_iter()
             .filter(|t| !disabled_tools.contains(t.name.as_str()))
+            .collect()
+    }
+
+    /// tool_reference モードのナレッジエントリに基づき get_knowledge ツール定義をフィルタリング
+    /// - tool_reference エントリが1件以上: get_knowledge の parameter description に利用可能ファイル名を列挙
+    /// - tool_reference エントリが0件: get_knowledge ツールを除外
+    pub(crate) fn filter_knowledge_tools(
+        &self,
+        session_id: &str,
+        tools: Vec<crate::models::plugin::ToolDefinition>,
+    ) -> Vec<crate::models::plugin::ToolDefinition> {
+        // get_knowledge ツールが含まれていなければ何もしない
+        if !tools.iter().any(|t| t.name == "get_knowledge") {
+            return tools;
+        }
+
+        // DBから tool_reference エントリを取得
+        let entries = {
+            let db = match self.db.lock() {
+                Ok(db) => db,
+                Err(_) => return tools,
+            };
+            match knowledge_repo::get_tool_reference_entries(db.connection(), session_id) {
+                Ok(entries) => entries,
+                Err(_) => return tools,
+            }
+        };
+
+        // エントリ0件: get_knowledge ツールを除外
+        if entries.is_empty() {
+            return tools
+                .into_iter()
+                .filter(|t| t.name != "get_knowledge")
+                .collect();
+        }
+
+        // エントリ1件以上: file_name パラメータの description に利用可能ファイル名一覧を付加
+        let file_names: Vec<&str> = entries.iter().map(|e| e.file_name.as_str()).collect();
+        let available_list = format!("Available files: {}", file_names.join(", "));
+
+        tools
+            .into_iter()
+            .map(|mut t| {
+                if t.name == "get_knowledge" {
+                    // parameters.properties.file_name.description を更新
+                    if let Some(props) = t.parameters.get_mut("properties") {
+                        if let Some(file_name_prop) = props.get_mut("file_name") {
+                            if let Some(desc) = file_name_prop.get_mut("description") {
+                                let base_desc = desc.as_str().unwrap_or("");
+                                *desc = serde_json::Value::String(format!(
+                                    "{} {}",
+                                    base_desc, available_list
+                                ));
+                            }
+                        }
+                    }
+                }
+                t
+            })
             .collect()
     }
 
@@ -523,6 +705,7 @@ impl ChatEngine for DefaultChatEngine {
             attachments: message_attachments,
             tool_calls: None,
             tool_call_id: None,
+            thinking_content: None,
             created_at: now.clone(),
         };
 
@@ -596,11 +779,15 @@ impl ChatEngine for DefaultChatEngine {
         // TTS有効判定: グローバル設定 AND キャラクター個別TTS設定あり
         let tts_enabled = self.config_manager.get_config().tts.enabled && tts_config.is_some();
 
+        // Knowledge注入（system_promptモードのエントリをベースプロンプトに結合）
+        let system_prompt_with_knowledge =
+            self.inject_knowledge_to_system_prompt(session_id, &system_prompt);
+
         // TTS有効時はSystem Promptに出力フォーマットルールを付加
         let effective_system_prompt = if tts_enabled {
-            format!("{}\n\n## 出力フォーマットルール（必ず守ること）\n応答は必ず以下のJSON形式で返してください。JSON以外のテキストは含めないでください。\n```\n{{\"display\": \"表示用テキスト（地の文・動作描写・効果音を含む全文）\", \"speech\": \"声に出して話すセリフと心の声のみ（動作描写・効果音・擬音・ナレーションは含めない）\"}}\n```\n重要: speechには実際に口から発する言葉と心の中で思っていることだけを入れてください。\n- 含める: セリフ、呼びかけ、返事、質問、心の声、独り言\n- 含めない: *動作描写*, 効果音, 擬音語, ナレーション, 状況説明\n例:\n```\n{{\"display\": \"*嬉しそうに手を振りながら* おはよう！今日も一緒に遊ぼうね！ *ぴょんぴょん跳ねる*\", \"speech\": \"おはよう！今日も一緒に遊ぼうね！\"}}\n```", system_prompt)
+            format!("{}\n\n## 出力フォーマットルール（必ず守ること）\n応答は必ず以下のJSON形式で返してください。JSON以外のテキストは含めないでください。\n```\n{{\"display\": \"表示用テキスト（地の文・動作描写・効果音を含む全文）\", \"speech\": \"声に出して話すセリフと心の声のみ（動作描写・効果音・擬音・ナレーションは含めない）\"}}\n```\n重要: speechには実際に口から発する言葉と心の中で思っていることだけを入れてください。\n- 含める: セリフ、呼びかけ、返事、質問、心の声、独り言\n- 含めない: *動作描写*, 効果音, 擬音語, ナレーション, 状況説明\n例:\n```\n{{\"display\": \"*嬉しそうに手を振りながら* おはよう！今日も一緒に遊ぼうね！ *ぴょんぴょん跳ねる*\", \"speech\": \"おはよう！今日も一緒に遊ぼうね！\"}}\n```", system_prompt_with_knowledge)
         } else {
-            system_prompt.clone()
+            system_prompt_with_knowledge
         };
 
         let llm_messages = self.build_context(
@@ -630,7 +817,12 @@ impl ChatEngine for DefaultChatEngine {
             let _llm_guard = self.llm_lock.lock().await;
             let response = self
                 .llm_client
-                .chat_stream(&llm_messages, &self.current_llm_config(), None, callback)
+                .chat_stream(
+                    &llm_messages,
+                    &self.current_llm_config(),
+                    None,
+                    (callback, Box::new(|_| {})),
+                )
                 .await?
                 .into_text();
             drop(_llm_guard);
@@ -738,6 +930,7 @@ impl ChatEngine for DefaultChatEngine {
                 attachments: None,
                 tool_calls: None,
                 tool_call_id: None,
+                thinking_content: None,
                 created_at: assistant_now.clone(),
             };
 
@@ -766,7 +959,8 @@ impl ChatEngine for DefaultChatEngine {
                     .as_ref()
                     .map(|ps| ps.get_enabled_tools())
                     .unwrap_or_default();
-                self.filter_tools_by_session_permissions(&session_id_owned, global)
+                let filtered = self.filter_tools_by_session_permissions(&session_id_owned, global);
+                self.filter_knowledge_tools(&session_id_owned, filtered)
             };
             let tools_for_llm: Option<&[crate::models::ToolDefinition]> =
                 if tool_definitions.is_empty() {
@@ -777,6 +971,8 @@ impl ChatEngine for DefaultChatEngine {
 
             // ツール実行ループ用のコンテキスト（可変）
             let mut loop_messages = llm_messages;
+            // file_ops ツールが有効な場合、System メッセージに判断手順ガイダンスを追記
+            augment_system_prompt_with_file_ops_guidance(&mut loop_messages, &tool_definitions);
             let mut iteration = 0;
 
             loop {
@@ -792,6 +988,9 @@ impl ChatEngine for DefaultChatEngine {
                 let app_handle_clone = app_handle.clone();
                 let session_id_for_callback = session_id_owned.clone();
                 let accumulator = partial_content_accumulator.clone();
+                // thinking content 蓄積用バッファ（DB保存用）
+                let thinking_buffer: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
+                let thinking_buffer_for_callback = thinking_buffer.clone();
                 let callback = Box::new(move |chunk: String| {
                     // 部分コンテンツ蓄積
                     if let Some(ref acc) = accumulator {
@@ -805,6 +1004,28 @@ impl ChatEngine for DefaultChatEngine {
                             session_id: session_id_for_callback.clone(),
                             chunk,
                             done: false,
+                            tool_break: false,
+                            thinking: None,
+                        },
+                    );
+                });
+
+                let app_handle_thinking = app_handle.clone();
+                let session_id_thinking = session_id_owned.clone();
+                let thinking_callback = Box::new(move |chunk: String| {
+                    // DB保存用にバッファ蓄積
+                    if let Ok(mut buf) = thinking_buffer_for_callback.lock() {
+                        buf.push_str(&chunk);
+                    }
+                    // フロントエンドにthinkingデルタをemit
+                    let _ = app_handle_thinking.emit(
+                        "chat:stream",
+                        ChatStreamEvent {
+                            session_id: session_id_thinking.clone(),
+                            chunk: String::new(),
+                            done: false,
+                            tool_break: false,
+                            thinking: Some(chunk),
                         },
                     );
                 });
@@ -816,13 +1037,16 @@ impl ChatEngine for DefaultChatEngine {
                         &loop_messages,
                         &self.current_llm_config(),
                         tools_for_llm,
-                        callback,
+                        (callback, thinking_callback),
                     )
                     .await?;
                 drop(_llm_guard);
 
                 match llm_response {
-                    LLMResponse::Text(text) => {
+                    LLMResponse::Text {
+                        content: text,
+                        thinking,
+                    } => {
                         // テキスト応答 — ストリーミング完了イベントを送信してループ終了
                         app_handle
                             .emit(
@@ -831,9 +1055,15 @@ impl ChatEngine for DefaultChatEngine {
                                     session_id: session_id_owned.clone(),
                                     chunk: String::new(),
                                     done: true,
+                                    tool_break: false,
+                                    thinking: None,
                                 },
                             )
                             .map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
+
+                        // thinking content をtruncateしてDB保存用に準備
+                        let thinking_content =
+                            thinking.map(|t| truncate_thinking_content(&t).to_string());
 
                         // アシスタントメッセージ保存 & セッションメタデータ更新
                         let assistant_msg_id = uuid::Uuid::new_v4().to_string();
@@ -847,6 +1077,7 @@ impl ChatEngine for DefaultChatEngine {
                             attachments: None,
                             tool_calls: None,
                             tool_call_id: None,
+                            thinking_content,
                             created_at: assistant_now.clone(),
                         };
 
@@ -869,13 +1100,75 @@ impl ChatEngine for DefaultChatEngine {
 
                         return Ok(());
                     }
-                    LLMResponse::ToolCalls(mut tool_calls) => {
+                    LLMResponse::ToolCalls {
+                        calls: mut tool_calls,
+                        thinking,
+                    } => {
                         // ツール呼び出し応答 — 実行してループ継続
                         println!(
                             "[ToolLoop] Iteration {}: {} tool call(s)",
                             iteration,
                             tool_calls.len()
                         );
+
+                        // thinking content を取得: LLMResponseのthinkingフィールド優先、なければバッファから
+                        let accumulated_thinking = thinking.or_else(|| {
+                            let buf = thinking_buffer.lock().ok()?;
+                            if buf.is_empty() {
+                                None
+                            } else {
+                                Some(buf.clone())
+                            }
+                        });
+                        let thinking_for_pre_tool =
+                            accumulated_thinking.map(|t| truncate_thinking_content(&t).to_string());
+
+                        // 0. ツール呼び出し前のストリーミングコンテンツを確定 (tool_break)
+                        let pre_tool_content = if let Some(ref acc) = partial_content_accumulator {
+                            if let Ok(mut guard) = acc.lock() {
+                                std::mem::take(&mut *guard)
+                            } else {
+                                String::new()
+                            }
+                        } else {
+                            String::new()
+                        };
+                        // pre-tool テキストがあれば独立した assistant メッセージとして DB 保存
+                        // thinking_content も付与
+                        if !pre_tool_content.is_empty() {
+                            let pre_msg_id = uuid::Uuid::new_v4().to_string();
+                            let pre_now = chrono::Utc::now().to_rfc3339();
+                            let pre_message = ChatMessageRecord {
+                                id: pre_msg_id,
+                                session_id: session_id_owned.clone(),
+                                role: ChatRole::Assistant,
+                                content: pre_tool_content,
+                                attachments: None,
+                                tool_calls: None,
+                                tool_call_id: None,
+                                thinking_content: thinking_for_pre_tool.clone(),
+                                created_at: pre_now,
+                            };
+                            {
+                                let db = self.db.lock().map_err(|e| {
+                                    AppError::Database(format!("Failed to acquire DB lock: {}", e))
+                                })?;
+                                chat_repo::insert_message(db.connection(), &pre_message)?;
+                            }
+                        }
+                        // フロントエンドに tool_break を通知してバブルをリセットさせる
+                        app_handle
+                            .emit(
+                                "chat:stream",
+                                ChatStreamEvent {
+                                    session_id: session_id_owned.clone(),
+                                    chunk: String::new(),
+                                    done: true,
+                                    tool_break: true,
+                                    thinking: None,
+                                },
+                            )
+                            .map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
 
                         // セッション情報とプラグイン設定をツール呼び出しに注入
                         self.inject_tool_context(&mut tool_calls, &session_id_owned);
@@ -907,6 +1200,7 @@ impl ChatEngine for DefaultChatEngine {
                             attachments: None,
                             tool_calls: Some(tool_calls.clone()),
                             tool_call_id: None,
+                            thinking_content: None,
                             created_at: tc_now.clone(),
                         };
 
@@ -958,6 +1252,7 @@ impl ChatEngine for DefaultChatEngine {
                                 attachments: None,
                                 tool_calls: None,
                                 tool_call_id: Some(result.tool_call_id.clone()),
+                                thinking_content: None,
                                 created_at: tool_now,
                             };
 
@@ -986,6 +1281,8 @@ impl ChatEngine for DefaultChatEngine {
                         session_id: session_id_owned.clone(),
                         chunk: String::new(),
                         done: true,
+                        tool_break: false,
+                        thinking: None,
                     },
                 )
                 .map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
@@ -1003,6 +1300,7 @@ impl ChatEngine for DefaultChatEngine {
                 attachments: None,
                 tool_calls: None,
                 tool_call_id: None,
+                thinking_content: None,
                 created_at: assistant_now.clone(),
             };
 
@@ -1127,8 +1425,12 @@ impl ChatEngine for DefaultChatEngine {
             h
         };
 
+        // Knowledge注入（system_promptモードのエントリをベースプロンプトに結合）
+        let system_prompt_with_knowledge =
+            self.inject_knowledge_to_system_prompt(session_id, &system_prompt);
+
         let llm_messages = self.build_context(
-            &system_prompt,
+            &system_prompt_with_knowledge,
             &memories,
             &thoughts,
             &history_without_last_user,
@@ -1156,7 +1458,12 @@ impl ChatEngine for DefaultChatEngine {
             let _llm_guard = self.llm_lock.lock().await;
             let response = self
                 .llm_client
-                .chat_stream(&llm_messages, &self.current_llm_config(), None, callback)
+                .chat_stream(
+                    &llm_messages,
+                    &self.current_llm_config(),
+                    None,
+                    (callback, Box::new(|_| {})),
+                )
                 .await?
                 .into_text();
             drop(_llm_guard);
@@ -1234,6 +1541,7 @@ impl ChatEngine for DefaultChatEngine {
                 attachments: None,
                 tool_calls: None,
                 tool_call_id: None,
+                thinking_content: None,
                 created_at: assistant_now.clone(),
             };
 
@@ -1262,7 +1570,8 @@ impl ChatEngine for DefaultChatEngine {
                     .as_ref()
                     .map(|ps| ps.get_enabled_tools())
                     .unwrap_or_default();
-                self.filter_tools_by_session_permissions(&session_id_owned, global)
+                let filtered = self.filter_tools_by_session_permissions(&session_id_owned, global);
+                self.filter_knowledge_tools(&session_id_owned, filtered)
             };
             let tools_for_llm: Option<&[crate::models::ToolDefinition]> =
                 if tool_definitions.is_empty() {
@@ -1273,6 +1582,8 @@ impl ChatEngine for DefaultChatEngine {
 
             // ツール実行ループ用のコンテキスト（可変）
             let mut loop_messages = llm_messages;
+            // file_ops ツールが有効な場合、System メッセージに判断手順ガイダンスを追記
+            augment_system_prompt_with_file_ops_guidance(&mut loop_messages, &tool_definitions);
             let mut iteration = 0;
 
             loop {
@@ -1288,6 +1599,9 @@ impl ChatEngine for DefaultChatEngine {
                 let app_handle_clone = app_handle.clone();
                 let session_id_for_callback = session_id_owned.clone();
                 let accumulator = partial_content_accumulator.clone();
+                // thinking content 蓄積用バッファ（DB保存用）
+                let thinking_buffer: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
+                let thinking_buffer_for_callback = thinking_buffer.clone();
                 let callback = Box::new(move |chunk: String| {
                     // 部分コンテンツ蓄積
                     if let Some(ref acc) = accumulator {
@@ -1301,6 +1615,27 @@ impl ChatEngine for DefaultChatEngine {
                             session_id: session_id_for_callback.clone(),
                             chunk,
                             done: false,
+                            tool_break: false,
+                            thinking: None,
+                        },
+                    );
+                });
+
+                let app_handle_thinking = app_handle.clone();
+                let session_id_thinking = session_id_owned.clone();
+                let thinking_callback = Box::new(move |chunk: String| {
+                    // DB保存用にバッファに蓄積
+                    if let Ok(mut buf) = thinking_buffer_for_callback.lock() {
+                        buf.push_str(&chunk);
+                    }
+                    let _ = app_handle_thinking.emit(
+                        "chat:stream",
+                        ChatStreamEvent {
+                            session_id: session_id_thinking.clone(),
+                            chunk: String::new(),
+                            done: false,
+                            tool_break: false,
+                            thinking: Some(chunk),
                         },
                     );
                 });
@@ -1312,13 +1647,16 @@ impl ChatEngine for DefaultChatEngine {
                         &loop_messages,
                         &self.current_llm_config(),
                         tools_for_llm,
-                        callback,
+                        (callback, thinking_callback),
                     )
                     .await?;
                 drop(_llm_guard);
 
                 match llm_response {
-                    LLMResponse::Text(text) => {
+                    LLMResponse::Text {
+                        content: text,
+                        thinking,
+                    } => {
                         // テキスト応答 — ストリーミング完了イベントを送信してループ終了
                         app_handle
                             .emit(
@@ -1327,9 +1665,15 @@ impl ChatEngine for DefaultChatEngine {
                                     session_id: session_id_owned.clone(),
                                     chunk: String::new(),
                                     done: true,
+                                    tool_break: false,
+                                    thinking: None,
                                 },
                             )
                             .map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
+
+                        // thinking content をtruncateしてDB保存用に準備
+                        let thinking_content =
+                            thinking.map(|t| truncate_thinking_content(&t).to_string());
 
                         // アシスタントメッセージ保存 & セッションメタデータ更新
                         let assistant_msg_id = uuid::Uuid::new_v4().to_string();
@@ -1343,6 +1687,7 @@ impl ChatEngine for DefaultChatEngine {
                             attachments: None,
                             tool_calls: None,
                             tool_call_id: None,
+                            thinking_content,
                             created_at: assistant_now.clone(),
                         };
 
@@ -1365,13 +1710,74 @@ impl ChatEngine for DefaultChatEngine {
 
                         return Ok(());
                     }
-                    LLMResponse::ToolCalls(mut tool_calls) => {
+                    LLMResponse::ToolCalls {
+                        calls: mut tool_calls,
+                        thinking,
+                    } => {
                         // ツール呼び出し応答 — 実行してループ継続
                         println!(
                             "[ToolLoop] regenerate iteration {}: {} tool call(s)",
                             iteration,
                             tool_calls.len()
                         );
+
+                        // thinking content を取得: LLMResponseのthinkingフィールド優先、なければバッファから
+                        let accumulated_thinking = thinking.or_else(|| {
+                            let buf = thinking_buffer.lock().ok()?;
+                            if buf.is_empty() {
+                                None
+                            } else {
+                                Some(buf.clone())
+                            }
+                        });
+                        let thinking_for_pre_tool =
+                            accumulated_thinking.map(|t| truncate_thinking_content(&t).to_string());
+
+                        // 0. ツール呼び出し前のストリーミングコンテンツを確定 (tool_break)
+                        let pre_tool_content = if let Some(ref acc) = partial_content_accumulator {
+                            if let Ok(mut guard) = acc.lock() {
+                                std::mem::take(&mut *guard)
+                            } else {
+                                String::new()
+                            }
+                        } else {
+                            String::new()
+                        };
+                        // pre-tool テキストがあれば独立した assistant メッセージとして DB 保存
+                        // thinking_content も付与
+                        if !pre_tool_content.is_empty() {
+                            let pre_msg_id = uuid::Uuid::new_v4().to_string();
+                            let pre_now = chrono::Utc::now().to_rfc3339();
+                            let pre_message = ChatMessageRecord {
+                                id: pre_msg_id,
+                                session_id: session_id_owned.clone(),
+                                role: ChatRole::Assistant,
+                                content: pre_tool_content,
+                                attachments: None,
+                                tool_calls: None,
+                                tool_call_id: None,
+                                thinking_content: thinking_for_pre_tool.clone(),
+                                created_at: pre_now,
+                            };
+                            {
+                                let db = self.db.lock().map_err(|e| {
+                                    AppError::Database(format!("Failed to acquire DB lock: {}", e))
+                                })?;
+                                chat_repo::insert_message(db.connection(), &pre_message)?;
+                            }
+                        }
+                        app_handle
+                            .emit(
+                                "chat:stream",
+                                ChatStreamEvent {
+                                    session_id: session_id_owned.clone(),
+                                    chunk: String::new(),
+                                    done: true,
+                                    tool_break: true,
+                                    thinking: None,
+                                },
+                            )
+                            .map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
 
                         // セッション情報とプラグイン設定をツール呼び出しに注入
                         self.inject_tool_context(&mut tool_calls, &session_id_owned);
@@ -1403,6 +1809,7 @@ impl ChatEngine for DefaultChatEngine {
                             attachments: None,
                             tool_calls: Some(tool_calls.clone()),
                             tool_call_id: None,
+                            thinking_content: None,
                             created_at: tc_now.clone(),
                         };
 
@@ -1452,6 +1859,7 @@ impl ChatEngine for DefaultChatEngine {
                                 attachments: None,
                                 tool_calls: None,
                                 tool_call_id: Some(result.tool_call_id.clone()),
+                                thinking_content: None,
                                 created_at: tool_now,
                             };
 
@@ -1480,6 +1888,8 @@ impl ChatEngine for DefaultChatEngine {
                         session_id: session_id_owned.clone(),
                         chunk: String::new(),
                         done: true,
+                        tool_break: false,
+                        thinking: None,
                     },
                 )
                 .map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
@@ -1497,6 +1907,7 @@ impl ChatEngine for DefaultChatEngine {
                 attachments: None,
                 tool_calls: None,
                 tool_call_id: None,
+                thinking_content: None,
                 created_at: assistant_now.clone(),
             };
 
@@ -1634,8 +2045,12 @@ impl ChatEngine for DefaultChatEngine {
             h
         };
 
+        // Knowledge注入（system_promptモードのエントリをベースプロンプトに結合）
+        let system_prompt_with_knowledge =
+            self.inject_knowledge_to_system_prompt(session_id, &system_prompt);
+
         let llm_messages = self.build_context(
-            &system_prompt,
+            &system_prompt_with_knowledge,
             &memories,
             &thoughts,
             &history_without_last_user,
@@ -1663,7 +2078,12 @@ impl ChatEngine for DefaultChatEngine {
             let _llm_guard = self.llm_lock.lock().await;
             let response = self
                 .llm_client
-                .chat_stream(&llm_messages, &self.current_llm_config(), None, callback)
+                .chat_stream(
+                    &llm_messages,
+                    &self.current_llm_config(),
+                    None,
+                    (callback, Box::new(|_| {})),
+                )
                 .await?
                 .into_text();
             drop(_llm_guard);
@@ -1739,6 +2159,7 @@ impl ChatEngine for DefaultChatEngine {
                 attachments: None,
                 tool_calls: None,
                 tool_call_id: None,
+                thinking_content: None,
                 created_at: assistant_now.clone(),
             };
 
@@ -1767,7 +2188,8 @@ impl ChatEngine for DefaultChatEngine {
                     .as_ref()
                     .map(|ps| ps.get_enabled_tools())
                     .unwrap_or_default();
-                self.filter_tools_by_session_permissions(&session_id_owned, global)
+                let filtered = self.filter_tools_by_session_permissions(&session_id_owned, global);
+                self.filter_knowledge_tools(&session_id_owned, filtered)
             };
             let tools_for_llm: Option<&[crate::models::ToolDefinition]> =
                 if tool_definitions.is_empty() {
@@ -1778,6 +2200,8 @@ impl ChatEngine for DefaultChatEngine {
 
             // ツール実行ループ用のコンテキスト（可変）
             let mut loop_messages = llm_messages;
+            // file_ops ツールが有効な場合、System メッセージに判断手順ガイダンスを追記
+            augment_system_prompt_with_file_ops_guidance(&mut loop_messages, &tool_definitions);
             let mut iteration = 0;
 
             loop {
@@ -1793,6 +2217,9 @@ impl ChatEngine for DefaultChatEngine {
                 let app_handle_clone = app_handle.clone();
                 let session_id_for_callback = session_id_owned.clone();
                 let accumulator = partial_content_accumulator.clone();
+                // thinking content 蓄積用バッファ（DB保存用）
+                let thinking_buffer: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
+                let thinking_buffer_for_callback = thinking_buffer.clone();
                 let callback = Box::new(move |chunk: String| {
                     // 部分コンテンツ蓄積
                     if let Some(ref acc) = accumulator {
@@ -1806,6 +2233,27 @@ impl ChatEngine for DefaultChatEngine {
                             session_id: session_id_for_callback.clone(),
                             chunk,
                             done: false,
+                            tool_break: false,
+                            thinking: None,
+                        },
+                    );
+                });
+
+                let app_handle_thinking = app_handle.clone();
+                let session_id_thinking = session_id_owned.clone();
+                let thinking_callback = Box::new(move |chunk: String| {
+                    // DB保存用にバッファに蓄積
+                    if let Ok(mut buf) = thinking_buffer_for_callback.lock() {
+                        buf.push_str(&chunk);
+                    }
+                    let _ = app_handle_thinking.emit(
+                        "chat:stream",
+                        ChatStreamEvent {
+                            session_id: session_id_thinking.clone(),
+                            chunk: String::new(),
+                            done: false,
+                            tool_break: false,
+                            thinking: Some(chunk),
                         },
                     );
                 });
@@ -1817,13 +2265,16 @@ impl ChatEngine for DefaultChatEngine {
                         &loop_messages,
                         &self.current_llm_config(),
                         tools_for_llm,
-                        callback,
+                        (callback, thinking_callback),
                     )
                     .await?;
                 drop(_llm_guard);
 
                 match llm_response {
-                    LLMResponse::Text(text) => {
+                    LLMResponse::Text {
+                        content: text,
+                        thinking,
+                    } => {
                         // テキスト応答 — ストリーミング完了イベントを送信してループ終了
                         app_handle
                             .emit(
@@ -1832,9 +2283,15 @@ impl ChatEngine for DefaultChatEngine {
                                     session_id: session_id_owned.clone(),
                                     chunk: String::new(),
                                     done: true,
+                                    tool_break: false,
+                                    thinking: None,
                                 },
                             )
                             .map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
+
+                        // thinking content をtruncateしてDB保存用に準備
+                        let thinking_content =
+                            thinking.map(|t| truncate_thinking_content(&t).to_string());
 
                         // アシスタントメッセージ保存 & セッションメタデータ更新
                         let assistant_msg_id = uuid::Uuid::new_v4().to_string();
@@ -1848,6 +2305,7 @@ impl ChatEngine for DefaultChatEngine {
                             attachments: None,
                             tool_calls: None,
                             tool_call_id: None,
+                            thinking_content,
                             created_at: assistant_now.clone(),
                         };
 
@@ -1870,13 +2328,74 @@ impl ChatEngine for DefaultChatEngine {
 
                         return Ok(());
                     }
-                    LLMResponse::ToolCalls(mut tool_calls) => {
+                    LLMResponse::ToolCalls {
+                        calls: mut tool_calls,
+                        thinking,
+                    } => {
                         // ツール呼び出し応答 — 実行してループ継続
                         println!(
                             "[ToolLoop] edit_and_resend iteration {}: {} tool call(s)",
                             iteration,
                             tool_calls.len()
                         );
+
+                        // thinking content を取得: LLMResponseのthinkingフィールド優先、なければバッファから
+                        let accumulated_thinking = thinking.or_else(|| {
+                            let buf = thinking_buffer.lock().ok()?;
+                            if buf.is_empty() {
+                                None
+                            } else {
+                                Some(buf.clone())
+                            }
+                        });
+                        let thinking_for_pre_tool =
+                            accumulated_thinking.map(|t| truncate_thinking_content(&t).to_string());
+
+                        // 0. ツール呼び出し前のストリーミングコンテンツを確定 (tool_break)
+                        let pre_tool_content = if let Some(ref acc) = partial_content_accumulator {
+                            if let Ok(mut guard) = acc.lock() {
+                                std::mem::take(&mut *guard)
+                            } else {
+                                String::new()
+                            }
+                        } else {
+                            String::new()
+                        };
+                        // pre-tool テキストがあれば独立した assistant メッセージとして DB 保存
+                        // thinking_content も付与
+                        if !pre_tool_content.is_empty() {
+                            let pre_msg_id = uuid::Uuid::new_v4().to_string();
+                            let pre_now = chrono::Utc::now().to_rfc3339();
+                            let pre_message = ChatMessageRecord {
+                                id: pre_msg_id,
+                                session_id: session_id_owned.clone(),
+                                role: ChatRole::Assistant,
+                                content: pre_tool_content,
+                                attachments: None,
+                                tool_calls: None,
+                                tool_call_id: None,
+                                thinking_content: thinking_for_pre_tool.clone(),
+                                created_at: pre_now,
+                            };
+                            {
+                                let db = self.db.lock().map_err(|e| {
+                                    AppError::Database(format!("Failed to acquire DB lock: {}", e))
+                                })?;
+                                chat_repo::insert_message(db.connection(), &pre_message)?;
+                            }
+                        }
+                        app_handle
+                            .emit(
+                                "chat:stream",
+                                ChatStreamEvent {
+                                    session_id: session_id_owned.clone(),
+                                    chunk: String::new(),
+                                    done: true,
+                                    tool_break: true,
+                                    thinking: None,
+                                },
+                            )
+                            .map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
 
                         // セッション情報とプラグイン設定をツール呼び出しに注入
                         self.inject_tool_context(&mut tool_calls, &session_id_owned);
@@ -1908,6 +2427,7 @@ impl ChatEngine for DefaultChatEngine {
                             attachments: None,
                             tool_calls: Some(tool_calls.clone()),
                             tool_call_id: None,
+                            thinking_content: None,
                             created_at: tc_now.clone(),
                         };
 
@@ -1957,6 +2477,7 @@ impl ChatEngine for DefaultChatEngine {
                                 attachments: None,
                                 tool_calls: None,
                                 tool_call_id: Some(result.tool_call_id.clone()),
+                                thinking_content: None,
                                 created_at: tool_now,
                             };
 
@@ -1985,6 +2506,8 @@ impl ChatEngine for DefaultChatEngine {
                         session_id: session_id_owned.clone(),
                         chunk: String::new(),
                         done: true,
+                        tool_break: false,
+                        thinking: None,
                     },
                 )
                 .map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
@@ -2002,6 +2525,7 @@ impl ChatEngine for DefaultChatEngine {
                 attachments: None,
                 tool_calls: None,
                 tool_call_id: None,
+                thinking_content: None,
                 created_at: assistant_now.clone(),
             };
 
@@ -2055,6 +2579,7 @@ impl DefaultChatEngine {
             attachments: message_attachments,
             tool_calls: None,
             tool_call_id: None,
+            thinking_content: None,
             created_at: now.clone(),
         };
 
@@ -2111,8 +2636,12 @@ impl DefaultChatEngine {
             h
         };
 
+        // Knowledge注入（system_promptモードのエントリをベースプロンプトに結合）
+        let system_prompt_with_knowledge =
+            self.inject_knowledge_to_system_prompt(session_id, &system_prompt);
+
         let llm_messages = self.build_context(
-            &system_prompt,
+            &system_prompt_with_knowledge,
             &memories,
             &thoughts,
             &history_without_last_user,
@@ -2133,7 +2662,10 @@ impl DefaultChatEngine {
         let assistant_now = chrono::Utc::now().to_rfc3339();
 
         match response {
-            LLMResponse::Text(text) => {
+            LLMResponse::Text {
+                content: text,
+                thinking,
+            } => {
                 // テキストレスポンス
                 app_handle
                     .emit(
@@ -2142,6 +2674,8 @@ impl DefaultChatEngine {
                             session_id: session_id.to_string(),
                             chunk: text.clone(),
                             done: false,
+                            tool_break: false,
+                            thinking: None,
                         },
                     )
                     .map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
@@ -2153,9 +2687,14 @@ impl DefaultChatEngine {
                             session_id: session_id.to_string(),
                             chunk: String::new(),
                             done: true,
+                            tool_break: false,
+                            thinking: None,
                         },
                     )
                     .map_err(|e| AppError::Io(format!("Failed to emit event: {}", e)))?;
+
+                // thinking content をtruncateしてDB保存用に準備
+                let thinking_content = thinking.map(|t| truncate_thinking_content(&t).to_string());
 
                 let assistant_message = ChatMessageRecord {
                     id: assistant_msg_id,
@@ -2165,6 +2704,7 @@ impl DefaultChatEngine {
                     attachments: None,
                     tool_calls: None,
                     tool_call_id: None,
+                    thinking_content,
                     created_at: assistant_now.clone(),
                 };
 
@@ -2179,7 +2719,9 @@ impl DefaultChatEngine {
                 let preview = truncate_str(&text, 50);
                 chat_repo::update_session_metadata(conn, session_id, &assistant_now, &preview)?;
             }
-            LLMResponse::ToolCalls(tool_calls) => {
+            LLMResponse::ToolCalls {
+                calls: tool_calls, ..
+            } => {
                 // tool_callレスポンス — イベント発火してDB保存
                 for tc in &tool_calls {
                     app_handle
@@ -2201,6 +2743,7 @@ impl DefaultChatEngine {
                     attachments: None,
                     tool_calls: Some(tool_calls),
                     tool_call_id: None,
+                    thinking_content: None,
                     created_at: assistant_now.clone(),
                 };
 
@@ -2221,6 +2764,16 @@ impl DefaultChatEngine {
         }
 
         Ok(())
+    }
+}
+
+/// Thinking content の文字数切り詰め（200,000文字上限、UTF-8境界考慮）
+/// 文字数（バイト数ではない）でカウントし、上限超過時は先頭から200,000文字分のスライスを返す。
+pub(crate) fn truncate_thinking_content(content: &str) -> &str {
+    const MAX_CHARS: usize = 200_000;
+    match content.char_indices().nth(MAX_CHARS) {
+        Some((byte_idx, _)) => &content[..byte_idx],
+        None => content,
     }
 }
 
@@ -2266,6 +2819,7 @@ impl DefaultChatEngine {
             attachments: message_attachments,
             tool_calls: None,
             tool_call_id: None,
+            thinking_content: None,
             created_at: now.clone(),
         };
 
@@ -2320,8 +2874,12 @@ impl DefaultChatEngine {
             h
         };
 
+        // Knowledge注入（system_promptモードのエントリをベースプロンプトに結合）
+        let system_prompt_with_knowledge =
+            self.inject_knowledge_to_system_prompt(session_id, &system_prompt);
+
         let llm_messages = self.build_context(
-            &system_prompt,
+            &system_prompt_with_knowledge,
             &memories,
             &thoughts,
             &history_without_last_user,
@@ -2341,7 +2899,8 @@ impl DefaultChatEngine {
                 .as_ref()
                 .map(|ps| ps.get_enabled_tools())
                 .unwrap_or_default();
-            self.filter_tools_by_session_permissions(&session_id_owned, global)
+            let filtered = self.filter_tools_by_session_permissions(&session_id_owned, global);
+            self.filter_knowledge_tools(&session_id_owned, filtered)
         };
         let tools_for_llm: Option<&[crate::models::ToolDefinition]> = if tool_definitions.is_empty()
         {
@@ -2351,6 +2910,8 @@ impl DefaultChatEngine {
         };
 
         let mut loop_messages = llm_messages;
+        // file_ops ツールが有効な場合、System メッセージに判断手順ガイダンスを追記
+        augment_system_prompt_with_file_ops_guidance(&mut loop_messages, &tool_definitions);
         let mut iteration = 0;
 
         loop {
@@ -2370,13 +2931,13 @@ impl DefaultChatEngine {
                     &loop_messages,
                     &self.current_llm_config(),
                     tools_for_llm,
-                    callback,
+                    (callback, Box::new(|_| {})),
                 )
                 .await?;
             drop(_llm_guard);
 
             match llm_response {
-                LLMResponse::Text(text) => {
+                LLMResponse::Text { content: text, .. } => {
                     // テキスト応答 — ループ終了
                     let assistant_msg_id = uuid::Uuid::new_v4().to_string();
                     let assistant_now = chrono::Utc::now().to_rfc3339();
@@ -2389,6 +2950,7 @@ impl DefaultChatEngine {
                         attachments: None,
                         tool_calls: None,
                         tool_call_id: None,
+                        thinking_content: None,
                         created_at: assistant_now.clone(),
                     };
 
@@ -2409,7 +2971,10 @@ impl DefaultChatEngine {
 
                     return Ok(());
                 }
-                LLMResponse::ToolCalls(mut tool_calls) => {
+                LLMResponse::ToolCalls {
+                    calls: mut tool_calls,
+                    ..
+                } => {
                     // ツール呼び出し応答
                     // セッション情報とプラグイン設定をツール呼び出しに注入
                     self.inject_tool_context(&mut tool_calls, &session_id_owned);
@@ -2425,6 +2990,7 @@ impl DefaultChatEngine {
                         attachments: None,
                         tool_calls: Some(tool_calls.clone()),
                         tool_call_id: None,
+                        thinking_content: None,
                         created_at: tc_now.clone(),
                     };
 
@@ -2477,6 +3043,7 @@ impl DefaultChatEngine {
                             attachments: None,
                             tool_calls: None,
                             tool_call_id: Some(result.tool_call_id.clone()),
+                            thinking_content: None,
                             created_at: tool_now,
                         };
 
@@ -2508,6 +3075,7 @@ impl DefaultChatEngine {
             attachments: None,
             tool_calls: None,
             tool_call_id: None,
+            thinking_content: None,
             created_at: assistant_now.clone(),
         };
 

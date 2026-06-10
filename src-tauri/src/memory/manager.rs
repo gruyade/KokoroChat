@@ -199,8 +199,8 @@ impl DefaultMemoryManager {
         drop(_llm_guard);
 
         let summary = match response {
-            LLMResponse::Text(text) => text,
-            LLMResponse::ToolCalls(_) => {
+            LLMResponse::Text { content: text, .. } => text,
+            LLMResponse::ToolCalls { calls: _, .. } => {
                 return Err(AppError::LlmApi(
                     "Unexpected tool call response during compression".to_string(),
                 ));
@@ -309,7 +309,10 @@ mod tests {
             _config: &LLMClientConfig,
             _tools: Option<&[ToolDefinition]>,
         ) -> Result<LLMResponse, AppError> {
-            Ok(LLMResponse::Text(self.response.clone()))
+            Ok(LLMResponse::Text {
+                content: self.response.clone(),
+                thinking: None,
+            })
         }
 
         async fn chat_stream(
@@ -317,9 +320,12 @@ mod tests {
             _messages: &[ChatMessage],
             _config: &LLMClientConfig,
             _tools: Option<&[ToolDefinition]>,
-            _callback: Box<dyn Fn(String) + Send>,
+            _callbacks: crate::llm::client::StreamCallbacks,
         ) -> Result<LLMResponse, AppError> {
-            Ok(LLMResponse::Text(self.response.clone()))
+            Ok(LLMResponse::Text {
+                content: self.response.clone(),
+                thinking: None,
+            })
         }
 
         async fn test_connection(&self, _config: &LLMClientConfig) -> Result<(), AppError> {
@@ -374,6 +380,7 @@ mod tests {
                 attachments: None,
                 tool_calls: None,
                 tool_call_id: None,
+                thinking_content: None,
                 created_at: format!("2024-01-01T{:02}:{:02}:00Z", i / 60, i % 60),
             };
             chat_repo::insert_message(conn, &msg).unwrap();
@@ -559,6 +566,7 @@ mod tests {
                     attachments: None,
                     tool_calls: None,
                     tool_call_id: None,
+                    thinking_content: None,
                     created_at: format!("2024-01-01T{:02}:{:02}:00Z", i / 60, i % 60),
                 };
                 chat_repo::insert_message(conn, &msg).unwrap();
@@ -733,6 +741,7 @@ mod tests {
                 attachments: None,
                 tool_calls: None,
                 tool_call_id: None,
+                thinking_content: None,
                 created_at: "2024-01-01T00:00:00Z".to_string(),
             },
             ChatMessageRecord {
@@ -743,6 +752,7 @@ mod tests {
                 attachments: None,
                 tool_calls: None,
                 tool_call_id: None,
+                thinking_content: None,
                 created_at: "2024-01-01T00:01:00Z".to_string(),
             },
         ];

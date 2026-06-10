@@ -32,7 +32,10 @@ impl LLMClient for MockLLMClient {
         _tools: Option<&[ToolDefinition]>,
     ) -> Result<LLMResponse, AppError> {
         let resp = self.response.lock().unwrap().clone();
-        Ok(LLMResponse::Text(resp))
+        Ok(LLMResponse::Text {
+            content: resp,
+            thinking: None,
+        })
     }
 
     async fn chat_stream(
@@ -40,10 +43,13 @@ impl LLMClient for MockLLMClient {
         _messages: &[ChatMessage],
         _config: &LLMClientConfig,
         _tools: Option<&[ToolDefinition]>,
-        _callback: Box<dyn Fn(String) + Send>,
+        _callbacks: crate::llm::client::StreamCallbacks,
     ) -> Result<LLMResponse, AppError> {
         let resp = self.response.lock().unwrap().clone();
-        Ok(LLMResponse::Text(resp))
+        Ok(LLMResponse::Text {
+            content: resp,
+            thinking: None,
+        })
     }
 
     async fn test_connection(&self, _config: &LLMClientConfig) -> Result<(), AppError> {
@@ -380,6 +386,7 @@ fn test_build_thought_prompt_with_messages_and_memories() {
             attachments: None,
             tool_calls: None,
             tool_call_id: None,
+            thinking_content: None,
             created_at: "2024-01-01T10:00:00Z".to_string(),
         },
         ChatMessageRecord {
@@ -390,6 +397,7 @@ fn test_build_thought_prompt_with_messages_and_memories() {
             attachments: None,
             tool_calls: None,
             tool_call_id: None,
+            thinking_content: None,
             created_at: "2024-01-01T10:01:00Z".to_string(),
         },
     ];
@@ -434,6 +442,7 @@ fn test_build_thought_prompt_spontaneous_role_mapped_to_assistant() {
         attachments: None,
         tool_calls: None,
         tool_call_id: None,
+        thinking_content: None,
         created_at: "2024-01-01T10:00:00Z".to_string(),
     }];
 

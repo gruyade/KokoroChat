@@ -39,8 +39,10 @@ impl CaptionGenerator {
         let response = llm_client.chat(&messages, llm_config, None).await?;
 
         match response {
-            LLMResponse::Text(caption) => Ok(caption.trim().to_string()),
-            LLMResponse::ToolCalls(_) => Err(AppError::LlmApi(
+            LLMResponse::Text {
+                content: caption, ..
+            } => Ok(caption.trim().to_string()),
+            LLMResponse::ToolCalls { calls: _, .. } => Err(AppError::LlmApi(
                 "Unexpected tool call response from caption generation".to_string(),
             )),
         }
