@@ -69,6 +69,7 @@ jobs:
       - name: Create or update release
         uses: softprops/action-gh-release@v2
         with:
+          token: ${{ secrets.GITHUB_TOKEN }}
           tag_name: v${{ steps.version.outputs.version }}
           name: KokoroChat v${{ steps.version.outputs.version }}
           body: |
