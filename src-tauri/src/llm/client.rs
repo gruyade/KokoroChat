@@ -1106,9 +1106,7 @@ impl LLMClient for OpenAICompatibleClient {
                                             // signature はスキップ
                                             continue;
                                         }
-                                        "text_delta"
-                                            if thinking_block_indices.contains(&index) =>
-                                        {
+                                        "text_delta" if thinking_block_indices.contains(&index) => {
                                             // Thinking ブロックに属するテキストはスキップ
                                             continue;
                                         }
