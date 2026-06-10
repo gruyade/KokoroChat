@@ -19,9 +19,8 @@ pub async fn read_text_file_for_knowledge(file_path: String) -> Result<String, A
     let path = Path::new(&file_path);
 
     // ファイルサイズチェック
-    let metadata = std::fs::metadata(path).map_err(|e| {
-        AppError::Validation(format!("ファイルにアクセスできない: {}", e))
-    })?;
+    let metadata = std::fs::metadata(path)
+        .map_err(|e| AppError::Validation(format!("ファイルにアクセスできない: {}", e)))?;
     if metadata.len() > MAX_KNOWLEDGE_FILE_SIZE {
         return Err(AppError::Validation(
             "ファイルサイズが上限(512KB)を超えている".to_string(),
@@ -29,9 +28,8 @@ pub async fn read_text_file_for_knowledge(file_path: String) -> Result<String, A
     }
 
     // UTF-8テキストとして読み取り
-    std::fs::read_to_string(path).map_err(|e| {
-        AppError::Validation(format!("UTF-8テキストとして読み取れない: {}", e))
-    })
+    std::fs::read_to_string(path)
+        .map_err(|e| AppError::Validation(format!("UTF-8テキストとして読み取れない: {}", e)))
 }
 
 /// ナレッジエントリ追加（session_id + file_name でUPSERT）

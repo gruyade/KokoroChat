@@ -186,8 +186,7 @@ mod tests {
     #[test]
     fn test_multiple_think_blocks() {
         let mut buf = ThinkTagBuffer::new();
-        let (text, thinking) =
-            buf.process_chunk("a<think>t1</think>b<think>t2</think>c");
+        let (text, thinking) = buf.process_chunk("a<think>t1</think>b<think>t2</think>c");
         assert_eq!(text, vec!["a", "b", "c"]);
         assert_eq!(thinking, vec!["t1", "t2"]);
     }

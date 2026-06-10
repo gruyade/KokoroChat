@@ -58,6 +58,7 @@ export default [
         React: 'readonly',
         navigator: 'readonly',
         Node: 'readonly',
+        Element: 'readonly',
         structuredClone: 'readonly',
         atob: 'readonly',
         crypto: 'readonly',

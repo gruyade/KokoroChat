@@ -191,7 +191,10 @@ mod tests {
             _tools: Option<&[ToolDefinition]>,
         ) -> Result<LLMResponse, AppError> {
             self.call_count.fetch_add(1, Ordering::SeqCst);
-            Ok(LLMResponse::Text { content: self.response.clone(), thinking: None })
+            Ok(LLMResponse::Text {
+                content: self.response.clone(),
+                thinking: None,
+            })
         }
 
         async fn chat_stream(
@@ -201,7 +204,10 @@ mod tests {
             _tools: Option<&[ToolDefinition]>,
             _callbacks: crate::llm::client::StreamCallbacks,
         ) -> Result<LLMResponse, AppError> {
-            Ok(LLMResponse::Text { content: self.response.clone(), thinking: None })
+            Ok(LLMResponse::Text {
+                content: self.response.clone(),
+                thinking: None,
+            })
         }
 
         async fn test_connection(&self, _config: &LLMClientConfig) -> Result<(), AppError> {

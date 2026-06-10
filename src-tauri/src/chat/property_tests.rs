@@ -34,7 +34,10 @@ mod tests {
             _config: &LLMClientConfig,
             _tools: Option<&[ToolDefinition]>,
         ) -> Result<LLMResponse, AppError> {
-            Ok(LLMResponse::Text { content: "mock".to_string(), thinking: None })
+            Ok(LLMResponse::Text {
+                content: "mock".to_string(),
+                thinking: None,
+            })
         }
 
         async fn chat_stream(
@@ -44,7 +47,10 @@ mod tests {
             _tools: Option<&[ToolDefinition]>,
             _callbacks: crate::llm::client::StreamCallbacks,
         ) -> Result<LLMResponse, AppError> {
-            Ok(LLMResponse::Text { content: "mock".to_string(), thinking: None })
+            Ok(LLMResponse::Text {
+                content: "mock".to_string(),
+                thinking: None,
+            })
         }
 
         async fn test_connection(&self, _config: &LLMClientConfig) -> Result<(), AppError> {

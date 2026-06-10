@@ -27,8 +27,14 @@ mod backward_compat_tests {
         let json = serde_json::to_value(&event).unwrap();
 
         // thinkingフィールドが存在し、nullであること
-        assert!(json.get("thinking").is_some(), "thinking field must be present in JSON");
-        assert!(json["thinking"].is_null(), "thinking field must be null when None");
+        assert!(
+            json.get("thinking").is_some(),
+            "thinking field must be present in JSON"
+        );
+        assert!(
+            json["thinking"].is_null(),
+            "thinking field must be null when None"
+        );
 
         // 通常フィールドは正常にシリアライズ
         assert_eq!(json["chunk"], "Hello");
@@ -227,7 +233,10 @@ mod backward_compat_tests {
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].id, "msg-compat-001");
         assert_eq!(messages[0].content, "通常の応答メッセージ");
-        assert!(messages[0].thinking_content.is_none(), "thinking_content should be None");
+        assert!(
+            messages[0].thinking_content.is_none(),
+            "thinking_content should be None"
+        );
         assert_eq!(messages[0].role, ChatRole::Assistant);
     }
 

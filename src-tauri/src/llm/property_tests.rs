@@ -305,8 +305,7 @@ mod think_tag_chunk_boundary_tests {
                 // 通常テキストセグメント
                 arb_text_segment(),
                 // <think>で囲まれたセグメント
-                arb_text_segment()
-                    .prop_map(|s| format!("<think>{}</think>", s)),
+                arb_text_segment().prop_map(|s| format!("<think>{}</think>", s)),
             ],
             1..=6,
         )
