@@ -6,6 +6,7 @@ import type { ToolCall } from '../../types/plugin';
 import { EditableMessage } from './EditableMessage';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { ToolResultRenderer } from './ToolResultRenderer';
+import { ThinkingSection } from './ThinkingSection';
 import { useChatStore, useCharacterStore, useConfigStore } from '../../stores';
 import { useAudioStore } from '../../hooks/useAudio';
 import { AvatarImage } from '../common/AvatarImage';
@@ -208,11 +209,15 @@ export function MessageBubble({ message, onRegenerate, onDelete }: MessageBubble
   const config = getRoleConfig(message.role);
   const [copied, setCopied] = useState(false);
   const [ttsLoading, setTtsLoading] = useState(false);
-  const { editingMessageId, setEditingMessage, editAndResend } = useChatStore();
+  const { editingMessageId, setEditingMessage, editAndResend, isStreaming: storeIsStreaming, streamingThinkingContent, messages: storeMessages } = useChatStore();
   const { selectedCharacterId, characters } = useCharacterStore();
   const { config: appConfig } = useConfigStore();
   const ttsEnabled = appConfig?.tts?.enabled ?? false;
   const selectedCharacter = characters.find((c) => c.id === selectedCharacterId);
+
+  // このメッセージがストリーミング中の最後のアシスタントメッセージかどうか判定
+  const isCurrentlyStreaming = storeIsStreaming && message.role === 'assistant' &&
+    storeMessages.length > 0 && storeMessages[storeMessages.length - 1]?.id === message.id;
 
   const isEditing = editingMessageId === message.id;
 
@@ -344,6 +349,14 @@ export function MessageBubble({ message, onRegenerate, onDelete }: MessageBubble
             />
           ) : (
             <>
+              {/* Thinking Section: ストリーミング中の最後のメッセージ */}
+              {isCurrentlyStreaming && streamingThinkingContent && (
+                <ThinkingSection thinkingContent={streamingThinkingContent} isStreaming={true} />
+              )}
+              {/* Thinking Section: 履歴メッセージ */}
+              {!isCurrentlyStreaming && message.thinking_content && (
+                <ThinkingSection thinkingContent={message.thinking_content} />
+              )}
               {/* テキストが空でない場合のみバブルを表示 */}
               {message.content.trim() !== '' && (
                 <div className={`rounded-lg px-3 py-2 text-sm ${config.bubble}`}>

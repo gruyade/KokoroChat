@@ -25,6 +25,8 @@ export interface ChatMessageRecord {
   tool_calls?: ToolCall[];
   /** tool結果のtool_call参照ID（role=tool時） */
   tool_call_id?: string;
+  /** LLMが返したthinking/reasoning content */
+  thinking_content?: string | null;
   created_at: string;
 }
 

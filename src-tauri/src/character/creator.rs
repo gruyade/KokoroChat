@@ -121,8 +121,8 @@ impl CharacterCreator for DefaultCharacterCreator {
             .await?;
 
         match response {
-            LLMResponse::Text(text) => Ok(text),
-            LLMResponse::ToolCalls(_) => Err(AppError::LlmApi(
+            LLMResponse::Text { content: text, .. } => Ok(text),
+            LLMResponse::ToolCalls { calls: _, .. } => Err(AppError::LlmApi(
                 "Unexpected tool_call response during system prompt generation".to_string(),
             )),
         }
@@ -191,7 +191,7 @@ mod tests {
             _tools: Option<&[ToolDefinition]>,
         ) -> Result<LLMResponse, AppError> {
             self.call_count.fetch_add(1, Ordering::SeqCst);
-            Ok(LLMResponse::Text(self.response.clone()))
+            Ok(LLMResponse::Text { content: self.response.clone(), thinking: None })
         }
 
         async fn chat_stream(
@@ -199,9 +199,9 @@ mod tests {
             _messages: &[ChatMessage],
             _config: &LLMClientConfig,
             _tools: Option<&[ToolDefinition]>,
-            _callback: Box<dyn Fn(String) + Send>,
+            _callbacks: crate::llm::client::StreamCallbacks,
         ) -> Result<LLMResponse, AppError> {
-            Ok(LLMResponse::Text(self.response.clone()))
+            Ok(LLMResponse::Text { content: self.response.clone(), thinking: None })
         }
 
         async fn test_connection(&self, _config: &LLMClientConfig) -> Result<(), AppError> {

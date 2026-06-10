@@ -118,7 +118,7 @@ pub async fn generate_speech_for_message(
     drop(_llm_guard);
 
     let speech_text = match response {
-        LLMResponse::Text(t) => t.trim().to_string(),
+        LLMResponse::Text { content: t, .. } => t.trim().to_string(),
         _ => text.clone(), // フォールバック: 全文使用
     };
 

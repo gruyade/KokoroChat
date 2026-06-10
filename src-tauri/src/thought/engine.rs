@@ -230,8 +230,8 @@ impl ThoughtEngine for DefaultThoughtEngine {
         drop(_llm_guard);
 
         let content = match response {
-            LLMResponse::Text(text) => text.trim().to_string(),
-            LLMResponse::ToolCalls(_) => {
+            LLMResponse::Text { content: text, .. } => text.trim().to_string(),
+            LLMResponse::ToolCalls { calls: _, .. } => {
                 return Err(AppError::LlmApi(
                     "Unexpected tool_calls response for thought generation".to_string(),
                 ));
@@ -431,8 +431,8 @@ impl ThoughtEngine for DefaultThoughtEngine {
                     drop(_llm_guard);
 
                     let content = match response {
-                        LLMResponse::Text(text) => text.trim().to_string(),
-                        LLMResponse::ToolCalls(_) => continue,
+                        LLMResponse::Text { content: text, .. } => text.trim().to_string(),
+                        LLMResponse::ToolCalls { calls: _, .. } => continue,
                     };
 
                     if content.is_empty() {

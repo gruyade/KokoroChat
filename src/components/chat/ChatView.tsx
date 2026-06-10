@@ -43,7 +43,7 @@ function isPositionInElement(el: Element, position: { x: number; y: number }): b
 }
 
 export function ChatView() {
-  const { currentSessionId, messages, isStreaming, isAbortable, streamingContent, error, isTTSGenerating, executingToolName, sendMessage, createSession, fetchHistory, stopGeneration } =
+  const { currentSessionId, messages, isStreaming, isAbortable, streamingContent, isThinking, error, isTTSGenerating, executingToolName, sendMessage, createSession, fetchHistory, stopGeneration } =
     useChatStore();
   const { selectedCharacterId, characters } = useCharacterStore();
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -419,7 +419,7 @@ export function ChatView() {
               onDelete={handleDeleteMessage}
             />
           ))}
-          {isStreaming && !executingToolName && <StreamingIndicator content={streamingContent} />}
+          {isStreaming && !executingToolName && <StreamingIndicator content={streamingContent} isThinking={isThinking} />}
           {executingToolName && (
             <div className="px-4 py-2">
               <ToolCallIndicator toolName={executingToolName} />

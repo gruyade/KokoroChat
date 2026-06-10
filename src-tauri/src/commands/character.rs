@@ -228,8 +228,8 @@ pub async fn improve_system_prompt(
     let response = state.llm_client.chat(&messages, &llm_config, None).await?;
 
     match response {
-        LLMResponse::Text(text) => Ok(text),
-        LLMResponse::ToolCalls(_) => Err(AppError::LlmApi(
+        LLMResponse::Text { content: text, .. } => Ok(text),
+        LLMResponse::ToolCalls { calls: _, .. } => Err(AppError::LlmApi(
             "Unexpected tool_call response during prompt improvement".to_string(),
         )),
     }
@@ -526,6 +526,7 @@ pub async fn import_character(
                             attachments,
                             tool_calls,
                             tool_call_id: msg_data.tool_call_id.clone(),
+                            thinking_content: None,
                             created_at: msg_data.created_at.clone(),
                         };
                         chat_repo::insert_message(conn, &message)?;

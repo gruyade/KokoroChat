@@ -39,7 +39,7 @@ mod tests {
             _config: &LLMClientConfig,
             _tools: Option<&[ToolDefinition]>,
         ) -> Result<LLMResponse, AppError> {
-            Ok(LLMResponse::Text("mock response".to_string()))
+            Ok(LLMResponse::Text { content: "mock response".to_string(), thinking: None })
         }
 
         async fn chat_stream(
@@ -47,9 +47,9 @@ mod tests {
             _messages: &[ChatMessage],
             _config: &LLMClientConfig,
             _tools: Option<&[ToolDefinition]>,
-            _callback: Box<dyn Fn(String) + Send>,
+            _callbacks: crate::llm::client::StreamCallbacks,
         ) -> Result<LLMResponse, AppError> {
-            Ok(LLMResponse::Text("mock stream".to_string()))
+            Ok(LLMResponse::Text { content: "mock stream".to_string(), thinking: None })
         }
 
         async fn test_connection(&self, _config: &LLMClientConfig) -> Result<(), AppError> {
@@ -358,6 +358,7 @@ mod tests {
                     attachments: None,
                     tool_calls: None,
                     tool_call_id,
+                    thinking_content: None,
                     created_at,
                 }
             })
@@ -633,6 +634,7 @@ mod tests {
                             attachments,
                             tool_calls,
                             tool_call_id: msg_data.tool_call_id.clone(),
+                            thinking_content: None,
                             created_at: msg_data.created_at.clone(),
                         };
                         chat_repo::insert_message(conn, &message)?;

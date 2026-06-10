@@ -10,6 +10,8 @@ interface ChatStreamEvent {
   done: boolean;
   /** true のとき pre-tool バブルを確定しストリーミングをリセット（isStreaming は維持）*/
   tool_break: boolean;
+  /** Thinking/reasoning content のデルタ（nullの場合はthinkingなし） */
+  thinking?: string | null;
 }
 
 /** spontaneous:message イベントペイロード */
@@ -47,7 +49,7 @@ export function useChat() {
 
       const unlistenStream = await listen<ChatStreamEvent>('chat:stream', (event) => {
         if (cancelled) return;
-        const { chunk, done, tool_break } = event.payload;
+        const { chunk, done, tool_break, thinking } = event.payload;
         if (done && tool_break) {
           // ツール実行前テキストをバブルとして確定し、ストリーミング状態は維持
           useChatStore.getState().commitPreToolContent(streamContent);
@@ -61,8 +63,15 @@ export function useChat() {
             fetchHistory(currentSessionId);
           }
         } else {
-          streamContent += chunk;
-          useChatStore.getState().appendStreamChunk(chunk);
+          // Thinking contentデルタの処理
+          if (thinking) {
+            useChatStore.getState().appendThinkingChunk(thinking);
+          }
+          // 通常テキストチャンクの処理
+          if (chunk) {
+            streamContent += chunk;
+            useChatStore.getState().appendStreamChunk(chunk);
+          }
         }
       });
       if (cancelled) { unlistenStream(); return; }

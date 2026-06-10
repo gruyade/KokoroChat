@@ -13,7 +13,8 @@ mod tests {
     use crate::llm::client::{ChatMessage, LLMClient, LLMClientConfig, LLMResponse, MessageRole};
     use crate::models::tts::TTSConfig;
     use crate::models::{
-        Attachment, AttachmentType, Character, ChatRole, Memory, ToolCall, ToolDefinition,
+        Attachment, AttachmentType, Character, ChatMessageRecord, ChatRole, ChatSession, Memory,
+        ToolCall, ToolDefinition,
     };
     use crate::tts::connector::TTSConnector;
 
@@ -39,7 +40,7 @@ mod tests {
             _config: &LLMClientConfig,
             _tools: Option<&[ToolDefinition]>,
         ) -> Result<LLMResponse, AppError> {
-            Ok(LLMResponse::Text(self.response_text.clone()))
+            Ok(LLMResponse::Text { content: self.response_text.clone(), thinking: None })
         }
 
         async fn chat_stream(
@@ -47,7 +48,7 @@ mod tests {
             _messages: &[ChatMessage],
             _config: &LLMClientConfig,
             _tools: Option<&[ToolDefinition]>,
-            callback: Box<dyn Fn(String) + Send>,
+            callbacks: crate::llm::client::StreamCallbacks,
         ) -> Result<LLMResponse, AppError> {
             // チャンクごとにコールバック呼び出しをシミュレート
             let chunks: Vec<&str> = self.response_text.split(' ').collect();
@@ -59,9 +60,9 @@ mod tests {
                     chunk.to_string()
                 };
                 full.push_str(&text);
-                callback(text);
+                (callbacks.0)(text);
             }
-            Ok(LLMResponse::Text(full))
+            Ok(LLMResponse::Text { content: full, thinking: None })
         }
 
         async fn test_connection(&self, _config: &LLMClientConfig) -> Result<(), AppError> {
@@ -80,12 +81,12 @@ mod tests {
             _config: &LLMClientConfig,
             _tools: Option<&[ToolDefinition]>,
         ) -> Result<LLMResponse, AppError> {
-            Ok(LLMResponse::ToolCalls(vec![ToolCall {
+            Ok(LLMResponse::ToolCalls { calls: vec![ToolCall {
                 id: "call_001".to_string(),
                 name: "calculator".to_string(),
                 arguments: serde_json::json!({"expression": "2+2"}),
                 context: None,
-            }]))
+            }], thinking: None })
         }
 
         async fn chat_stream(
@@ -93,9 +94,9 @@ mod tests {
             _messages: &[ChatMessage],
             _config: &LLMClientConfig,
             _tools: Option<&[ToolDefinition]>,
-            _callback: Box<dyn Fn(String) + Send>,
+            _callbacks: crate::llm::client::StreamCallbacks,
         ) -> Result<LLMResponse, AppError> {
-            Ok(LLMResponse::Text(String::new()))
+            Ok(LLMResponse::Text { content: String::new(), thinking: None })
         }
 
         async fn test_connection(&self, _config: &LLMClientConfig) -> Result<(), AppError> {
@@ -130,7 +131,7 @@ mod tests {
         ) -> Result<LLMResponse, AppError> {
             let mut cap = self.captured.lock().unwrap();
             *cap = messages.to_vec();
-            Ok(LLMResponse::Text("OK".to_string()))
+            Ok(LLMResponse::Text { content: "OK".to_string(), thinking: None })
         }
 
         async fn chat_stream(
@@ -138,12 +139,12 @@ mod tests {
             messages: &[ChatMessage],
             _config: &LLMClientConfig,
             _tools: Option<&[ToolDefinition]>,
-            callback: Box<dyn Fn(String) + Send>,
+            callbacks: crate::llm::client::StreamCallbacks,
         ) -> Result<LLMResponse, AppError> {
             let mut cap = self.captured.lock().unwrap();
             *cap = messages.to_vec();
-            callback("OK".to_string());
-            Ok(LLMResponse::Text("OK".to_string()))
+            (callbacks.0)("OK".to_string());
+            Ok(LLMResponse::Text { content: "OK".to_string(), thinking: None })
         }
 
         async fn test_connection(&self, _config: &LLMClientConfig) -> Result<(), AppError> {
@@ -491,6 +492,7 @@ mod tests {
                 attachments: None,
                 tool_calls: None,
                 tool_call_id: None,
+                thinking_content: None,
                 created_at: "2024-01-01T10:00:00Z".to_string(),
             },
             crate::models::ChatMessageRecord {
@@ -501,6 +503,7 @@ mod tests {
                 attachments: None,
                 tool_calls: None,
                 tool_call_id: None,
+                thinking_content: None,
                 created_at: "2024-01-01T10:01:00Z".to_string(),
             },
         ];
@@ -670,6 +673,7 @@ mod tests {
             attachments: None,
             tool_calls: None,
             tool_call_id: None,
+            thinking_content: None,
             created_at: "2024-01-01T10:00:00Z".to_string(),
         }];
 
@@ -717,6 +721,7 @@ mod tests {
             attachments: None,
             tool_calls: None,
             tool_call_id: None,
+            thinking_content: None,
             created_at: "2024-01-01T10:00:00Z".to_string(),
         }];
 
@@ -913,7 +918,7 @@ mod tests {
                 Ok(responses
                     .last()
                     .cloned()
-                    .unwrap_or(LLMResponse::Text("done".to_string())))
+                    .unwrap_or(LLMResponse::Text { content: "done".to_string(), thinking: None }))
             }
         }
 
@@ -922,7 +927,7 @@ mod tests {
             _messages: &[ChatMessage],
             _config: &LLMClientConfig,
             _tools: Option<&[ToolDefinition]>,
-            callback: Box<dyn Fn(String) + Send>,
+            callbacks: crate::llm::client::StreamCallbacks,
         ) -> Result<LLMResponse, AppError> {
             let mut count = self.call_count.lock().unwrap();
             let responses = self.responses.lock().unwrap();
@@ -934,14 +939,14 @@ mod tests {
                 responses
                     .last()
                     .cloned()
-                    .unwrap_or(LLMResponse::Text("done".to_string()))
+                    .unwrap_or(LLMResponse::Text { content: "done".to_string(), thinking: None })
             };
 
             match &response {
-                LLMResponse::Text(text) => {
-                    callback(text.clone());
+                LLMResponse::Text { content: text, .. } => {
+                    (callbacks.0)(text.clone());
                 }
-                LLMResponse::ToolCalls(_) => {
+                LLMResponse::ToolCalls { .. } => {
                     // ToolCallsの場合はコールバックを呼ばない
                 }
             }
@@ -1005,14 +1010,14 @@ mod tests {
         let db = setup_db_with_character();
         let llm = Arc::new(SequentialMockLLMClient::new(vec![
             // 1回目: ToolCallsを返す
-            LLMResponse::ToolCalls(vec![ToolCall {
+            LLMResponse::ToolCalls { calls: vec![ToolCall {
                 id: "call_001".to_string(),
                 name: "calculator".to_string(),
                 arguments: serde_json::json!({"expression": "2+2"}),
                 context: None,
-            }]),
+            }], thinking: None },
             // 2回目: テキストを返す
-            LLMResponse::Text("The answer is 4.".to_string()),
+            LLMResponse::Text { content: "The answer is 4.".to_string(), thinking: None },
         ]));
         let plugin_system: Arc<dyn PluginSystem> = Arc::new(MockPluginSystem::new());
         let engine = DefaultChatEngine::new(
@@ -1074,12 +1079,12 @@ mod tests {
         // 常にToolCallsを返すレスポンスを15個用意（10回ループ + 安全マージン）
         let responses: Vec<LLMResponse> = (0..15)
             .map(|i| {
-                LLMResponse::ToolCalls(vec![ToolCall {
+                LLMResponse::ToolCalls { calls: vec![ToolCall {
                     id: format!("call_{:03}", i + 1),
                     name: "calculator".to_string(),
                     arguments: serde_json::json!({"expression": "loop"}),
                     context: None,
-                }])
+                }], thinking: None }
             })
             .collect();
 
@@ -1124,14 +1129,14 @@ mod tests {
         let db = setup_db_with_character();
         let llm = Arc::new(SequentialMockLLMClient::new(vec![
             // 1回目: ToolCallsを返す
-            LLMResponse::ToolCalls(vec![ToolCall {
+            LLMResponse::ToolCalls { calls: vec![ToolCall {
                 id: "call_001".to_string(),
                 name: "calculator".to_string(),
                 arguments: serde_json::json!({"expression": "2+2"}),
                 context: None,
-            }]),
+            }], thinking: None },
             // 2回目: テキストを返す（エラー結果を受けてLLMが応答）
-            LLMResponse::Text("Sorry, the tool is not available.".to_string()),
+            LLMResponse::Text { content: "Sorry, the tool is not available.".to_string(), thinking: None },
         ]));
 
         // plugin_system = None で作成
@@ -1204,13 +1209,13 @@ mod tests {
 
         // LLMモック: 1回目=ToolCall, 2回目=テキスト応答
         let llm = Arc::new(SequentialMockLLMClient::new(vec![
-            LLMResponse::ToolCalls(vec![ToolCall {
+            LLMResponse::ToolCalls { calls: vec![ToolCall {
                 id: "call_calc_001".to_string(),
                 name: "calculate".to_string(),
                 arguments: serde_json::json!({"expression": "3 + 5 * 2"}),
                 context: None,
-            }]),
-            LLMResponse::Text("The result of 3 + 5 * 2 is 13.".to_string()),
+            }], thinking: None },
+            LLMResponse::Text { content: "The result of 3 + 5 * 2 is 13.".to_string(), thinking: None },
         ]));
 
         let engine = DefaultChatEngine::new(
@@ -1280,13 +1285,13 @@ mod tests {
 
         // LLMモック: 1回目=ゼロ除算のToolCall, 2回目=エラーを受けたテキスト応答
         let llm = Arc::new(SequentialMockLLMClient::new(vec![
-            LLMResponse::ToolCalls(vec![ToolCall {
+            LLMResponse::ToolCalls { calls: vec![ToolCall {
                 id: "call_div_zero".to_string(),
                 name: "calculate".to_string(),
                 arguments: serde_json::json!({"expression": "10 / 0"}),
                 context: None,
-            }]),
-            LLMResponse::Text("I'm sorry, division by zero is not allowed.".to_string()),
+            }], thinking: None },
+            LLMResponse::Text { content: "I'm sorry, division by zero is not allowed.".to_string(), thinking: None },
         ]));
 
         let engine = DefaultChatEngine::new(
@@ -1341,19 +1346,19 @@ mod tests {
 
         // LLMモック: 1回目=ToolCall(2+3), 2回目=ToolCall(5*4), 3回目=テキスト
         let llm = Arc::new(SequentialMockLLMClient::new(vec![
-            LLMResponse::ToolCalls(vec![ToolCall {
+            LLMResponse::ToolCalls { calls: vec![ToolCall {
                 id: "call_step1".to_string(),
                 name: "calculate".to_string(),
                 arguments: serde_json::json!({"expression": "2 + 3"}),
                 context: None,
-            }]),
-            LLMResponse::ToolCalls(vec![ToolCall {
+            }], thinking: None },
+            LLMResponse::ToolCalls { calls: vec![ToolCall {
                 id: "call_step2".to_string(),
                 name: "calculate".to_string(),
                 arguments: serde_json::json!({"expression": "5 * 4"}),
                 context: None,
-            }]),
-            LLMResponse::Text("First: 5, Second: 20. Total: 25.".to_string()),
+            }], thinking: None },
+            LLMResponse::Text { content: "First: 5, Second: 20. Total: 25.".to_string(), thinking: None },
         ]));
 
         let engine = DefaultChatEngine::new(
@@ -1397,5 +1402,316 @@ mod tests {
         // 最終応答
         assert_eq!(messages[5].role, ChatRole::Assistant);
         assert_eq!(messages[5].content, "First: 5, Second: 20. Total: 25.");
+    }
+
+    // =========================================================================
+    // truncate_thinking_content テスト
+    // =========================================================================
+
+    use crate::chat::engine::truncate_thinking_content;
+
+    #[test]
+    fn test_truncate_thinking_content_short_string() {
+        let content = "短いテキスト";
+        let result = truncate_thinking_content(content);
+        assert_eq!(result, content);
+    }
+
+    #[test]
+    fn test_truncate_thinking_content_exact_limit() {
+        // ちょうど200,000文字
+        let content: String = "a".repeat(200_000);
+        let result = truncate_thinking_content(&content);
+        assert_eq!(result.chars().count(), 200_000);
+        assert_eq!(result, content.as_str());
+    }
+
+    #[test]
+    fn test_truncate_thinking_content_exceeds_limit() {
+        let content: String = "b".repeat(200_001);
+        let result = truncate_thinking_content(&content);
+        assert_eq!(result.chars().count(), 200_000);
+    }
+
+    #[test]
+    fn test_truncate_thinking_content_multibyte_chars() {
+        // マルチバイト文字（日本語）で200,001文字
+        let content: String = "あ".repeat(200_001);
+        let result = truncate_thinking_content(&content);
+        assert_eq!(result.chars().count(), 200_000);
+        // 結果は有効なUTF-8文字列
+        assert!(std::str::from_utf8(result.as_bytes()).is_ok());
+    }
+
+    #[test]
+    fn test_truncate_thinking_content_empty_string() {
+        let result = truncate_thinking_content("");
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_truncate_thinking_content_is_prefix() {
+        let content: String = "abcdefghij".repeat(25_000); // 250,000文字
+        let result = truncate_thinking_content(&content);
+        assert!(content.starts_with(result));
+    }
+
+    // =========================================================================
+    // Integration Tests: Thinking Content — Full Layer Integration
+    //
+    // Task 9.1: thinking付きストリーム→DB保存→履歴取得→UI表示
+    //
+    // 1. Mock LLMClientがthinking付きLLMResponseを返す
+    // 2. DB保存後のget_messagesでthinking_contentが含まれることを確認
+    // 3. ChatEngine.get_historyでthinking_contentが正しく取得されることを確認
+    //
+    // **Validates: Requirements 1.5, 2.2, 4.2, 4.3, 5.1**
+    // =========================================================================
+
+    /// thinking付きレスポンスを返すMockLLMClient
+    struct MockThinkingLLMClient {
+        response_text: String,
+        thinking_text: Option<String>,
+    }
+
+    impl MockThinkingLLMClient {
+        fn new(response_text: &str, thinking_text: Option<&str>) -> Self {
+            Self {
+                response_text: response_text.to_string(),
+                thinking_text: thinking_text.map(|s| s.to_string()),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl LLMClient for MockThinkingLLMClient {
+        async fn chat(
+            &self,
+            _messages: &[ChatMessage],
+            _config: &LLMClientConfig,
+            _tools: Option<&[ToolDefinition]>,
+        ) -> Result<LLMResponse, AppError> {
+            Ok(LLMResponse::Text {
+                content: self.response_text.clone(),
+                thinking: self.thinking_text.clone(),
+            })
+        }
+
+        async fn chat_stream(
+            &self,
+            _messages: &[ChatMessage],
+            _config: &LLMClientConfig,
+            _tools: Option<&[ToolDefinition]>,
+            callbacks: crate::llm::client::StreamCallbacks,
+        ) -> Result<LLMResponse, AppError> {
+            // thinking_callbackでthinkingチャンクを送信
+            if let Some(ref thinking) = self.thinking_text {
+                (callbacks.1)(thinking.clone());
+            }
+            // text_callbackでテキストチャンクを送信
+            (callbacks.0)(self.response_text.clone());
+            Ok(LLMResponse::Text {
+                content: self.response_text.clone(),
+                thinking: self.thinking_text.clone(),
+            })
+        }
+
+        async fn test_connection(&self, _config: &LLMClientConfig) -> Result<(), AppError> {
+            Ok(())
+        }
+    }
+
+    /// Integration Test: thinking_content付きメッセージのDB保存と取得のラウンドトリップ
+    ///
+    /// LLMがthinking付きレスポンスを返すシナリオで:
+    /// 1. ChatMessageRecordにthinking_contentを設定してinsert
+    /// 2. get_messagesで取得したレコードにthinking_contentが含まれることを確認
+    ///
+    /// **Validates: Requirements 4.2, 4.3**
+    #[test]
+    fn test_integration_thinking_content_db_roundtrip() {
+        let db = setup_db_with_character();
+        let db_lock = db.lock().unwrap();
+        let conn = db_lock.connection();
+
+        // セッション作成
+        let session = ChatSession {
+            id: "sess-thinking-001".to_string(),
+            character_id: "char-001".to_string(),
+            title: None,
+            last_message_at: None,
+            last_message_preview: None,
+            created_at: "2024-01-01T00:00:00Z".to_string(),
+        };
+        chat_repo::insert_session(conn, &session).unwrap();
+
+        // thinking_content付きのアシスタントメッセージをDB保存
+        let thinking_text = "I need to think about this carefully. The user is asking about quantum physics, so I should explain wave-particle duality first.";
+        let msg = ChatMessageRecord {
+            id: "msg-thinking-001".to_string(),
+            session_id: "sess-thinking-001".to_string(),
+            role: ChatRole::Assistant,
+            content: "Quantum physics explains...".to_string(),
+            attachments: None,
+            tool_calls: None,
+            tool_call_id: None,
+            thinking_content: Some(thinking_text.to_string()),
+            created_at: "2024-01-01T10:00:00Z".to_string(),
+        };
+        chat_repo::insert_message(conn, &msg).unwrap();
+
+        // get_messagesで取得してthinking_contentが含まれることを確認
+        let messages = chat_repo::get_messages(conn, "sess-thinking-001").unwrap();
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].id, "msg-thinking-001");
+        assert_eq!(messages[0].role, ChatRole::Assistant);
+        assert_eq!(messages[0].content, "Quantum physics explains...");
+        assert_eq!(
+            messages[0].thinking_content,
+            Some(thinking_text.to_string())
+        );
+    }
+
+    /// Integration Test: thinking_content=Noneのメッセージが正常に保存・取得される
+    ///
+    /// thinking_contentがない通常メッセージの後方互換性を確認
+    ///
+    /// **Validates: Requirements 4.4**
+    #[test]
+    fn test_integration_thinking_content_none_roundtrip() {
+        let db = setup_db_with_character();
+        let db_lock = db.lock().unwrap();
+        let conn = db_lock.connection();
+
+        let session = ChatSession {
+            id: "sess-thinking-002".to_string(),
+            character_id: "char-001".to_string(),
+            title: None,
+            last_message_at: None,
+            last_message_preview: None,
+            created_at: "2024-01-01T00:00:00Z".to_string(),
+        };
+        chat_repo::insert_session(conn, &session).unwrap();
+
+        // thinking_content=Noneのメッセージ
+        let msg = ChatMessageRecord {
+            id: "msg-no-thinking-001".to_string(),
+            session_id: "sess-thinking-002".to_string(),
+            role: ChatRole::Assistant,
+            content: "Hello!".to_string(),
+            attachments: None,
+            tool_calls: None,
+            tool_call_id: None,
+            thinking_content: None,
+            created_at: "2024-01-01T10:00:00Z".to_string(),
+        };
+        chat_repo::insert_message(conn, &msg).unwrap();
+
+        let messages = chat_repo::get_messages(conn, "sess-thinking-002").unwrap();
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].thinking_content, None);
+    }
+
+    /// Integration Test: ChatEngine.get_historyでthinking_contentが返される
+    ///
+    /// エンジンレベルのget_history呼び出しでthinking_contentが正しく含まれることを確認
+    ///
+    /// **Validates: Requirements 4.3**
+    #[tokio::test]
+    async fn test_integration_engine_get_history_includes_thinking() {
+        let db = setup_db_with_character();
+        let llm = Arc::new(MockThinkingLLMClient::new("hello", Some("thinking content")));
+        let engine = DefaultChatEngine::new(
+            db.clone(),
+            llm,
+            test_config(),
+            test_llm_lock(),
+            test_tts_connector(),
+            None,
+            None,
+        );
+
+        let session_id = engine.create_session("char-001").await.unwrap();
+
+        // thinking_content付きメッセージを直接DBに挿入
+        {
+            let db_lock = db.lock().unwrap();
+            let conn = db_lock.connection();
+            let msg = ChatMessageRecord {
+                id: "msg-hist-001".to_string(),
+                session_id: session_id.clone(),
+                role: ChatRole::Assistant,
+                content: "response text".to_string(),
+                attachments: None,
+                tool_calls: None,
+                tool_call_id: None,
+                thinking_content: Some("deep thinking process here".to_string()),
+                created_at: "2024-01-01T10:00:00Z".to_string(),
+            };
+            chat_repo::insert_message(conn, &msg).unwrap();
+        }
+
+        // get_historyで取得
+        let history = engine.get_history(&session_id).await.unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(
+            history[0].thinking_content,
+            Some("deep thinking process here".to_string())
+        );
+    }
+
+    /// Integration Test: Mock LLM → LLMResponse.thinking → ChatStreamEvent確認
+    ///
+    /// MockThinkingLLMClientのchat_streamがthinking_callbackを呼び出し、
+    /// LLMResponse内のthinkingフィールドに値が含まれることを確認
+    ///
+    /// **Validates: Requirements 1.5, 2.2**
+    #[tokio::test]
+    async fn test_integration_llm_response_contains_thinking() {
+        let llm = MockThinkingLLMClient::new("hello world", Some("model is thinking deeply"));
+
+        let text_chunks = Arc::new(Mutex::new(Vec::<String>::new()));
+        let thinking_chunks = Arc::new(Mutex::new(Vec::<String>::new()));
+
+        let text_clone = text_chunks.clone();
+        let thinking_clone = thinking_chunks.clone();
+
+        let text_callback: Box<dyn Fn(String) + Send> = Box::new(move |chunk: String| {
+            text_clone.lock().unwrap().push(chunk);
+        });
+        let thinking_callback: Box<dyn Fn(String) + Send> = Box::new(move |chunk: String| {
+            thinking_clone.lock().unwrap().push(chunk);
+        });
+
+        let config = LLMClientConfig {
+            base_url: "http://localhost:8080/v1".to_string(),
+            model: "test-model".to_string(),
+            api_key: None,
+            temperature: 0.7,
+            provider: None,
+        };
+
+        let response = llm
+            .chat_stream(&[], &config, None, (text_callback, thinking_callback))
+            .await
+            .unwrap();
+
+        // LLMResponseにthinkingが含まれることを確認
+        match response {
+            LLMResponse::Text { content, thinking } => {
+                assert_eq!(content, "hello world");
+                assert_eq!(thinking, Some("model is thinking deeply".to_string()));
+            }
+            _ => panic!("Expected LLMResponse::Text"),
+        }
+
+        // コールバックが正しく呼ばれたことを確認
+        let text_received = text_chunks.lock().unwrap();
+        assert_eq!(text_received.len(), 1);
+        assert_eq!(text_received[0], "hello world");
+
+        let thinking_received = thinking_chunks.lock().unwrap();
+        assert_eq!(thinking_received.len(), 1);
+        assert_eq!(thinking_received[0], "model is thinking deeply");
     }
 }

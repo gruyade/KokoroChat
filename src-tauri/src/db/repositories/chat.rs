@@ -111,8 +111,8 @@ pub fn insert_message(conn: &Connection, message: &ChatMessageRecord) -> Result<
         .transpose()?;
 
     conn.execute(
-        "INSERT INTO chat_messages (id, session_id, role, content, attachments, tool_calls, tool_call_id, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        "INSERT INTO chat_messages (id, session_id, role, content, attachments, tool_calls, tool_call_id, thinking_content, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
         params![
             message.id,
             message.session_id,
@@ -121,6 +121,7 @@ pub fn insert_message(conn: &Connection, message: &ChatMessageRecord) -> Result<
             attachments_json,
             tool_calls_json,
             message.tool_call_id,
+            message.thinking_content,
             message.created_at,
         ],
     )?;
@@ -186,7 +187,7 @@ pub fn get_messages(
     session_id: &str,
 ) -> Result<Vec<ChatMessageRecord>, AppError> {
     let mut stmt = conn.prepare(
-        "SELECT id, session_id, role, content, attachments, tool_calls, tool_call_id, created_at
+        "SELECT id, session_id, role, content, attachments, tool_calls, tool_call_id, thinking_content, created_at
          FROM chat_messages WHERE session_id = ?1
          ORDER BY created_at ASC",
     )?;
@@ -200,7 +201,8 @@ pub fn get_messages(
             row.get::<_, Option<String>>(4)?,
             row.get::<_, Option<String>>(5)?,
             row.get::<_, Option<String>>(6)?,
-            row.get::<_, String>(7)?,
+            row.get::<_, Option<String>>(7)?,
+            row.get::<_, String>(8)?,
         ))
     })?;
 
@@ -214,6 +216,7 @@ pub fn get_messages(
             attachments_str,
             tool_calls_str,
             tool_call_id,
+            thinking_content,
             created_at,
         ) = row?;
 
@@ -241,6 +244,7 @@ pub fn get_messages(
             attachments,
             tool_calls,
             tool_call_id,
+            thinking_content,
             created_at,
         });
     }
@@ -292,6 +296,7 @@ mod tests {
             attachments: None,
             tool_calls: None,
             tool_call_id: None,
+            thinking_content: None,
             created_at: "2024-01-01T00:00:00Z".to_string(),
         }
     }
@@ -393,6 +398,7 @@ mod tests {
             attachments: None,
             tool_calls: None,
             tool_call_id: None,
+            thinking_content: None,
             created_at: "2024-01-01T10:00:00Z".to_string(),
         };
 
@@ -404,6 +410,7 @@ mod tests {
             attachments: None,
             tool_calls: None,
             tool_call_id: None,
+            thinking_content: None,
             created_at: "2024-01-01T10:01:00Z".to_string(),
         };
 
@@ -439,6 +446,7 @@ mod tests {
             }]),
             tool_calls: None,
             tool_call_id: None,
+            thinking_content: None,
             created_at: "2024-01-01T10:00:00Z".to_string(),
         };
 
@@ -475,6 +483,7 @@ mod tests {
                 context: None,
             }]),
             tool_call_id: None,
+            thinking_content: None,
             created_at: "2024-01-01T10:00:00Z".to_string(),
         };
 
@@ -502,6 +511,7 @@ mod tests {
             attachments: None,
             tool_calls: None,
             tool_call_id: Some("call-001".to_string()),
+            thinking_content: None,
             created_at: "2024-01-01T10:00:00Z".to_string(),
         };
 
@@ -541,6 +551,7 @@ mod tests {
             attachments: None,
             tool_calls: None,
             tool_call_id: None,
+            thinking_content: None,
             created_at: "2024-01-01T10:00:00Z".to_string(),
         };
         let msg2 = ChatMessageRecord {
@@ -551,6 +562,7 @@ mod tests {
             attachments: None,
             tool_calls: None,
             tool_call_id: None,
+            thinking_content: None,
             created_at: "2024-01-01T10:01:00Z".to_string(),
         };
         let msg3 = ChatMessageRecord {
@@ -561,6 +573,7 @@ mod tests {
             attachments: None,
             tool_calls: None,
             tool_call_id: None,
+            thinking_content: None,
             created_at: "2024-01-01T10:02:00Z".to_string(),
         };
 
@@ -592,6 +605,7 @@ mod tests {
             attachments: None,
             tool_calls: None,
             tool_call_id: None,
+            thinking_content: None,
             created_at: "2024-01-01T10:00:00Z".to_string(),
         };
 
@@ -620,6 +634,7 @@ mod tests {
             attachments: None,
             tool_calls: None,
             tool_call_id: None,
+            thinking_content: None,
             created_at: "2024-01-01T10:00:00Z".to_string(),
         };
 

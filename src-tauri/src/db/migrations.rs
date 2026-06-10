@@ -32,6 +32,7 @@ CREATE TABLE IF NOT EXISTS chat_messages (
   attachments TEXT,
   tool_calls TEXT,
   tool_call_id TEXT,
+  thinking_content TEXT,
   created_at TEXT NOT NULL
 );
 

@@ -84,7 +84,7 @@ pub async fn debug_compress_memory(
 
     let response = state.llm_client.chat(&llm_messages, &config, None).await?;
     let summary = match response {
-        LLMResponse::Text(text) => text,
+        LLMResponse::Text { content: text, .. } => text,
         _ => return Err(AppError::LlmApi("Unexpected response".to_string())),
     };
 
@@ -201,7 +201,7 @@ pub async fn debug_trigger_spontaneous(
     let response = state.llm_client.chat(&messages, &config, None).await?;
 
     let content = match response {
-        LLMResponse::Text(text) => text.trim().to_string(),
+        LLMResponse::Text { content: text, .. } => text.trim().to_string(),
         _ => return Err(AppError::LlmApi("Unexpected response".to_string())),
     };
 
@@ -219,6 +219,7 @@ pub async fn debug_trigger_spontaneous(
         attachments: None,
         tool_calls: None,
         tool_call_id: None,
+        thinking_content: None,
         created_at: now,
     };
 

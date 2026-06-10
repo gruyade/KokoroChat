@@ -72,6 +72,7 @@ mod tests {
                     attachments: None,
                     tool_calls: None,
                     tool_call_id: None,
+                    thinking_content: None,
                     created_at,
                 },
             )
@@ -339,6 +340,7 @@ mod tests {
                 attachments: None,
                 tool_calls: None,
                 tool_call_id: None,
+                thinking_content: None,
                 created_at,
             };
 
@@ -389,6 +391,7 @@ mod tests {
                 attachments: None,
                 tool_calls: None,
                 tool_call_id: None,
+                thinking_content: None,
                 created_at: "2024-01-01T00:00:00Z".to_string(),
             };
 
@@ -400,6 +403,7 @@ mod tests {
                 attachments: None,
                 tool_calls: None,
                 tool_call_id: None,
+                thinking_content: None,
                 created_at: "2024-01-01T00:00:00Z".to_string(),
             };
 
@@ -411,6 +415,7 @@ mod tests {
                 attachments: None,
                 tool_calls: None,
                 tool_call_id: None,
+                thinking_content: None,
                 created_at: "2024-01-01T00:00:00Z".to_string(),
             };
 

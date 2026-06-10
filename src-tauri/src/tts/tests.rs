@@ -18,7 +18,7 @@ mod emotion_generator_tests {
     impl MockLLMClient {
         fn with_text(text: &str) -> Self {
             Self {
-                response: Ok(LLMResponse::Text(text.to_string())),
+                response: Ok(LLMResponse::Text { content: text.to_string(), thinking: None }),
             }
         }
 
@@ -46,7 +46,7 @@ mod emotion_generator_tests {
             _messages: &[ChatMessage],
             _config: &LLMClientConfig,
             _tools: Option<&[ToolDefinition]>,
-            _callback: Box<dyn Fn(String) + Send>,
+            _callbacks: crate::llm::client::StreamCallbacks,
         ) -> Result<LLMResponse, AppError> {
             unimplemented!("not used in emotion generator tests")
         }
@@ -762,7 +762,7 @@ mod caption_generator_tests {
     impl MockLLMClient {
         fn with_text(text: &str) -> Self {
             Self {
-                response: Ok(LLMResponse::Text(text.to_string())),
+                response: Ok(LLMResponse::Text { content: text.to_string(), thinking: None }),
             }
         }
 
@@ -772,12 +772,12 @@ mod caption_generator_tests {
 
         fn with_tool_calls() -> Self {
             Self {
-                response: Ok(LLMResponse::ToolCalls(vec![ToolCall {
+                response: Ok(LLMResponse::ToolCalls { calls: vec![ToolCall {
                     id: "call_1".to_string(),
                     name: "some_tool".to_string(),
                     arguments: serde_json::Value::Object(serde_json::Map::new()),
                     context: None,
-                }])),
+                }], thinking: None }),
             }
         }
     }
@@ -801,7 +801,7 @@ mod caption_generator_tests {
             _messages: &[ChatMessage],
             _config: &LLMClientConfig,
             _tools: Option<&[ToolDefinition]>,
-            _callback: Box<dyn Fn(String) + Send>,
+            _callbacks: crate::llm::client::StreamCallbacks,
         ) -> Result<LLMResponse, AppError> {
             unimplemented!("not used in caption generator tests")
         }
@@ -1001,7 +1001,7 @@ mod flow_controller_tests {
     impl MockLLMClient {
         fn with_text(text: &str) -> Self {
             Self {
-                response: Ok(LLMResponse::Text(text.to_string())),
+                response: Ok(LLMResponse::Text { content: text.to_string(), thinking: None }),
             }
         }
 
@@ -1031,7 +1031,7 @@ mod flow_controller_tests {
             _messages: &[ChatMessage],
             _config: &LLMClientConfig,
             _tools: Option<&[ToolDefinition]>,
-            _callback: Box<dyn Fn(String) + Send>,
+            _callbacks: crate::llm::client::StreamCallbacks,
         ) -> Result<LLMResponse, AppError> {
             unimplemented!("not used in flow controller tests")
         }
@@ -1258,7 +1258,7 @@ mod flow_controller_tests {
         ) -> Result<LLMResponse, AppError> {
             self.call_count
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            Ok(LLMResponse::Text("動的キャプション".to_string()))
+            Ok(LLMResponse::Text { content: "動的キャプション".to_string(), thinking: None })
         }
 
         async fn chat_stream(
@@ -1266,7 +1266,7 @@ mod flow_controller_tests {
             _messages: &[ChatMessage],
             _config: &LLMClientConfig,
             _tools: Option<&[ToolDefinition]>,
-            _callback: Box<dyn Fn(String) + Send>,
+            _callbacks: crate::llm::client::StreamCallbacks,
         ) -> Result<LLMResponse, AppError> {
             unimplemented!("not used in flow controller tests")
         }

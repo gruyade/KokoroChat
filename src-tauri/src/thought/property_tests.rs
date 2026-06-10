@@ -44,7 +44,7 @@ mod tests {
             _tools: Option<&[ToolDefinition]>,
         ) -> Result<LLMResponse, AppError> {
             let resp = self.response.lock().unwrap().clone();
-            Ok(LLMResponse::Text(resp))
+            Ok(LLMResponse::Text { content: resp, thinking: None })
         }
 
         async fn chat_stream(
@@ -52,10 +52,10 @@ mod tests {
             _messages: &[ChatMessage],
             _config: &LLMClientConfig,
             _tools: Option<&[ToolDefinition]>,
-            _callback: Box<dyn Fn(String) + Send>,
+            _callbacks: crate::llm::client::StreamCallbacks,
         ) -> Result<LLMResponse, AppError> {
             let resp = self.response.lock().unwrap().clone();
-            Ok(LLMResponse::Text(resp))
+            Ok(LLMResponse::Text { content: resp, thinking: None })
         }
 
         async fn test_connection(&self, _config: &LLMClientConfig) -> Result<(), AppError> {
@@ -119,6 +119,7 @@ mod tests {
                     attachments: None,
                     tool_calls: None,
                     tool_call_id: None,
+                    thinking_content: None,
                     created_at,
                 },
             )

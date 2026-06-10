@@ -34,7 +34,7 @@ mod tests {
             _config: &LLMClientConfig,
             _tools: Option<&[ToolDefinition]>,
         ) -> Result<LLMResponse, AppError> {
-            Ok(LLMResponse::Text("mock".to_string()))
+            Ok(LLMResponse::Text { content: "mock".to_string(), thinking: None })
         }
 
         async fn chat_stream(
@@ -42,9 +42,9 @@ mod tests {
             _messages: &[ChatMessage],
             _config: &LLMClientConfig,
             _tools: Option<&[ToolDefinition]>,
-            _callback: Box<dyn Fn(String) + Send>,
+            _callbacks: crate::llm::client::StreamCallbacks,
         ) -> Result<LLMResponse, AppError> {
-            Ok(LLMResponse::Text("mock".to_string()))
+            Ok(LLMResponse::Text { content: "mock".to_string(), thinking: None })
         }
 
         async fn test_connection(&self, _config: &LLMClientConfig) -> Result<(), AppError> {
@@ -164,6 +164,7 @@ mod tests {
                         attachments: None,
                         tool_calls: None,
                         tool_call_id: None,
+                        thinking_content: None,
                         created_at,
                     },
                 )
@@ -749,7 +750,7 @@ mod tests {
             prop_assert!(
                 injected.starts_with(&base_prompt),
                 "Injected prompt should start with base prompt. Got: {}",
-                &injected[..injected.len().min(100)]
+                crate::utils::safe_truncate_bytes(&injected, 100)
             );
 
             // 2. 各エントリが "## {file_name}\n{content}" 形式で含まれる
@@ -796,6 +797,258 @@ mod tests {
                     first_header_pos
                 );
             }
+        }
+    }
+
+    // ========================================
+    // Feature: thinking-reasoning-support, Property 6: Thinking content truncation invariant
+    // ========================================
+    //
+    // For any thinking content string, after truncation the saved content SHALL have
+    // length ≤ 200,000 characters AND SHALL be a prefix of the original content
+    // (preserving UTF-8 character boundaries).
+    //
+    // **Validates: Requirements 4.5**
+
+    use crate::chat::engine::{truncate_thinking_content, ChatStreamEvent};
+
+    /// マルチバイト文字（CJK、絵文字）を含むランダム文字列を生成するストラテジー
+    /// 短い文字列から上限超過する長い文字列まで幅広く生成
+    fn arb_multibyte_string() -> impl Strategy<Value = String> {
+        prop_oneof![
+            // ASCII only (short)
+            "[a-zA-Z0-9 ]{0,100}",
+            // CJK characters
+            "[あ-んア-ヶ一-龥]{0,100}",
+            // Mixed ASCII + CJK (medium)
+            "[a-zA-Z0-9あ-んア-ヶ ]{0,500}",
+            // Long strings that may exceed 200,000 chars
+            // Generate base pattern and repeat to create longer strings
+            "[a-zA-Z0-9あ-ん🌟🎉🚀]{1,50}".prop_map(|s| s.repeat(5000)),
+            // Very long ASCII strings that exceed the limit
+            "[a-z]{1,10}".prop_map(|s| s.repeat(30000)),
+            // Very long CJK strings that exceed the limit
+            "[あ-ん]{1,10}".prop_map(|s| s.repeat(30000)),
+            // Strings with emoji sequences
+            "(🌟|🎉|🚀|👨‍👩‍👧‍👦|🏳️‍🌈){1,20}".prop_map(|s| s.repeat(15000)),
+            // Empty string
+            Just(String::new()),
+        ]
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(100))]
+
+        // Feature: thinking-reasoning-support, Property 6: Thinking content truncation invariant
+        #[test]
+        fn prop_truncate_thinking_content_invariant(
+            content in arb_multibyte_string(),
+        ) {
+            let result = truncate_thinking_content(&content);
+
+            // 1. 切り詰め後の文字数は ≤ 200,000
+            let result_char_count = result.chars().count();
+            prop_assert!(
+                result_char_count <= 200_000,
+                "Truncated result should have at most 200,000 chars, but got {}",
+                result_char_count
+            );
+
+            // 2. 結果は元文字列のprefixである（元文字列がresultで始まる）
+            prop_assert!(
+                content.starts_with(result),
+                "Original content should start with the truncated result"
+            );
+
+            // 3. 元文字列が200,000文字以下の場合、結果は元文字列と同一
+            let original_char_count = content.chars().count();
+            if original_char_count <= 200_000 {
+                prop_assert_eq!(
+                    result,
+                    content.as_str(),
+                    "Content within limit should be returned unchanged"
+                );
+            }
+
+            // 4. 結果は有効なUTF-8文字列である（&strなので型システムで保証されるが念のため）
+            prop_assert!(
+                std::str::from_utf8(result.as_bytes()).is_ok(),
+                "Result should be valid UTF-8"
+            );
+        }
+    }
+
+    // ========================================
+    // Feature: thinking-reasoning-support, Property 3: Stream event field assignment invariant
+    // ========================================
+    //
+    // For any ChatStreamEvent emitted by the Chat Engine during streaming:
+    // - If thinking content is present, the thinking field contains the thinking delta and the chunk field is empty string
+    // - If text content is present, the chunk field contains the text delta and the thinking field is None
+    // - The thinking and chunk fields never both have content simultaneously (mutually exclusive for deltas)
+    // - done=true events always have thinking=None
+    //
+    // **Validates: Requirements 2.2, 2.3, 2.5**
+
+    /// ランダムな非空デルタ文字列を生成するストラテジー
+    fn arb_delta_string() -> impl Strategy<Value = String> {
+        prop_oneof![
+            "[a-zA-Z0-9 ]{1,100}",
+            "[あ-んア-ヶ]{1,50}",
+            "[a-zA-Z0-9あ-ん ,.!?]{1,80}",
+        ]
+    }
+
+    /// ChatStreamEventをChat Engineのルールに従って構築する関数
+    /// - thinking_delta有り → thinking=Some(delta), chunk=""
+    /// - text_delta有り → chunk=delta, thinking=None
+    /// - done=true → thinking=None
+    fn build_stream_event(
+        session_id: &str,
+        text_delta: Option<&str>,
+        thinking_delta: Option<&str>,
+        done: bool,
+    ) -> ChatStreamEvent {
+        if done {
+            // done=true イベント: thinking は常に None (Req 2.6)
+            ChatStreamEvent {
+                session_id: session_id.to_string(),
+                chunk: String::new(),
+                done: true,
+                tool_break: false,
+                thinking: None,
+            }
+        } else if let Some(thinking) = thinking_delta {
+            // thinking delta イベント: chunk は空文字列 (Req 2.2)
+            ChatStreamEvent {
+                session_id: session_id.to_string(),
+                chunk: String::new(),
+                done: false,
+                tool_break: false,
+                thinking: Some(thinking.to_string()),
+            }
+        } else if let Some(text) = text_delta {
+            // text delta イベント: thinking は None (Req 2.3, 2.5)
+            ChatStreamEvent {
+                session_id: session_id.to_string(),
+                chunk: text.to_string(),
+                done: false,
+                tool_break: false,
+                thinking: None,
+            }
+        } else {
+            // どちらもない場合: 空イベント
+            ChatStreamEvent {
+                session_id: session_id.to_string(),
+                chunk: String::new(),
+                done: false,
+                tool_break: false,
+                thinking: None,
+            }
+        }
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(100))]
+
+        // Feature: thinking-reasoning-support, Property 3: Stream event field assignment invariant
+        #[test]
+        fn prop_stream_event_thinking_delta_has_empty_chunk(
+            thinking_delta in arb_delta_string(),
+            session_id in uuid_string(),
+        ) {
+            let event = build_stream_event(&session_id, None, Some(&thinking_delta), false);
+
+            // thinking が設定されているとき、chunk は空文字列
+            prop_assert_eq!(
+                &event.chunk,
+                "",
+                "When thinking is present, chunk should be empty string, got: '{}'",
+                event.chunk
+            );
+            prop_assert_eq!(
+                event.thinking.as_deref(),
+                Some(thinking_delta.as_str()),
+                "Thinking field should contain the thinking delta"
+            );
+            prop_assert!(!event.done, "Thinking delta event should not be done");
+        }
+
+        #[test]
+        fn prop_stream_event_text_delta_has_no_thinking(
+            text_delta in arb_delta_string(),
+            session_id in uuid_string(),
+        ) {
+            let event = build_stream_event(&session_id, Some(&text_delta), None, false);
+
+            // chunk が設定されているとき、thinking は None
+            prop_assert_eq!(
+                &event.chunk,
+                &text_delta,
+                "Chunk field should contain the text delta"
+            );
+            prop_assert!(
+                event.thinking.is_none(),
+                "When text chunk is present, thinking should be None, got: {:?}",
+                event.thinking
+            );
+            prop_assert!(!event.done, "Text delta event should not be done");
+        }
+
+        #[test]
+        fn prop_stream_event_mutual_exclusivity(
+            text_delta in proptest::option::of(arb_delta_string()),
+            thinking_delta in proptest::option::of(arb_delta_string()),
+            session_id in uuid_string(),
+        ) {
+            let event = build_stream_event(
+                &session_id,
+                text_delta.as_deref(),
+                thinking_delta.as_deref(),
+                false,
+            );
+
+            // 相互排他性: thinking が Some で非空のとき chunk は空、chunk が非空のとき thinking は None
+            if let Some(ref thinking) = event.thinking {
+                if !thinking.is_empty() {
+                    prop_assert!(
+                        event.chunk.is_empty(),
+                        "Mutual exclusivity: when thinking has content ('{}'), chunk must be empty, got: '{}'",
+                        thinking,
+                        event.chunk
+                    );
+                }
+            }
+            if !event.chunk.is_empty() {
+                prop_assert!(
+                    event.thinking.is_none(),
+                    "Mutual exclusivity: when chunk has content ('{}'), thinking must be None, got: {:?}",
+                    event.chunk,
+                    event.thinking
+                );
+            }
+        }
+
+        #[test]
+        fn prop_stream_event_done_has_no_thinking(
+            text_delta in proptest::option::of(arb_delta_string()),
+            thinking_delta in proptest::option::of(arb_delta_string()),
+            session_id in uuid_string(),
+        ) {
+            // done=true イベントでは常に thinking=None (Req 2.6)
+            let event = build_stream_event(
+                &session_id,
+                text_delta.as_deref(),
+                thinking_delta.as_deref(),
+                true,
+            );
+
+            prop_assert!(
+                event.thinking.is_none(),
+                "done=true event should always have thinking=None, got: {:?}",
+                event.thinking
+            );
+            prop_assert!(event.done, "Event should have done=true");
         }
     }
 }

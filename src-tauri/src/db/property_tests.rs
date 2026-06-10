@@ -161,6 +161,7 @@ mod tests {
                 attachments: None,
                 tool_calls: None,
                 tool_call_id: None,
+                thinking_content: None,
                 created_at,
             })
     }
@@ -246,6 +247,7 @@ mod tests {
                         attachments: None,
                         tool_calls: None,
                         tool_call_id: None,
+                        thinking_content: None,
                         created_at: format!("2024-01-01T{:02}:{:02}:00Z", i, j),
                     };
                     chat::insert_message(conn, &msg).unwrap();
@@ -475,6 +477,7 @@ mod tests {
                     attachments: None,
                     tool_calls: None,
                     tool_call_id: None,
+                    thinking_content: None,
                     created_at: created_at.clone(),
                 };
                 chat::insert_message(conn, &msg).unwrap();
@@ -1014,6 +1017,104 @@ mod tests {
             // ナレッジエントリが全て削除されていることを検証
             let after = knowledge::list_knowledge(conn, "sess-cascade").unwrap();
             prop_assert_eq!(after.len(), 0, "All knowledge entries should be deleted after session deletion");
+        }
+    }
+
+    // ========================================
+    // Feature: thinking-reasoning-support, Property 5: DB persistence round-trip for thinking content
+    // ========================================
+    // **Validates: Requirements 4.2, 4.3**
+    //
+    // For any valid ChatMessageRecord with a non-null thinking_content field,
+    // inserting the record into the database and then retrieving it SHALL produce
+    // a record with identical thinking_content value.
+
+    /// thinking_content用のストラテジー: Option<String>（None, Some(空), Some(ASCII), Some(マルチバイト), Some(長文)）
+    fn arb_thinking_content() -> impl Strategy<Value = Option<String>> {
+        prop_oneof![
+            // None (thinking なし)
+            Just(None),
+            // 空文字列
+            Just(Some(String::new())),
+            // ASCII文字列
+            "[a-zA-Z0-9 .,!?\\n]{1,200}".prop_map(Some),
+            // マルチバイト文字列（日本語）
+            "[ぁ-んァ-ヶ亜-熙]{1,100}".prop_map(Some),
+            // 長い文字列（1000〜5000文字）
+            "[a-zA-Z0-9ぁ-んァ-ヶ \\n]{1000,5000}".prop_map(Some),
+            // 特殊文字を含む文字列
+            ".*{1,200}".prop_map(Some),
+        ]
+    }
+
+    /// thinking content DBラウンドトリップテスト用のDBセットアップ
+    fn setup_thinking_test_db() -> Database {
+        let db = Database::open_in_memory().unwrap();
+        let conn = db.connection();
+
+        conn.execute(
+            "INSERT INTO characters (id, name, description, system_prompt, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                "char-think",
+                "ThinkingTest",
+                "Desc",
+                "Prompt",
+                "2024-01-01T00:00:00Z",
+                "2024-01-01T00:00:00Z"
+            ],
+        )
+        .unwrap();
+
+        conn.execute(
+            "INSERT INTO chat_sessions (id, character_id, created_at) VALUES (?1, ?2, ?3)",
+            params!["sess-think", "char-think", "2024-01-01T00:00:00Z"],
+        )
+        .unwrap();
+
+        db
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(100))]
+
+        #[test]
+        fn prop_thinking_content_db_roundtrip(
+            thinking_content in arb_thinking_content(),
+            msg_idx in 0u32..10000,
+        ) {
+            let db = setup_thinking_test_db();
+            let conn = db.connection();
+
+            let msg_id = format!("msg-think-{:05}", msg_idx);
+
+            let message = ChatMessageRecord {
+                id: msg_id.clone(),
+                session_id: "sess-think".to_string(),
+                role: ChatRole::Assistant,
+                content: "Test response".to_string(),
+                attachments: None,
+                tool_calls: None,
+                tool_call_id: None,
+                thinking_content: thinking_content.clone(),
+                created_at: "2024-01-01T10:00:00Z".to_string(),
+            };
+
+            // Insert
+            chat::insert_message(conn, &message).unwrap();
+
+            // Retrieve
+            let messages = chat::get_messages(conn, "sess-think").unwrap();
+            prop_assert_eq!(messages.len(), 1, "Should have exactly one message");
+
+            let retrieved = &messages[0];
+            prop_assert_eq!(
+                &retrieved.thinking_content,
+                &thinking_content,
+                "thinking_content should survive DB round-trip: expected {:?}, got {:?}",
+                thinking_content,
+                retrieved.thinking_content
+            );
         }
     }
 }

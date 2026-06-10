@@ -13,6 +13,7 @@ pub mod spontaneous;
 pub mod state;
 pub mod thought;
 pub mod tts;
+pub mod utils;
 
 pub use error::AppError;
 
@@ -36,6 +37,12 @@ use tts::flow_controller::TTSFlowController;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // ログ初期化: RUST_LOG環境変数で制御（未設定時はwarn以上のみ出力）
+    // 使い方: RUST_LOG=debug cargo tauri dev（全ログ）/ RUST_LOG=kokoro_chat_lib::llm=debug（LLMモジュールのみ）
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn"))
+        .format_timestamp_millis()
+        .init();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())

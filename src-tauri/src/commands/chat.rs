@@ -231,7 +231,7 @@ pub async fn trigger_spontaneous_check(
 
     let response = state.llm_client.chat(&messages, &llm_config, None).await?;
     let content = match response {
-        LLMResponse::Text(t) => t.trim().to_string(),
+        LLMResponse::Text { content: t, .. } => t.trim().to_string(),
         _ => {
             println!("[spontaneous] LLM returned non-text response, skipping");
             return Ok(false);
@@ -257,6 +257,7 @@ pub async fn trigger_spontaneous_check(
         attachments: None,
         tool_calls: None,
         tool_call_id: None,
+        thinking_content: None,
         created_at: now,
     };
 
@@ -397,6 +398,7 @@ pub async fn stop_generation(
                 attachments: None,
                 tool_calls: None,
                 tool_call_id: None,
+                thinking_content: None,
                 created_at: now,
             };
 
@@ -415,6 +417,7 @@ pub async fn stop_generation(
                 chunk: String::new(),
                 done: true,
                 tool_break: false,
+                thinking: None,
             },
         );
     }
